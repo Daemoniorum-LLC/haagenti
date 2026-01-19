@@ -1,0 +1,31 @@
+[package]
+name = "haagenti-adaptive"
+version = "0.1.0"
+edition = "2021"
+description = "Adaptive precision scheduling for diffusion inference"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["quantization", "precision", "adaptive", "inference"]
+categories = ["science", "algorithms"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+
+# Data structures
+smallvec = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "precision_scheduling"
+harness = false

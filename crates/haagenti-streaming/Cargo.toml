@@ -1,0 +1,44 @@
+[package]
+name = "haagenti-streaming"
+version = "0.1.0"
+edition = "2021"
+description = "Real-time streaming generation with progressive preview display"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["streaming", "preview", "progressive", "diffusion"]
+categories = ["asynchronous", "multimedia"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+
+# Data structures
+bytes = { workspace = true }
+smallvec = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+pin-project-lite = { workspace = true }
+
+# Channels
+tokio-stream = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = "0.5"
+
+[[bench]]
+name = "streaming_preview"
+harness = false

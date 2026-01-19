@@ -1,0 +1,25 @@
+[package]
+name = "haagenti-lz4"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "LZ4 and LZ4-HC compression for Haagenti"
+keywords = ["compression", "lz4", "fast"]
+categories = ["compression", "encoding"]
+
+[features]
+default = ["std"]
+std = ["haagenti-core/std"]
+simd = ["haagenti-simd"]
+hc = []  # LZ4-HC high compression mode
+
+[dependencies]
+haagenti-core = { workspace = true }
+haagenti-simd = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+lz4_flex = { workspace = true }  # Reference implementation for testing

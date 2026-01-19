@@ -1,0 +1,45 @@
+[package]
+name = "haagenti-neural"
+version = "0.1.0"
+edition = "2021"
+description = "Neural compression using learned codebooks for 10x model compression"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["neural", "compression", "codebook", "quantization"]
+categories = ["compression", "science"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+
+# Data structures
+bytes = { workspace = true }
+smallvec = { workspace = true }
+arrayvec = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+bincode = { workspace = true }
+
+# Hashing
+arcanum-primitives = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Math
+rand = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3"
+
+[[bench]]
+name = "codebook_lookup"
+harness = false

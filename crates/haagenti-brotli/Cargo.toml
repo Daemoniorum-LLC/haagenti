@@ -1,0 +1,25 @@
+[package]
+name = "haagenti-brotli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Brotli compression for Haagenti"
+keywords = ["compression", "brotli", "web"]
+categories = ["compression", "encoding"]
+
+[features]
+default = ["std"]
+std = ["haagenti-core/std"]
+simd = ["haagenti-simd"]
+dictionary = []  # Built-in dictionary support
+
+[dependencies]
+haagenti-core = { workspace = true }
+haagenti-simd = { workspace = true, optional = true }
+brotli = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

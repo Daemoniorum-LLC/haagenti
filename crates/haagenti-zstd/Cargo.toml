@@ -1,0 +1,34 @@
+[package]
+name = "haagenti-zstd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Native Rust Zstandard compression for Haagenti (RFC 8878)"
+keywords = ["compression", "zstd", "zstandard", "pure-rust"]
+categories = ["compression", "encoding"]
+
+[features]
+default = ["std", "simd"]
+std = ["haagenti-core/std"]
+simd = ["haagenti-simd"]
+dictionary = []  # Dictionary compression support
+parallel = ["std", "rayon"]  # Parallel compression (4-stream Huffman, etc.)
+
+[dependencies]
+haagenti-core = { workspace = true }
+haagenti-simd = { workspace = true, optional = true }
+rayon = { version = "1.10", optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+zstd = { workspace = true }
+rand = { workspace = true }
+half = "2.4"
+
+[[bench]]
+name = "zstd_benchmark"
+harness = false

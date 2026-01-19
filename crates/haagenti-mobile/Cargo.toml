@@ -1,0 +1,47 @@
+[package]
+name = "haagenti-mobile"
+version = "0.1.0"
+edition = "2021"
+description = "Mobile deployment support for iOS (CoreML) and Android (NNAPI)"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["mobile", "coreml", "nnapi", "inference", "quantization"]
+categories = ["embedded", "hardware-support"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Data structures
+bytes = { workspace = true }
+smallvec = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# CoreML bindings would go here
+
+[target.'cfg(target_os = "android")'.dependencies]
+# NNAPI bindings would go here
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []
+coreml = []
+nnapi = []
+int4 = []
+thermal-management = []

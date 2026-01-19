@@ -1,0 +1,54 @@
+[package]
+name = "haagenti-importance"
+version = "0.1.0"
+edition = "2021"
+description = "ML-guided fragment importance scoring for intelligent model loading"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["machine-learning", "importance", "fragments", "optimization"]
+categories = ["science", "algorithms"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+haagenti-fragments = { workspace = true }
+
+# ML/Embeddings
+candle-core = { version = "0.8", optional = true }
+candle-nn = { version = "0.8", optional = true }
+candle-transformers = { version = "0.8", optional = true }
+
+# Data structures
+dashmap = { workspace = true }
+indexmap = { workspace = true }
+smallvec = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Statistics
+statrs = "0.17"
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3"
+tokio-test = "0.4"
+
+[features]
+default = []
+ml = ["candle-core", "candle-nn", "candle-transformers"]
+
+[[bench]]
+name = "importance_scoring"
+harness = false

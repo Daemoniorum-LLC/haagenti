@@ -1,0 +1,48 @@
+[package]
+name = "haagenti-merging"
+version = "0.1.0"
+edition = "2021"
+description = "Model merging techniques including TIES, DARE, and evolutionary merge"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["model-merging", "ties", "dare", "evolutionary", "weights"]
+categories = ["machine-learning", "algorithms"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Data structures
+bytes = { workspace = true }
+smallvec = { workspace = true }
+indexmap = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+arcanum-primitives = { workspace = true }
+
+# Random
+rand = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+proptest = { workspace = true }
+
+[features]
+default = []
+ties = []
+dare = []
+evolutionary = []
+slerp = []

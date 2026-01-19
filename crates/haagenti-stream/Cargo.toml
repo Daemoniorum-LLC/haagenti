@@ -1,0 +1,27 @@
+[package]
+name = "haagenti-stream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Advanced streaming compression utilities for Haagenti"
+keywords = ["compression", "streaming", "async"]
+categories = ["compression", "asynchronous"]
+
+[features]
+default = ["std"]
+std = ["haagenti-core/std"]
+async = ["tokio", "futures", "pin-project-lite"]
+io = ["std"]  # Standard I/O integration
+
+[dependencies]
+haagenti-core = { workspace = true }
+tokio = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+pin-project-lite = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { version = "1.41", features = ["rt", "macros", "io-util"] }

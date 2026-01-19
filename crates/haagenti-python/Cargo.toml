@@ -1,0 +1,36 @@
+[package]
+name = "haagenti-python"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Python bindings for Haagenti tensor compression library"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["python", "tensor", "compression", "machine-learning"]
+
+[lib]
+name = "haagenti_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+
+# Haagenti crates
+haagenti.workspace = true
+haagenti-core.workspace = true
+haagenti-lz4.workspace = true
+haagenti-zstd.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Float16/BFloat16 support
+half = "2.4"
+
+[build-dependencies]
+pyo3-build-config = "0.22"
+
+[features]
+default = []

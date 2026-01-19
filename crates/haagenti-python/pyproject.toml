@@ -1,0 +1,47 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "haagenti"
+version = "0.1.0"
+description = "Python bindings for Haagenti tensor compression library"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Daemoniorum LLC", email = "engineering@daemoniorum.com"}
+]
+keywords = ["compression", "tensor", "machine-learning", "llm", "neural-network"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Archiving :: Compression",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-benchmark>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/daemoniorum/haagenti"
+Documentation = "https://haagenti.readthedocs.io"
+Repository = "https://github.com/daemoniorum/haagenti"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "haagenti._haagenti_python"

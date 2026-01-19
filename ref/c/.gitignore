@@ -1,0 +1,6 @@
+# Compiled binaries
+test_decoder
+*.o
+*.a
+*.so
+*.dylib

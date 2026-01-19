@@ -1,0 +1,109 @@
+[package]
+name = "haagenti"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Next-generation compression library with LZ4, Zstd, Brotli, and Deflate support"
+keywords = ["compression", "lz4", "zstd", "brotli", "deflate"]
+categories = ["compression", "encoding"]
+
+[features]
+default = ["lz4", "zstd", "brotli", "deflate", "simd", "stream"]
+
+# Algorithm features
+lz4 = ["dep:haagenti-lz4"]
+zstd = ["dep:haagenti-zstd"]
+brotli = ["dep:haagenti-brotli"]
+deflate = ["dep:haagenti-deflate"]
+
+# Performance features
+simd = ["dep:haagenti-simd"]
+stream = ["dep:haagenti-stream"]
+parallel = ["dep:rayon"]
+
+# Testing utilities (safetensors parsing, metrics, INT4 quantization)
+# serde_json is now a regular dependency for importance.rs
+testing = []
+
+# All algorithms
+full = ["lz4", "zstd", "brotli", "deflate", "simd", "stream"]
+
+# High-performance pipeline with parallel processing
+turbo = ["parallel", "zstd"]
+
+# GPU-accelerated compression pipeline
+cuda = ["dep:haagenti-cuda", "turbo"]
+
+[dependencies]
+haagenti-core = { workspace = true, features = ["dct"] }
+haagenti-cuda = { workspace = true, optional = true }
+haagenti-lz4 = { workspace = true, optional = true }
+haagenti-zstd = { workspace = true, optional = true }
+haagenti-brotli = { workspace = true, optional = true }
+haagenti-deflate = { workspace = true, optional = true }
+haagenti-simd = { workspace = true, optional = true }
+haagenti-stream = { workspace = true, optional = true }
+xxhash-rust = { workspace = true }
+rustfft = { workspace = true }
+half = "2.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+memmap2 = "0.9"
+indicatif = "0.17"
+rayon = { version = "1.10", optional = true }
+zstd = "0.13"  # Reference zstd for turbo pipeline (haagenti-zstd has compatibility issues)
+
+[dev-dependencies]
+criterion = { workspace = true }
+half = "2.4"
+proptest = "1.4"
+rand = { workspace = true }
+rand_distr = "0.4"
+tempfile = "3.10"
+
+[[example]]
+name = "weight_compression_analysis"
+required-features = ["lz4", "zstd"]
+
+[[example]]
+name = "safetensors_to_hct"
+required-features = ["lz4", "zstd"]
+
+[[example]]
+name = "safetensors_to_int4_hct"
+required-features = ["lz4"]
+
+[[bench]]
+name = "compression"
+harness = false
+
+[[example]]
+name = "roundtrip_validation"
+required-features = ["lz4", "zstd"]
+
+[[test]]
+name = "integration_tests"
+required-features = ["lz4", "zstd", "testing"]
+
+[[test]]
+name = "proptest_compression"
+required-features = ["lz4", "zstd", "testing"]
+
+[[example]]
+name = "compress_405b"
+required-features = ["lz4", "zstd"]
+
+[[example]]
+name = "compress_turbo"
+required-features = ["parallel", "zstd"]
+
+[[example]]
+name = "compress_selective"
+required-features = ["parallel", "zstd"]
+
+[[example]]
+name = "compress_adaptive"
+required-features = ["parallel", "zstd"]

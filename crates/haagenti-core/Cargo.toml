@@ -1,0 +1,25 @@
+[package]
+name = "haagenti-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Core traits, types, and streaming API for Haagenti compression library"
+keywords = ["compression", "streaming", "traits"]
+categories = ["compression", "encoding"]
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+dct = ["dep:rustfft"]
+
+[dependencies]
+thiserror = { workspace = true }
+bytes = { workspace = true }
+rustfft = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

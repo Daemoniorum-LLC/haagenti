@@ -1,0 +1,30 @@
+[package]
+name = "haagenti-hct"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Haagenti Compressed Tensor (HCT) format with HoloTensor holographic compression"
+keywords = ["compression", "tensor", "neural-network", "llm", "holographic"]
+categories = ["compression", "encoding", "science"]
+
+[features]
+default = ["full"]
+# Include LZ4 compression support
+lz4 = ["haagenti/lz4"]
+# Include Zstd compression support
+zstd = ["haagenti/zstd"]
+# SIMD acceleration
+simd = ["haagenti/simd"]
+# All features
+full = ["lz4", "zstd", "simd"]
+
+[dependencies]
+haagenti = { workspace = true }
+haagenti-core = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+tempfile = "3.10"

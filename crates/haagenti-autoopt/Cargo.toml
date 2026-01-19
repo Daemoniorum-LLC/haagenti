@@ -1,0 +1,48 @@
+[package]
+name = "haagenti-autoopt"
+version = "0.1.0"
+edition = "2021"
+description = "Self-optimization and auto-tuning for inference pipelines"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["auto-tuning", "optimization", "profiling", "performance"]
+categories = ["development-tools::profiling", "algorithms"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Data structures
+bytes = { workspace = true }
+smallvec = { workspace = true }
+dashmap = { workspace = true }
+indexmap = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+arcanum-primitives = { workspace = true }
+
+# Random
+rand = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []
+bayesian = []
+genetic = []
+profiling = []
+hardware-aware = []

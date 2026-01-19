@@ -1,0 +1,50 @@
+[package]
+name = "haagenti-latent-cache"
+version = "0.1.0"
+edition = "2021"
+description = "Latent caching for similar prompts with semantic similarity search"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["cache", "latent", "similarity", "diffusion"]
+categories = ["caching", "science"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+haagenti-fragments = { workspace = true }
+
+# Data structures
+dashmap = { workspace = true }
+indexmap = { workspace = true }
+smallvec = { workspace = true }
+bytes = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# HNSW for similarity search
+instant-distance = { workspace = true }
+
+# Hashing
+arcanum-primitives = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
+criterion = "0.5"
+rand = { workspace = true }
+
+[[bench]]
+name = "similarity_search"
+harness = false

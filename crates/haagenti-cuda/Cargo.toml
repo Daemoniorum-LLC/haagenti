@@ -1,0 +1,62 @@
+[package]
+name = "haagenti-cuda"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "CUDA GPU decompression kernels for Haagenti tensor compression"
+keywords = ["cuda", "gpu", "compression", "lz4", "decompression"]
+categories = ["compression", "hardware-support"]
+
+[features]
+default = ["lz4", "zstd", "cpu-fallback"]
+lz4 = []
+zstd = []
+cuda = []  # Enable actual CUDA GPU tests (requires NVIDIA GPU)
+cufft = []  # Enable cuFFT FFI for O(n log n) DCT on large tensors (requires libcufft)
+neural = []  # Neural compression GPU support
+async = ["tokio"]
+python = ["pyo3", "numpy"]
+cpu-fallback = []  # CPU DCT fallback using haagenti-core
+
+[dependencies]
+# Internal crates - use haagenti-core with DCT for CPU fallback
+haagenti-core = { workspace = true, features = ["dct"] }
+
+# CUDA bindings
+cudarc = { version = "0.12", features = ["cuda-12050"] }
+
+# Core utilities
+thiserror = { workspace = true }
+bytes = { workspace = true }
+half = { version = "2.4", features = ["std"] }
+
+# Compression algorithms (CPU fallback when GPU kernels unavailable)
+lz4_flex = "0.11"
+zstd = "0.13"
+
+# Async support (optional)
+tokio = { workspace = true, optional = true }
+
+# Python bindings (optional)
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+numpy = { version = "0.22", optional = true }
+
+# Logging
+tracing = "0.1"
+
+# Cache directory detection
+dirs = "5.0"
+
+[dev-dependencies]
+criterion = { workspace = true }
+rand = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# For conformance testing against reference test vectors
+haagenti = { path = "../haagenti" }
+
+[[bench]]
+name = "gpu_decompress"
+harness = false

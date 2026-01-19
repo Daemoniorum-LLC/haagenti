@@ -1,0 +1,48 @@
+[package]
+name = "haagenti-speculative"
+version = "0.1.0"
+edition = "2021"
+description = "Speculative fragment loading based on keystroke intent prediction"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["speculative", "prediction", "prefetch", "loading"]
+categories = ["caching", "asynchronous"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+haagenti-fragments = { workspace = true }
+haagenti-importance = { workspace = true }
+haagenti-network = { workspace = true }
+
+# Data structures
+dashmap = { workspace = true }
+indexmap = { workspace = true }
+smallvec = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Trie for prefix matching
+radix_trie = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
+criterion = "0.5"
+
+[[bench]]
+name = "intent_prediction"
+harness = false

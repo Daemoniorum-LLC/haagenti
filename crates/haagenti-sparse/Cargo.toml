@@ -1,0 +1,47 @@
+[package]
+name = "haagenti-sparse"
+version = "0.1.0"
+edition = "2021"
+description = "Sparse attention masks for prompt-aware computation reduction"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["sparse", "attention", "diffusion", "optimization"]
+categories = ["science", "algorithms"]
+
+[features]
+default = []
+cuda = ["haagenti-cuda"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+haagenti-cuda = { workspace = true, optional = true }
+
+# Data structures
+smallvec = { workspace = true }
+arrayvec = { workspace = true }
+bytes = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+bincode = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Random for testing
+rand = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = "0.5"
+
+[[bench]]
+name = "sparse_attention"
+harness = false

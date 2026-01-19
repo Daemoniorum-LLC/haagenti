@@ -1,0 +1,213 @@
+[workspace]
+resolver = "2"
+members = [
+    # Unified crate
+    "crates/haagenti",
+
+    # Core crate
+    "crates/haagenti-core",
+
+    # Algorithm implementations
+    "crates/haagenti-lz4",
+    "crates/haagenti-zstd",
+    "crates/haagenti-brotli",
+    "crates/haagenti-deflate",
+
+    # Performance & streaming
+    "crates/haagenti-simd",
+    "crates/haagenti-stream",
+
+    # GPU acceleration
+    "crates/haagenti-cuda",
+
+    # HoloTensor format
+    "crates/haagenti-hct",
+
+    # Cross-model fragment sharing
+    "crates/haagenti-fragments",
+
+    # Network streaming
+    "crates/haagenti-network",
+
+    # ML-guided importance scoring
+    "crates/haagenti-importance",
+
+    # Wave 1: Advanced optimizations
+    "crates/haagenti-speculative",
+    "crates/haagenti-latent-cache",
+    "crates/haagenti-adaptive",
+
+    # Wave 2: Performance leap
+    "crates/haagenti-sparse",
+    "crates/haagenti-neural",
+    "crates/haagenti-streaming",
+
+    # Wave 3: Platform expansion
+    "crates/haagenti-webgpu",
+    "crates/haagenti-mobile",
+    "crates/haagenti-serverless",
+
+    # Wave 4: Advanced AI capabilities
+    "crates/haagenti-distributed",
+    "crates/haagenti-merging",
+    "crates/haagenti-learning",
+    "crates/haagenti-autoopt",
+
+    # Python bindings
+    "crates/haagenti-python",
+
+    # gRPC service
+    "crates/haagenti-grpc",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/daemoniorum/haagenti"
+authors = ["Daemoniorum Engineering <engineering@daemoniorum.com>"]
+rust-version = "1.92"
+keywords = ["compression", "lz4", "zstd", "brotli", "deflate"]
+categories = ["compression", "encoding", "no-std"]
+
+[workspace.dependencies]
+# ═══════════════════════════════════════════════════════════════════════════════
+# INTERNAL CRATES
+# ═══════════════════════════════════════════════════════════════════════════════
+haagenti = { path = "crates/haagenti" }
+haagenti-core = { path = "crates/haagenti-core" }
+haagenti-lz4 = { path = "crates/haagenti-lz4" }
+haagenti-zstd = { path = "crates/haagenti-zstd" }
+haagenti-brotli = { path = "crates/haagenti-brotli" }
+haagenti-deflate = { path = "crates/haagenti-deflate" }
+haagenti-simd = { path = "crates/haagenti-simd" }
+haagenti-stream = { path = "crates/haagenti-stream" }
+haagenti-cuda = { path = "crates/haagenti-cuda" }
+haagenti-hct = { path = "crates/haagenti-hct" }
+haagenti-fragments = { path = "crates/haagenti-fragments" }
+haagenti-network = { path = "crates/haagenti-network" }
+haagenti-importance = { path = "crates/haagenti-importance" }
+haagenti-speculative = { path = "crates/haagenti-speculative" }
+haagenti-latent-cache = { path = "crates/haagenti-latent-cache" }
+haagenti-adaptive = { path = "crates/haagenti-adaptive" }
+haagenti-sparse = { path = "crates/haagenti-sparse" }
+haagenti-neural = { path = "crates/haagenti-neural" }
+haagenti-streaming = { path = "crates/haagenti-streaming" }
+haagenti-webgpu = { path = "crates/haagenti-webgpu" }
+haagenti-mobile = { path = "crates/haagenti-mobile" }
+haagenti-serverless = { path = "crates/haagenti-serverless" }
+haagenti-distributed = { path = "crates/haagenti-distributed" }
+haagenti-merging = { path = "crates/haagenti-merging" }
+haagenti-learning = { path = "crates/haagenti-learning" }
+haagenti-autoopt = { path = "crates/haagenti-autoopt" }
+haagenti-grpc = { path = "crates/haagenti-grpc" }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMPRESSION ALGORITHMS (reference implementations)
+# ═══════════════════════════════════════════════════════════════════════════════
+# These are used as references/fallbacks, not direct dependencies
+# Haagenti implements its own optimized versions
+lz4_flex = "0.11"
+zstd = "0.13"
+zstd-safe = "7.2"
+brotli = "6.0"
+flate2 = "1.0"
+miniz_oxide = "0.8"
+libdeflater = "1.21"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ARCANUM CRYPTOGRAPHIC PRIMITIVES
+# ═══════════════════════════════════════════════════════════════════════════════
+# High-performance native crypto from Arcanum (BLAKE3, SHA-256, ChaCha20-Poly1305)
+arcanum-primitives = { path = "../arcanum/crates/arcanum-primitives", features = ["simd", "blake3", "sha2"] }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHECKSUMS & HASHING
+# ═══════════════════════════════════════════════════════════════════════════════
+crc32fast = "1.4"
+crc32c = "0.6"
+adler = "1.0"
+adler32 = "1.2"
+xxhash-rust = { version = "0.8", features = ["xxh32", "xxh64", "xxh3"] }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SIMD & PERFORMANCE
+# ═══════════════════════════════════════════════════════════════════════════════
+# Portable SIMD abstractions
+wide = "0.7"
+pulp = "0.18"
+safe_arch = "0.7"
+# FFT for fast DCT implementation
+rustfft = "6.2"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CORE UTILITIES
+# ═══════════════════════════════════════════════════════════════════════════════
+thiserror = "2.0"
+half = "2.4"
+bytes = "1.8"
+smallvec = "1.13"
+arrayvec = "0.7"
+tinyvec = { version = "1.8", features = ["alloc"] }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SEARCH & INDEXING
+# ═══════════════════════════════════════════════════════════════════════════════
+radix_trie = "0.2"
+instant-distance = "0.6"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ASYNC & STREAMING
+# ═══════════════════════════════════════════════════════════════════════════════
+tokio = { version = "1.41", features = ["io-util", "sync", "net", "fs", "rt-multi-thread", "time", "macros"] }
+tokio-stream = "0.1"
+async-trait = "0.1"
+futures = "0.3"
+pin-project-lite = "0.2"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NETWORKING & HTTP
+# ═══════════════════════════════════════════════════════════════════════════════
+reqwest = { version = "0.11", features = ["stream", "gzip", "brotli", "rustls-tls"] }
+hyper = { version = "1.5", features = ["http1", "http2", "server", "client"] }
+hyper-util = "0.1"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util", "retry", "timeout"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "decompression-gzip"] }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SERIALIZATION & DATA
+# ═══════════════════════════════════════════════════════════════════════════════
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+dashmap = "6.1"
+indexmap = { version = "2.7", features = ["serde"] }
+tracing = "0.1"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TESTING & BENCHMARKING
+# ═══════════════════════════════════════════════════════════════════════════════
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.5"
+quickcheck = "1.0"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false
+
+[profile.dev]
+opt-level = 0
+
+[profile.bench]
+inherits = "release"
+debug = true

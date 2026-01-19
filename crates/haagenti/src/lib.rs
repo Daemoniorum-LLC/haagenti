@@ -1,0 +1,468 @@
+//! # Haagenti
+//!
+//! Next-generation compression library for the Daemoniorum ecosystem.
+//!
+//! Haagenti provides a unified interface for multiple compression algorithms
+//! with SIMD acceleration and streaming support.
+//!
+//! ## Quick Start
+//!
+//! ```ignore
+//! use haagenti::{Codec, Lz4Codec, ZstdCodec};
+//!
+//! // LZ4 - fastest compression/decompression
+//! let lz4 = Lz4Codec::new();
+//! let compressed = lz4.compress(b"Hello, Haagenti!")?;
+//! let original = lz4.decompress(&compressed)?;
+//!
+//! // Zstd - balanced speed and ratio
+//! let zstd = ZstdCodec::new();
+//! let compressed = zstd.compress(b"Hello, Haagenti!")?;
+//! ```
+//!
+//! ## Available Algorithms
+//!
+//! | Algorithm | Feature | Speed | Ratio | Best For |
+//! |-----------|---------|-------|-------|----------|
+//! | LZ4 | `lz4` | ⚡⚡⚡ | ⭐⭐ | Real-time, databases |
+//! | Zstd | `zstd` | ⚡⚡ | ⭐⭐⭐ | General purpose |
+//! | Brotli | `brotli` | ⚡ | ⭐⭐⭐⭐ | Web, static content |
+//! | Deflate | `deflate` | ⚡⚡ | ⭐⭐⭐ | Compatibility |
+//!
+//! ## Feature Flags
+//!
+//! - `lz4` - LZ4 compression (default)
+//! - `zstd` - Zstandard compression (default)
+//! - `brotli` - Brotli compression (default)
+//! - `deflate` - Deflate/Gzip/Zlib compression (default)
+//! - `simd` - SIMD-accelerated primitives (default)
+//! - `stream` - Streaming I/O adapters (default)
+//! - `full` - All features enabled
+
+// Compressed tensor format for LLM weights
+pub mod tensor;
+pub use tensor::{
+    // Format constants
+    HCT_MAGIC, HCT_VERSION, HCT_VERSION_V2, DEFAULT_BLOCK_SIZE,
+    FLAG_HEADER_CHECKSUM, FLAG_BLOCK_CHECKSUMS, FLAG_QUANTIZATION, FLAG_TENSOR_NAME, FLAG_HOLOGRAPHIC,
+    // Core types
+    CompressionAlgorithm, DType, HctHeader, BlockIndex,
+    // V2 types
+    QuantizationScheme, QuantizationMetadata, BlockIndexV2,
+    // Reader/Writer
+    HctReader, HctWriter, HctReaderV2, HctWriterV2,
+    // Utilities
+    compress_file, ChecksumError,
+    CompressionStats as HctCompressionStats,
+};
+
+// Holographic compression for neural network weights
+pub mod holotensor;
+pub use holotensor::{
+    // Format constants
+    HOLO_MAGIC, HOLO_VERSION,
+    HOLO_FLAG_HEADER_CHECKSUM, HOLO_FLAG_FRAGMENT_CHECKSUMS,
+    HOLO_FLAG_QUANTIZATION, HOLO_FLAG_QUALITY_CURVE,
+    HOLO_FLAG_ESSENTIAL_FIRST, HOLO_FLAG_INTERLEAVED,
+    // Core types
+    HolographicEncoding, QualityCurve, HoloFragment, FragmentIndexEntry,
+    // Header
+    HoloTensorHeader,
+    // DCT primitives
+    dct_1d, idct_1d, dct_2d, idct_2d,
+    // Seeded RNG
+    SeededRng,
+    // Spectral encoder/decoder
+    SpectralEncoder, SpectralDecoder,
+    // Random Projection encoder/decoder
+    RphEncoder, RphDecoder,
+    // Low-Rank Distributed encoder/decoder
+    LrdfEncoder, LrdfDecoder,
+    // Unified API
+    HoloTensorEncoder, HoloTensorDecoder,
+    // File I/O
+    HoloTensorWriter, HoloTensorReader,
+    // Convenience functions
+    write_holotensor, read_holotensor, open_holotensor,
+    encode_to_file, decode_from_file, decode_from_file_progressive,
+};
+
+// Compressive spectral encoding for storage-optimized compression
+pub mod compressive;
+pub use compressive::{
+    CompressiveSpectralEncoder, CompressiveSpectralDecoder,
+};
+
+// Spectral analysis for adaptive retention
+pub mod spectral_analysis;
+pub use spectral_analysis::{
+    SpectralAnalyzer, SpectralStats, Compressibility,
+};
+
+// Adaptive spectral encoding with per-tensor retention
+pub mod adaptive;
+pub use adaptive::{
+    AdaptiveSpectralEncoder, AdaptiveSpectralDecoder,
+    AdaptiveEncodingMeta, AdaptiveBatchEncoder, BatchEncodingStats,
+};
+
+// SVD-based compression for attention weights
+pub mod svd_compression;
+pub use svd_compression::{
+    SvdEncoder, SvdDecoder, SvdCompressedWeight,
+};
+
+// Hybrid compression pipeline (auto-selects SVD or DCT per tensor)
+pub mod hybrid_compression;
+pub use hybrid_compression::{
+    HybridEncoder, HybridDecoder, HybridCompressedWeight,
+    CompressionMethod, TensorType, HybridCompressionStats,
+};
+
+// Mixed precision compression (FP16 essentials + INT4 details)
+pub mod mixed_precision;
+pub use mixed_precision::{
+    MixedPrecisionEncoder, MixedPrecisionDecoder, MixedPrecisionWeight,
+};
+
+// Importance-guided compression (training-informed coefficient selection)
+pub mod importance;
+pub use importance::{
+    ImportanceGuidedEncoder, ImportanceGuidedDecoder, ImportanceCompressedWeight,
+    ImportanceMap, TensorImportance, Sensitivity,
+};
+
+// Streaming decompression for progressive inference loading
+pub mod streaming;
+pub use streaming::{
+    StreamingTensorLoader, StreamingModelLoader, LoadPriority, LoadStatus,
+    ProgressiveLoadConfig, ProgressCallback,
+};
+
+// Production pipeline for large model compression with checkpointing
+pub mod pipeline;
+pub use pipeline::{
+    CompressionCheckpoint, CompressionConfig, CompressionPipeline, CompressionReport,
+    IncrementalHctWriter, PipelineConfig, QualityReport, QualitySampler, QualitySummary,
+    ShardReader, ShardStatus, TensorEntry, TensorIndexEntry, TensorResult, TensorStatus,
+};
+
+// HCT Specification Test Vectors for formal verification
+pub mod hct_test_vectors;
+pub use hct_test_vectors::{
+    HctTestVector, all_test_vectors, all_stress_vectors,
+    reference_dct_2d, reference_idct_2d, cosine_similarity,
+};
+
+// Testing utilities (safetensors parsing, quality metrics, INT4 quantization)
+// Available when `testing` feature is enabled or during tests
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
+
+// Re-export core traits and types
+pub use haagenti_core::{
+    Algorithm, Codec, CompressionLevel, CompressionStats, Compressor, Decompressor,
+    DictionaryCompressor, DictionaryDecompressor, Error, Result,
+};
+
+// Re-export LZ4
+#[cfg(feature = "lz4")]
+pub use haagenti_lz4::{Lz4Codec, Lz4Compressor, Lz4Decompressor};
+
+// Re-export Zstd
+#[cfg(feature = "zstd")]
+pub use haagenti_zstd::{
+    ZstdCodec, ZstdCompressor, ZstdDecompressor,
+    // Dictionary compression support
+    ZstdDictionary, ZstdDictCompressor, ZstdDictDecompressor,
+};
+
+// Re-export Zstd compression analysis (entropy fingerprinting)
+#[cfg(feature = "zstd")]
+pub mod entropy {
+    //! Fast entropy fingerprinting for compression decisions.
+    //!
+    //! Phase 3 optimization: Ultra-fast (~100 cycles) entropy estimation
+    //! to skip compression for incompressible data.
+    pub use haagenti_zstd::compress::{
+        fast_entropy_estimate, fast_should_compress, fast_predict_block_type, FastBlockType,
+        CompressibilityFingerprint, PatternType, CompressionStrategy,
+    };
+}
+
+// Re-export Brotli
+#[cfg(feature = "brotli")]
+pub use haagenti_brotli::{BrotliCodec, BrotliCompressor, BrotliDecompressor};
+
+// Re-export Deflate/Gzip/Zlib
+#[cfg(feature = "deflate")]
+pub use haagenti_deflate::{
+    DeflateCodec, DeflateCompressor, DeflateDecompressor, GzipCodec, GzipCompressor,
+    GzipDecompressor, ZlibCodec, ZlibCompressor, ZlibDecompressor,
+};
+
+// Re-export SIMD utilities
+#[cfg(feature = "simd")]
+pub mod simd {
+    //! SIMD-accelerated primitives.
+    pub use haagenti_simd::{
+        copy_match, detect_simd, fill_repeat, find_match_length, find_match_length_safe,
+        has_avx2, has_avx512, has_neon, simd_level, SimdLevel,
+    };
+}
+
+// Re-export streaming utilities
+#[cfg(feature = "stream")]
+pub mod stream {
+    //! Streaming compression adapters.
+    pub use haagenti_stream::{
+        clamp_buffer_size, CompressWriter, DecompressReader, ReadAdapter, StreamBuffer,
+        WriteAdapter, DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE, MIN_BUFFER_SIZE,
+    };
+}
+
+/// Compress data using the specified algorithm.
+///
+/// This is a convenience function for one-shot compression.
+///
+/// # Example
+///
+/// ```ignore
+/// use haagenti::{compress, Algorithm};
+///
+/// let compressed = compress(b"Hello!", Algorithm::Lz4)?;
+/// ```
+pub fn compress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
+    compress_with_level(data, algorithm, CompressionLevel::Default)
+}
+
+/// Compress data using the specified algorithm and level.
+pub fn compress_with_level(
+    data: &[u8],
+    algorithm: Algorithm,
+    level: CompressionLevel,
+) -> Result<Vec<u8>> {
+    match algorithm {
+        #[cfg(feature = "lz4")]
+        Algorithm::Lz4 => Lz4Codec::with_level(level).compress(data),
+
+        #[cfg(feature = "zstd")]
+        Algorithm::Zstd => ZstdCodec::with_level(level).compress(data),
+
+        #[cfg(feature = "brotli")]
+        Algorithm::Brotli => BrotliCodec::with_level(level).compress(data),
+
+        #[cfg(feature = "deflate")]
+        Algorithm::Deflate => DeflateCodec::with_level(level).compress(data),
+
+        #[cfg(feature = "deflate")]
+        Algorithm::Gzip => GzipCodec::with_level(level).compress(data),
+
+        #[cfg(feature = "deflate")]
+        Algorithm::Zlib => ZlibCodec::with_level(level).compress(data),
+
+        #[allow(unreachable_patterns)]
+        _ => Err(Error::algorithm("unsupported", "algorithm not enabled")),
+    }
+}
+
+/// Decompress data using the specified algorithm.
+///
+/// # Example
+///
+/// ```ignore
+/// use haagenti::{decompress, Algorithm};
+///
+/// let original = decompress(&compressed, Algorithm::Lz4)?;
+/// ```
+pub fn decompress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
+    match algorithm {
+        #[cfg(feature = "lz4")]
+        Algorithm::Lz4 => Lz4Codec::new().decompress(data),
+
+        #[cfg(feature = "zstd")]
+        Algorithm::Zstd => ZstdCodec::new().decompress(data),
+
+        #[cfg(feature = "brotli")]
+        Algorithm::Brotli => BrotliCodec::new().decompress(data),
+
+        #[cfg(feature = "deflate")]
+        Algorithm::Deflate => DeflateCodec::new().decompress(data),
+
+        #[cfg(feature = "deflate")]
+        Algorithm::Gzip => GzipCodec::new().decompress(data),
+
+        #[cfg(feature = "deflate")]
+        Algorithm::Zlib => ZlibCodec::new().decompress(data),
+
+        #[allow(unreachable_patterns)]
+        _ => Err(Error::algorithm("unsupported", "algorithm not enabled")),
+    }
+}
+
+/// Auto-detect algorithm from compressed data header.
+///
+/// Returns `None` if the format cannot be detected.
+pub fn detect_algorithm(data: &[u8]) -> Option<Algorithm> {
+    if data.len() < 2 {
+        return None;
+    }
+
+    // Gzip magic: 1f 8b
+    if data[0] == 0x1f && data[1] == 0x8b {
+        return Some(Algorithm::Gzip);
+    }
+
+    // Zlib: first byte indicates compression method
+    // CMF = 0x78 (deflate with 32K window) is most common
+    if data[0] == 0x78 && (data[1] == 0x01 || data[1] == 0x5e || data[1] == 0x9c || data[1] == 0xda)
+    {
+        return Some(Algorithm::Zlib);
+    }
+
+    // Zstd magic: 28 b5 2f fd
+    if data.len() >= 4 && data[0] == 0x28 && data[1] == 0xb5 && data[2] == 0x2f && data[3] == 0xfd {
+        return Some(Algorithm::Zstd);
+    }
+
+    // LZ4 frame magic: 04 22 4d 18
+    if data.len() >= 4 && data[0] == 0x04 && data[1] == 0x22 && data[2] == 0x4d && data[3] == 0x18 {
+        return Some(Algorithm::Lz4);
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "lz4")]
+    fn test_lz4_codec_roundtrip() {
+        // LZ4 block format requires using compress_with_size/decompress_sized
+        let codec = Lz4Codec::new();
+        let data = b"Hello, Haagenti! This is a test of LZ4 compression.";
+        let (compressed, size) = codec.compress_with_size(data).unwrap();
+        let decompressed = codec.decompress_sized(&compressed, size).unwrap();
+        assert_eq!(decompressed.as_slice(), data);
+    }
+
+    #[test]
+    #[cfg(feature = "zstd")]
+    fn test_zstd_roundtrip() {
+        let data = b"Hello, Haagenti! This is a test of Zstd compression.";
+        let compressed = compress(data, Algorithm::Zstd).unwrap();
+        let decompressed = decompress(&compressed, Algorithm::Zstd).unwrap();
+        assert_eq!(decompressed.as_slice(), data);
+    }
+
+    #[test]
+    #[cfg(feature = "brotli")]
+    fn test_brotli_roundtrip() {
+        let data = b"Hello, Haagenti! This is a test of Brotli compression.";
+        let compressed = compress(data, Algorithm::Brotli).unwrap();
+        let decompressed = decompress(&compressed, Algorithm::Brotli).unwrap();
+        assert_eq!(decompressed.as_slice(), data);
+    }
+
+    #[test]
+    #[cfg(feature = "deflate")]
+    fn test_gzip_roundtrip() {
+        let data = b"Hello, Haagenti! This is a test of Gzip compression.";
+        let compressed = compress(data, Algorithm::Gzip).unwrap();
+        let decompressed = decompress(&compressed, Algorithm::Gzip).unwrap();
+        assert_eq!(decompressed.as_slice(), data);
+    }
+
+    #[test]
+    #[cfg(feature = "deflate")]
+    fn test_detect_gzip() {
+        let data = b"Hello, Haagenti!";
+        let compressed = compress(data, Algorithm::Gzip).unwrap();
+        assert_eq!(detect_algorithm(&compressed), Some(Algorithm::Gzip));
+    }
+
+    #[test]
+    #[cfg(feature = "zstd")]
+    fn test_detect_zstd() {
+        let data = b"Hello, Haagenti!";
+        let compressed = compress(data, Algorithm::Zstd).unwrap();
+        assert_eq!(detect_algorithm(&compressed), Some(Algorithm::Zstd));
+    }
+
+    #[test]
+    #[cfg(feature = "zstd")]
+    fn test_compression_levels() {
+        // Use Zstd for level testing since it has a proper frame format
+        let data = b"Test data for compression level testing with some extra content.";
+        for level in [
+            CompressionLevel::Fast,
+            CompressionLevel::Default,
+            CompressionLevel::Best,
+        ] {
+            let compressed = compress_with_level(data, Algorithm::Zstd, level).unwrap();
+            let decompressed = decompress(&compressed, Algorithm::Zstd).unwrap();
+            assert_eq!(decompressed.as_slice(), data);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "lz4")]
+    fn test_lz4_codec_levels() {
+        let data = b"Test data for LZ4 compression level testing.";
+        for level in [
+            CompressionLevel::Fast,
+            CompressionLevel::Default,
+            CompressionLevel::Best,
+        ] {
+            let codec = Lz4Codec::with_level(level);
+            let (compressed, size) = codec.compress_with_size(data).unwrap();
+            let decompressed = codec.decompress_sized(&compressed, size).unwrap();
+            assert_eq!(decompressed.as_slice(), data);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "zstd")]
+    fn test_dictionary_compression_roundtrip() {
+        // Create sample data with repeating patterns (dictionary-friendly)
+        let samples: Vec<&[u8]> = vec![
+            b"The quick brown fox jumps over the lazy dog.",
+            b"The quick brown cat jumps over the lazy mouse.",
+            b"The quick brown bird jumps over the lazy snake.",
+            b"The quick brown fish jumps over the lazy frog.",
+            b"The quick brown deer jumps over the lazy bear.",
+        ];
+
+        // Train dictionary from samples
+        let dict = ZstdDictionary::train(&samples, 4096).unwrap();
+        assert!(dict.id() != 0);
+        assert!(dict.size() > 0);
+
+        // Compress with dictionary
+        let compressor = ZstdDictCompressor::new(dict.clone());
+        let test_data = b"The quick brown wolf jumps over the lazy rabbit.";
+        let compressed = compressor.compress(test_data).unwrap();
+
+        // Decompress with dictionary
+        let decompressor = ZstdDictDecompressor::new(dict);
+        let decompressed = decompressor.decompress(&compressed).unwrap();
+
+        assert_eq!(decompressed.as_slice(), test_data);
+    }
+
+    #[test]
+    #[cfg(feature = "zstd")]
+    fn test_dictionary_serialization() {
+        let content = b"Sample dictionary content for testing serialization.";
+        let dict = ZstdDictionary::from_content(content.to_vec()).unwrap();
+
+        // Serialize and parse
+        let serialized = dict.serialize();
+        let parsed = ZstdDictionary::parse(&serialized).unwrap();
+
+        assert_eq!(dict.id(), parsed.id());
+    }
+}

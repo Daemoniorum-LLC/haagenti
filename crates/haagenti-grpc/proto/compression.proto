@@ -1,0 +1,200 @@
+syntax = "proto3";
+
+package haagenti.compression.v1;
+
+option java_package = "com.daemoniorum.haagenti.grpc";
+option java_outer_classname = "CompressionProto";
+option java_multiple_files = true;
+
+// Haagenti Compression Service
+//
+// High-performance compression service using pure Rust implementations
+// of LZ4, Zstd, Brotli, and Deflate algorithms.
+service CompressionService {
+    // Compress data in one shot
+    rpc Compress(CompressRequest) returns (CompressResponse);
+
+    // Decompress data in one shot
+    rpc Decompress(DecompressRequest) returns (DecompressResponse);
+
+    // Streaming compression for large data
+    rpc CompressStream(stream CompressChunk) returns (stream CompressedChunk);
+
+    // Streaming decompression for large data
+    rpc DecompressStream(stream CompressedChunk) returns (stream DecompressedChunk);
+
+    // Train a dictionary from samples
+    rpc TrainDictionary(TrainDictionaryRequest) returns (TrainDictionaryResponse);
+
+    // Compress with a pre-trained dictionary
+    rpc CompressWithDictionary(CompressWithDictRequest) returns (CompressResponse);
+
+    // Decompress with a pre-trained dictionary
+    rpc DecompressWithDictionary(DecompressWithDictRequest) returns (DecompressResponse);
+
+    // Get compression statistics
+    rpc GetStats(GetStatsRequest) returns (CompressionStats);
+
+    // Measure compression ratio without keeping result
+    rpc MeasureCompression(MeasureRequest) returns (MeasureResponse);
+
+    // Health check
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Compression algorithms
+enum Algorithm {
+    ALGORITHM_UNSPECIFIED = 0;
+    ALGORITHM_LZ4 = 1;
+    ALGORITHM_LZ4_HC = 2;
+    ALGORITHM_ZSTD = 3;
+    ALGORITHM_BROTLI = 4;
+    ALGORITHM_GZIP = 5;
+    ALGORITHM_DEFLATE = 6;
+    ALGORITHM_ZLIB = 7;
+}
+
+// Compression levels
+enum CompressionLevel {
+    LEVEL_UNSPECIFIED = 0;
+    LEVEL_FAST = 1;        // Speed optimized
+    LEVEL_DEFAULT = 2;     // Balanced
+    LEVEL_BEST = 3;        // Ratio optimized
+    LEVEL_ULTRA = 4;       // Maximum compression
+}
+
+// One-shot compression request
+message CompressRequest {
+    bytes data = 1;
+    Algorithm algorithm = 2;
+    CompressionLevel level = 3;
+    int32 custom_level = 4;  // Algorithm-specific level (0-22 for zstd)
+    bool calculate_checksum = 5;
+}
+
+// Compression response
+message CompressResponse {
+    bytes compressed_data = 1;
+    int64 original_size = 2;
+    int64 compressed_size = 3;
+    double compression_ratio = 4;
+    string checksum = 5;  // SHA-256 if requested
+    int64 compression_time_nanos = 6;
+}
+
+// One-shot decompression request
+message DecompressRequest {
+    bytes compressed_data = 1;
+    Algorithm algorithm = 2;
+    int64 expected_size = 3;  // Optional hint for allocation
+    bool verify_checksum = 4;
+    string expected_checksum = 5;
+}
+
+// Decompression response
+message DecompressResponse {
+    bytes data = 1;
+    int64 decompressed_size = 2;
+    int64 decompression_time_nanos = 3;
+    bool checksum_valid = 4;
+}
+
+// Streaming compression chunk
+message CompressChunk {
+    bytes data = 1;
+    bool is_last = 2;
+    // First chunk should include these
+    Algorithm algorithm = 3;
+    CompressionLevel level = 4;
+}
+
+// Streaming compressed chunk
+message CompressedChunk {
+    bytes data = 1;
+    bool is_last = 2;
+    int64 bytes_processed = 3;
+}
+
+// Streaming decompressed chunk
+message DecompressedChunk {
+    bytes data = 1;
+    bool is_last = 2;
+    int64 bytes_processed = 3;
+}
+
+// Dictionary training request
+message TrainDictionaryRequest {
+    repeated bytes samples = 1;
+    int32 dictionary_size = 2;  // Target size in bytes (default 65536)
+    Algorithm algorithm = 3;     // Currently only ZSTD supported
+}
+
+// Dictionary training response
+message TrainDictionaryResponse {
+    bytes dictionary = 1;
+    int32 dictionary_size = 2;
+    int32 sample_count = 3;
+    int64 training_time_nanos = 4;
+}
+
+// Compress with dictionary request
+message CompressWithDictRequest {
+    bytes data = 1;
+    bytes dictionary = 2;
+    Algorithm algorithm = 3;
+    CompressionLevel level = 4;
+}
+
+// Decompress with dictionary request
+message DecompressWithDictRequest {
+    bytes compressed_data = 1;
+    bytes dictionary = 2;
+    Algorithm algorithm = 3;
+}
+
+// Statistics request
+message GetStatsRequest {
+    // Empty - returns cumulative stats
+}
+
+// Compression statistics
+message CompressionStats {
+    int64 total_bytes_compressed = 1;
+    int64 total_bytes_decompressed = 2;
+    int64 total_compressed_output = 3;
+    double average_compression_ratio = 4;
+    int64 compression_operations = 5;
+    int64 decompression_operations = 6;
+    int64 uptime_seconds = 7;
+    map<string, int64> operations_by_algorithm = 8;
+}
+
+// Measure compression request
+message MeasureRequest {
+    bytes data = 1;
+    Algorithm algorithm = 2;
+    CompressionLevel level = 3;
+}
+
+// Measure compression response
+message MeasureResponse {
+    int64 original_size = 1;
+    int64 compressed_size = 2;
+    double compression_ratio = 3;
+    double savings_percent = 4;
+    int64 compression_time_nanos = 5;
+}
+
+// Health check request
+message HealthCheckRequest {
+    bool include_algorithms = 1;
+}
+
+// Health check response
+message HealthCheckResponse {
+    bool healthy = 1;
+    string version = 2;
+    repeated Algorithm available_algorithms = 3;
+    bool simd_available = 4;
+    string simd_level = 5;  // "avx512", "avx2", "neon", "none"
+}

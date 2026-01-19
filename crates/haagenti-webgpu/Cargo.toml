@@ -1,0 +1,50 @@
+[package]
+name = "haagenti-webgpu"
+version = "0.1.0"
+edition = "2021"
+description = "WebGPU deployment for browser-based model inference"
+license = "MIT"
+authors = ["Daemoniorum LLC"]
+keywords = ["webgpu", "wgsl", "browser", "inference"]
+categories = ["wasm", "web-programming"]
+
+[dependencies]
+haagenti-core = { workspace = true }
+
+# Data structures
+bytes = { workspace = true }
+smallvec = { workspace = true }
+
+# Async
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.99"
+wasm-bindgen-futures = "0.4.49"
+js-sys = "0.3.76"
+web-sys = { version = "0.3.76", features = [
+    "Gpu", "GpuAdapter", "GpuDevice", "GpuQueue",
+    "GpuBuffer", "GpuBufferDescriptor", "gpu_buffer_usage",
+    "GpuShaderModule", "GpuShaderModuleDescriptor",
+    "GpuComputePipeline", "GpuComputePipelineDescriptor",
+    "GpuBindGroup", "GpuBindGroupDescriptor", "GpuBindGroupEntry",
+    "GpuBindGroupLayout", "GpuBindGroupLayoutDescriptor",
+    "GpuCommandEncoder", "GpuComputePassEncoder",
+    "Navigator", "Window",
+] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[lib]
+crate-type = ["cdylib", "rlib"]

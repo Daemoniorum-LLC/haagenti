@@ -1,0 +1,68 @@
+[package]
+name = "haagenti-grpc"
+version = "0.1.0"
+edition = "2021"
+description = "gRPC server for Haagenti compression service"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Daemoniorum-LLC/workspace"
+keywords = ["compression", "grpc", "zstd", "lz4", "brotli"]
+categories = ["compression", "network-programming"]
+
+[dependencies]
+# Haagenti compression crates
+haagenti-core = { path = "../haagenti-core" }
+haagenti-zstd = { path = "../haagenti-zstd" }
+haagenti-lz4 = { path = "../haagenti-lz4", optional = true }
+haagenti-brotli = { path = "../haagenti-brotli", optional = true }
+haagenti-deflate = { path = "../haagenti-deflate", optional = true }
+
+# gRPC
+tonic = { version = "0.12", features = ["tls"] }
+prost = "0.13"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+
+# Utilities
+sha2 = "0.10"
+hex = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-stream = "0.3"
+futures = "0.3"
+
+# Configuration
+clap = { version = "4", features = ["derive"] }
+config = "0.14"
+serde = { version = "1", features = ["derive"] }
+
+# Metrics
+metrics = "0.23"
+metrics-exporter-prometheus = "0.15"
+
+# Error handling
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+tonic-build = "0.12"
+protobuf-src = "1.1"
+
+[features]
+default = ["zstd", "lz4"]
+zstd = []
+lz4 = ["dep:haagenti-lz4"]
+brotli = ["dep:haagenti-brotli"]
+deflate = ["dep:haagenti-deflate"]
+all-algorithms = ["zstd", "lz4", "brotli", "deflate"]
+
+[[bin]]
+name = "haagenti-server"
+path = "src/main.rs"
+
+[lib]
+name = "haagenti_grpc"
+path = "src/lib.rs"

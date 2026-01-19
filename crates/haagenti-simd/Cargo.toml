@@ -1,0 +1,27 @@
+[package]
+name = "haagenti-simd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "SIMD-accelerated primitives for Haagenti"
+keywords = ["simd", "avx2", "neon", "performance"]
+categories = ["compression", "hardware-support"]
+
+[features]
+default = ["std", "auto-detect"]
+std = ["haagenti-core/std"]
+auto-detect = []  # Runtime SIMD detection
+avx2 = []         # Force AVX2
+avx512 = []       # Force AVX-512
+neon = []         # Force ARM NEON
+
+[dependencies]
+haagenti-core = { workspace = true }
+wide = { workspace = true }
+safe_arch = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
