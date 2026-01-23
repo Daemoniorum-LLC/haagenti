@@ -1,4 +1,6 @@
 //! Trace the exact FSE bitstream for failing 2-sequence case.
+#![allow(unused_variables)]
+#![allow(clippy::unnecessary_cast)]
 
 use haagenti_zstd::fse::{
     BitReader, FseDecoder, FseTable, LITERAL_LENGTH_ACCURACY_LOG,

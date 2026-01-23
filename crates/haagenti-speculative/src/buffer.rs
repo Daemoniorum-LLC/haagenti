@@ -347,6 +347,7 @@ impl SpeculationBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use crate::intent::FragmentHint;
     use haagenti_importance::SemanticCategory;
 

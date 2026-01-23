@@ -397,7 +397,7 @@ mod gpu_codebook_tests {
 
         // Check values are in range
         for &v in &codebook.centroids {
-            assert!(v >= -1.0 && v <= 1.0);
+            assert!((-1.0..=1.0).contains(&v));
         }
     }
 
@@ -445,7 +445,7 @@ mod gpu_codebook_tests {
         let indices = vec![0u8, 1, 2, 3, 0, 1];
         let result = decoder.lookup(&indices).unwrap();
 
-        let expected = vec![
+        let expected = [
             1.0, 0.0, // code 0
             0.0, 1.0, // code 1
             -1.0, 0.0, // code 2

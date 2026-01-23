@@ -519,6 +519,7 @@ mod system_time_serde {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use std::io::Read;
     use tempfile::tempdir;
 

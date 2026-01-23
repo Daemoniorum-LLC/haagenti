@@ -81,10 +81,10 @@
 //!
 //! ## Components
 //!
-//! - [`analysis`]: Compressibility fingerprinting and strategy selection
-//! - [`match_finder`]: LZ77 match finding using hash chains
-//! - [`sequences`]: RLE-first sequence encoding with FSE fallback
-//! - [`block`]: Block-level encoding (literals + sequences)
+//! - `analysis`: Compressibility fingerprinting and strategy selection
+//! - `match_finder`: LZ77 match finding using hash chains
+//! - `sequences`: RLE-first sequence encoding with FSE fallback
+//! - `block`: Block-level encoding (literals + sequences)
 //!
 //! ## Strategy Selection
 //!

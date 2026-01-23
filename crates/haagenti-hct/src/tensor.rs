@@ -1153,7 +1153,7 @@ mod tests {
         writer.compress_data(&original_data, &compressor).unwrap();
         writer.finish().unwrap();
 
-        assert!(&buffer[0..4] == &HCT_MAGIC);
+        assert!(buffer[0..4] == HCT_MAGIC);
 
         // Decompress
         use haagenti_lz4::Lz4Decompressor;

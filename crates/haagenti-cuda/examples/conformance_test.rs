@@ -159,8 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tv.dct_coefficients.iter().copied().enumerate().collect();
         indexed_ref.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
 
-        for i in 0..8.min(gpu_dct.len()) {
-            let (idx, gpu_val) = indexed_gpu[i];
+        for (idx, gpu_val) in indexed_gpu.iter().take(8.min(gpu_dct.len())).copied() {
             let ref_val = tv.dct_coefficients[idx];
             let diff = (gpu_val - ref_val).abs();
             let row = idx / cols;

@@ -1,4 +1,5 @@
 //! Compare working vs broken cases
+#![allow(unused_variables)]
 
 use haagenti_core::{CompressionLevel, Compressor};
 use haagenti_zstd::compress::block::matches_to_sequences;

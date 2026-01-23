@@ -1310,7 +1310,7 @@ mod tests {
         let fragments = encoder.encode_2d(&input, 32, 32).unwrap();
 
         // Should produce multiple fragments
-        assert!(fragments.len() >= 1, "Should produce at least 1 fragment");
+        assert!(!fragments.is_empty(), "Should produce at least 1 fragment");
 
         let mut decoder = CompressiveSpectralDecoder::new();
         decoder.add_essentials(&fragments[0]).unwrap();
@@ -1386,7 +1386,7 @@ mod tests {
 
     #[test]
     fn test_decoder_without_essentials() {
-        let mut decoder = CompressiveSpectralDecoder::new();
+        let decoder = CompressiveSpectralDecoder::new();
         // Should fail or return error when reconstructing without essentials
         let result = decoder.reconstruct();
         assert!(
@@ -1604,8 +1604,8 @@ mod tests {
         let result = encoder.encode_2d(&input, 8, 8);
         // Should handle gracefully
         if let Ok(fragments) = result {
-            // May have empty or minimal data
-            assert!(fragments.is_empty() || fragments[0].data.is_empty() || fragments.len() >= 1);
+            // May have empty or minimal data - just verify it didn't panic
+            let _ = fragments.is_empty();
         }
     }
 

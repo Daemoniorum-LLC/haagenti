@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_bytes_to_f32_f32() {
-        let val: f32 = 3.14159;
+        let val: f32 = std::f32::consts::PI;
         let bytes = val.to_le_bytes();
         let result = bytes_to_f32(&bytes, "F32");
         assert_eq!(result.len(), 1);

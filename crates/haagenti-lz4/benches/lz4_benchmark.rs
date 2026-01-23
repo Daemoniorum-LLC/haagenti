@@ -50,6 +50,7 @@ fn generate_test_data(size: usize, compressibility: f64) -> Vec<u8> {
 }
 
 /// Generate data that simulates neural network weights (near-zero distribution).
+#[allow(dead_code)]
 fn generate_weight_like_data(size: usize) -> Vec<u8> {
     let mut rng = StdRng::seed_from_u64(42);
     let mut data = Vec::with_capacity(size);

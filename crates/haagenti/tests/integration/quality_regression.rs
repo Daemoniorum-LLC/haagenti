@@ -2,6 +2,7 @@
 //!
 //! These tests establish baseline quality metrics and fail if quality degrades.
 //! Run with: cargo test --test integration_tests --features="lz4,zstd,testing"
+#![allow(dead_code)]
 
 use haagenti::adaptive::AdaptiveSpectralEncoder;
 use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};

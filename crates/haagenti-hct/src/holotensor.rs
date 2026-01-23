@@ -1726,9 +1726,9 @@ impl HoloTensorDecoder {
     ///
     /// Flattens tensor shape to 2D the same way as the encoder:
     /// - 0D: (1, 1)
-    /// - 1D [N]: (1, N)
-    /// - 2D [M, N]: (M, N)
-    /// - 3D+ [A, B, C, ...]: (A, B*C*...) - first dim x product of rest
+    /// - 1D `[N]`: (1, N)
+    /// - 2D `[M, N]`: (M, N)
+    /// - 3D+ `[A, B, C, ...]`: (A, B*C*...) - first dim x product of rest
     pub fn new(header: HoloTensorHeader) -> Self {
         let (rows, cols) = match header.shape.len() {
             0 => (1, 1),

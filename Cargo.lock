@@ -1994,7 +1994,6 @@ dependencies = [
  "async-trait",
  "bincode",
  "bytes",
- "criterion",
  "futures",
  "haagenti-core",
  "pin-project-lite",

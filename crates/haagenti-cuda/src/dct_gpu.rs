@@ -17,8 +17,8 @@
 //! 1. 1D DCT on all rows (each thread computes one output coefficient)
 //! 2. 1D DCT on all columns (each thread computes one output coefficient)
 //!
-//! DCT-II formula: X[k] = sum_n x[n] * cos(π(2n+1)k / 2N)
-//! DCT-III (IDCT): x[n] = sum_k X[k] * cos(π(2n+1)k / 2N) (with normalization)
+//! DCT-II formula: `X[k] = sum_n x[n] * cos(π(2n+1)k / 2N)`
+//! DCT-III (IDCT): `x[n] = sum_k X[k] * cos(π(2n+1)k / 2N)` (with normalization)
 //!
 //! ## Algorithm Complexity
 //!

@@ -1,4 +1,5 @@
 //! Decode reference zstd bitstream bit-by-bit
+#![allow(unused_variables)]
 
 use haagenti_zstd::fse::{
     BitReader, FseDecoder, FseTable, LITERAL_LENGTH_ACCURACY_LOG,

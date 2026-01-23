@@ -1,3 +1,10 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(unused_variables))]
+#![cfg_attr(test, allow(unused_mut))]
+#![cfg_attr(test, allow(clippy::needless_range_loop))]
+#![cfg_attr(test, allow(clippy::manual_repeat_n))]
+#![cfg_attr(test, allow(clippy::useless_vec))]
+
 //! # Haagenti Core
 //!
 //! Core traits, types, and streaming API for the Haagenti compression library.

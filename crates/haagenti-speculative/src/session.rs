@@ -1,4 +1,5 @@
 //! Session history tracking for pattern learning
+#![allow(clippy::items_after_test_module)]
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -347,7 +348,7 @@ mod tests {
 
         let export = history.export();
         assert_eq!(export.prompt_count, 5);
-        assert!(export.session_duration >= 0);
+        let _ = export.session_duration; // Just verify it exists
     }
 
     #[test]
@@ -430,8 +431,8 @@ mod tests {
     fn test_session_duration() {
         let history = SessionHistory::new(100);
 
-        // Duration should be >= 0 (just created)
-        assert!(history.session_duration() >= 0);
+        // Duration should exist (always >= 0 for u64)
+        let _ = history.session_duration();
     }
 }
 

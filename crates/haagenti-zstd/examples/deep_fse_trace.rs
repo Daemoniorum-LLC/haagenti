@@ -1,4 +1,5 @@
 //! Deep trace of FSE encoding to find the bug
+#![allow(unused_imports)]
 
 use haagenti_zstd::block::Sequence;
 use haagenti_zstd::compress::EncodedSequence;

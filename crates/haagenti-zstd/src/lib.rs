@@ -1,3 +1,26 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(unused_imports))]
+#![cfg_attr(test, allow(unused_variables))]
+#![cfg_attr(test, allow(unused_mut))]
+#![cfg_attr(test, allow(clippy::int_plus_one))]
+#![cfg_attr(test, allow(clippy::precedence))]
+#![cfg_attr(test, allow(clippy::unnecessary_unwrap))]
+#![cfg_attr(test, allow(clippy::slow_vector_initialization))]
+#![cfg_attr(test, allow(clippy::manual_repeat_n))]
+#![cfg_attr(test, allow(clippy::len_zero))]
+#![cfg_attr(test, allow(clippy::manual_range_contains))]
+#![cfg_attr(test, allow(clippy::identity_op))]
+#![cfg_attr(test, allow(clippy::needless_range_loop))]
+#![cfg_attr(test, allow(clippy::assertions_on_constants))]
+#![cfg_attr(test, allow(clippy::same_item_push))]
+#![cfg_attr(test, allow(clippy::if_same_then_else))]
+#![cfg_attr(test, allow(clippy::expect_fun_call))]
+#![cfg_attr(test, allow(clippy::redundant_slicing))]
+#![cfg_attr(test, allow(clippy::collapsible_else_if))]
+#![cfg_attr(test, allow(clippy::redundant_closure))]
+#![cfg_attr(test, allow(clippy::manual_div_ceil))]
+#![cfg_attr(test, allow(clippy::useless_vec))]
+
 //! # Haagenti Zstd
 //!
 //! Native Rust implementation of Zstandard compression (RFC 8878).

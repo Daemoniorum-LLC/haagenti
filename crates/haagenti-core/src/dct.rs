@@ -72,7 +72,7 @@ where
 /// 1D Discrete Cosine Transform Type-II using FFT.
 ///
 /// Transforms spatial domain to frequency domain.
-/// DCT-II: X[k] = sum_{n=0}^{N-1} x[n] * cos(pi/N * (n + 0.5) * k)
+/// DCT-II: `X[k] = sum_{n=0}^{N-1} x[n] * cos(pi/N * (n + 0.5) * k)`
 ///
 /// This implementation uses the FFT-based algorithm for O(n log n) complexity
 /// instead of the naive O(n²) approach.

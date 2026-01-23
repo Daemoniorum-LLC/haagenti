@@ -1,3 +1,6 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(clippy::useless_vec))]
+
 //! Mobile deployment support for iOS (CoreML) and Android (NNAPI)
 //!
 //! This crate provides optimized inference for mobile devices with:

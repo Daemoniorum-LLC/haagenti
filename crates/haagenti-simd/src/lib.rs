@@ -1,3 +1,8 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(clippy::useless_vec))]
+#![cfg_attr(test, allow(clippy::len_zero))]
+#![cfg_attr(test, allow(clippy::needless_range_loop))]
+
 //! # Haagenti SIMD
 //!
 //! SIMD-accelerated primitives for compression algorithms.

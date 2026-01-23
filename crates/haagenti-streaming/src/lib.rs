@@ -1,3 +1,6 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(clippy::manual_range_contains))]
+
 //! Real-Time Streaming Generation
 //!
 //! Display progressively improving images during generation with

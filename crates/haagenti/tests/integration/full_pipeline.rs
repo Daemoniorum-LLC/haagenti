@@ -34,7 +34,7 @@ fn generate_synthetic_weights(width: usize, height: usize, seed: u64) -> Vec<f32
         let x = (i % width) as f32 / width as f32;
         let y = (i / width) as f32 / height as f32;
 
-        let structured = (x * 6.28).sin() * (y * 6.28).cos() * 0.3;
+        let structured = (x * std::f32::consts::TAU).sin() * (y * std::f32::consts::TAU).cos() * 0.3;
         let noise = ((hash as f32 / u64::MAX as f32) - 0.5) * 0.4;
 
         weights.push(structured + noise);

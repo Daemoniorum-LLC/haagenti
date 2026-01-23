@@ -1,5 +1,8 @@
 //! Deep comparison of our FSE encoding vs reference zstd.
 //! Trace the exact sequence values and their encoding.
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(clippy::unnecessary_cast)]
 
 use haagenti_zstd::fse::{
     BitReader, FseDecoder, FseTable, LITERAL_LENGTH_ACCURACY_LOG,

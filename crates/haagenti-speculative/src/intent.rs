@@ -539,8 +539,8 @@ mod tests {
 
         // Should have primary
         assert!(result.primary.is_some());
-        // Latency should be recorded
-        assert!(result.latency_us >= 0);
+        // Latency should be recorded (always true for u64, but verifies it's set)
+        let _ = result.latency_us; // Just verify it exists
     }
 
     #[test]

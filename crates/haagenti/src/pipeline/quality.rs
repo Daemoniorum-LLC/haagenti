@@ -285,6 +285,7 @@ impl QualitySummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{cosine_similarity, mse};
 
     #[test]
     fn test_quality_report_identical() {
@@ -357,12 +358,12 @@ mod tests {
     }
 
     #[test]
-    fn test_mean_squared_error() {
+    fn test_mse() {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![1.0, 2.0, 3.0];
         let c = vec![2.0, 3.0, 4.0];
 
-        assert!(mean_squared_error(&a, &b) < 0.0001); // Identical
-        assert!((mean_squared_error(&a, &c) - 1.0).abs() < 0.0001); // Each off by 1
+        assert!(mse(&a, &b) < 0.0001); // Identical
+        assert!((mse(&a, &c) - 1.0).abs() < 0.0001); // Each off by 1
     }
 }

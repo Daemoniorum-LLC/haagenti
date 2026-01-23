@@ -1,3 +1,10 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(clippy::assertions_on_constants))]
+#![cfg_attr(test, allow(clippy::needless_range_loop))]
+#![cfg_attr(test, allow(clippy::op_ref))]
+#![cfg_attr(test, allow(unused_variables))]
+#![cfg_attr(test, allow(unused_mut))]
+
 //! # Haagenti Compressed Tensor (HCT) Format
 //!
 //! High-performance compressed tensor storage for neural network weights,

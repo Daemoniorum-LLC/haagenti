@@ -1,3 +1,6 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(clippy::useless_vec))]
+
 //! Model merging techniques
 //!
 //! This crate provides advanced model merging capabilities:

@@ -102,7 +102,7 @@ pub fn compute_quality(original: &[f32], reconstructed: &[f32]) -> QualityReport
 
 /// Compute Mean Squared Error between two arrays.
 ///
-/// MSE = (1/n) * Σ(original[i] - reconstructed[i])²
+/// `MSE = (1/n) * Σ(original[i] - reconstructed[i])²`
 pub fn mse(original: &[f32], reconstructed: &[f32]) -> f32 {
     if original.len() != reconstructed.len() || original.is_empty() {
         return 0.0;
@@ -217,21 +217,34 @@ mod tests {
 
     #[test]
     fn test_quality_report_grade() {
-        let mut report = QualityReport::default();
-
-        report.cosine_similarity = 0.999;
+        let report = QualityReport {
+            cosine_similarity: 0.999,
+            ..Default::default()
+        };
         assert_eq!(report.grade(), "Excellent");
 
-        report.cosine_similarity = 0.995;
+        let report = QualityReport {
+            cosine_similarity: 0.995,
+            ..Default::default()
+        };
         assert_eq!(report.grade(), "Good");
 
-        report.cosine_similarity = 0.985;
+        let report = QualityReport {
+            cosine_similarity: 0.985,
+            ..Default::default()
+        };
         assert_eq!(report.grade(), "Acceptable");
 
-        report.cosine_similarity = 0.96;
+        let report = QualityReport {
+            cosine_similarity: 0.96,
+            ..Default::default()
+        };
         assert_eq!(report.grade(), "Degraded");
 
-        report.cosine_similarity = 0.90;
+        let report = QualityReport {
+            cosine_similarity: 0.90,
+            ..Default::default()
+        };
         assert_eq!(report.grade(), "Poor");
     }
 
