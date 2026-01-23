@@ -136,7 +136,7 @@ pub struct ImportanceAnalyzer {
 /// A single activation sample
 #[derive(Debug, Clone)]
 struct ActivationSample {
-    /// Layer activations [layer][head]
+    /// Layer activations `[layer][head]`
     attention_weights: Vec<Vec<f32>>,
     /// Prompt category
     category: String,

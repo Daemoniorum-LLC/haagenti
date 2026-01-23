@@ -12,7 +12,7 @@ pub struct AttentionMask {
     /// Number of layers
     pub num_layers: usize,
     /// Mask values: true = compute, false = skip
-    /// Indexed as [layer][head]
+    /// Indexed as `[layer][head]`
     pub mask: Vec<Vec<bool>>,
     /// Per-layer sparsity (fraction of heads skipped)
     pub layer_sparsity: Vec<f32>,

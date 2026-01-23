@@ -77,6 +77,57 @@ pub trait EmbeddingProvider: Send + Sync {
     fn dimension(&self) -> usize;
 }
 
+/// Mock embedding provider for testing
+#[cfg(test)]
+pub struct MockEmbeddingProvider {
+    dim: usize,
+}
+
+#[cfg(test)]
+impl MockEmbeddingProvider {
+    /// Create a mock provider with given embedding dimension
+    pub fn new(dim: usize) -> Self {
+        Self { dim }
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl EmbeddingProvider for MockEmbeddingProvider {
+    async fn embed(&self, text: &str) -> Result<ClipEmbedding> {
+        // Create deterministic embedding based on text hash
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        let mut rng_state = hash;
+        let vector: Vec<f32> = (0..self.dim)
+            .map(|_| {
+                // Simple LCG random number generator
+                rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                (rng_state as f32 / u64::MAX as f32) * 2.0 - 1.0
+            })
+            .collect();
+
+        Ok(ClipEmbedding::new(vector))
+    }
+
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<ClipEmbedding>> {
+        let mut results = Vec::with_capacity(texts.len());
+        for text in texts {
+            results.push(self.embed(text).await?);
+        }
+        Ok(results)
+    }
+
+    fn dimension(&self) -> usize {
+        self.dim
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
