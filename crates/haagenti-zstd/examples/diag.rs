@@ -1,6 +1,10 @@
-use haagenti_zstd::compress::block::{encode_literals, matches_to_sequences};
+#[allow(unused_imports)]
+use haagenti_core::CompressionLevel;
+#[allow(unused_imports)]
+use haagenti_zstd::compress::block::{encode_literals, encode_sequences, matches_to_sequences};
+#[allow(unused_imports)]
 use haagenti_zstd::compress::{
-    analyze_for_rle, encode_sequences_fse, encode_sequences_rle,
+    analyze_for_rle, encode_sequences_fse, encode_sequences_rle, CompressContext,
     CompressibilityFingerprint, MatchFinder,
 };
 

@@ -1,5 +1,7 @@
 //! Verify FSE state-to-symbol mapping
 
+#![allow(unused_variables)]
+
 use haagenti_zstd::fse::{FseDecoder, FseTable};
 
 // Predefined distributions (from RFC 8878)
@@ -35,10 +37,10 @@ fn main() {
     println!("Our final states: LL=4, OF=23, ML=36");
     println!("Expected seq0: ll_code=4, of_code=1, ml_code=32\n");
 
-    // Check what symbols these states map to
-    let _ll_decoder = FseDecoder::new(&ll_table);
-    let _of_decoder = FseDecoder::new(&of_table);
-    let _ml_decoder = FseDecoder::new(&ml_table);
+    // Check what symbols these states map to (scaffolding for interactive debugging)
+    let ll_decoder = FseDecoder::new(&ll_table);
+    let of_decoder = FseDecoder::new(&of_table);
+    let ml_decoder = FseDecoder::new(&ml_table);
 
     // Check a range of states
     println!("LL table (state -> symbol):");

@@ -21,7 +21,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use haagenti::compressive::CompressiveSpectralEncoder;
-use haagenti::{Compressor, ZstdCodec};
+#[allow(unused_imports)]
+use haagenti::{Codec, Compressor, ZstdCodec};
 
 /// Block size for INT4 quantization.
 const Q4_BLOCK_SIZE: usize = 32;

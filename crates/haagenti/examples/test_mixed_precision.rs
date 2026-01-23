@@ -15,6 +15,8 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+#[allow(unused_imports)]
+use haagenti::holotensor::HoloFragment;
 use haagenti::mixed_precision::{
     cosine_similarity, mse, MixedPrecisionDecoder, MixedPrecisionEncoder,
 };

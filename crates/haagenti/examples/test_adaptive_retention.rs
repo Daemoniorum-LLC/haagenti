@@ -20,9 +20,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write as IoWrite;
 use std::path::PathBuf;
+#[allow(unused_imports)]
+use std::time::Instant;
 
-use haagenti::adaptive::{AdaptiveSpectralDecoder, AdaptiveSpectralEncoder};
+#[allow(unused_imports)]
+use haagenti::adaptive::{AdaptiveBatchEncoder, AdaptiveSpectralDecoder, AdaptiveSpectralEncoder};
 use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+#[allow(unused_imports)]
+use haagenti::spectral_analysis::SpectralAnalyzer;
 
 /// Number of fragments for encoding.
 const NUM_FRAGMENTS: u16 = 8;

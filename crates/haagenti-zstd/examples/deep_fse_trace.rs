@@ -1,5 +1,5 @@
 //! Deep trace of FSE encoding to find the bug
-#![allow(unused_imports)]
+#![allow(unused_imports, unused_assignments)]
 
 use haagenti_zstd::block::Sequence;
 use haagenti_zstd::compress::EncodedSequence;
@@ -264,9 +264,9 @@ fn main() {
     println!("Checking FSE state update computation...");
 
     // Manually track decoder states (no FseDecoder.set_state available)
-    let ll_state_cur = ll_final as usize;
-    let of_state_cur = of_final as usize;
-    let ml_state_cur = ml_final as usize;
+    let mut ll_state_cur = ll_final as usize;
+    let mut of_state_cur = of_final as usize;
+    let mut ml_state_cur = ml_final as usize;
 
     println!(
         "\nDecoder states set to: LL={}, OF={}, ML={}",
@@ -310,7 +310,7 @@ fn main() {
         ll_entry.num_bits, ll_update_bits
     );
     let new_ll_state = ll_entry.baseline as usize + ll_update_bits as usize;
-    let _ = ll_state_cur; // Mark as intentionally unused after this point
+    ll_state_cur = new_ll_state;
     println!(
         "  New state: {} (baseline {} + bits {})",
         new_ll_state, ll_entry.baseline, ll_update_bits
@@ -330,7 +330,7 @@ fn main() {
         ml_entry.num_bits, ml_update_bits
     );
     let new_ml_state = ml_entry.baseline as usize + ml_update_bits as usize;
-    let _ = ml_state_cur; // Mark as intentionally unused after this point
+    ml_state_cur = new_ml_state;
     println!(
         "  New state: {} (baseline {} + bits {})",
         new_ml_state, ml_entry.baseline, ml_update_bits
@@ -350,7 +350,7 @@ fn main() {
         of_entry.num_bits, of_update_bits
     );
     let new_of_state = of_entry.baseline as usize + of_update_bits as usize;
-    let _ = of_state_cur; // Mark as intentionally unused after this point
+    of_state_cur = new_of_state;
     println!(
         "  New state: {} (baseline {} + bits {})",
         new_of_state, of_entry.baseline, of_update_bits
