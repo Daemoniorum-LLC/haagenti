@@ -29,7 +29,13 @@ pub mod codec;
 pub mod compress;
 pub mod decompress;
 
+#[cfg(feature = "hc")]
+pub mod hc;
+
 // Re-export main types
 pub use codec::Lz4Codec;
 pub use compress::{Lz4Compressor, Lz4StreamingCompressor};
 pub use decompress::{Lz4Decompressor, Lz4StreamingDecompressor};
+
+#[cfg(feature = "hc")]
+pub use hc::Lz4HcCompressor;

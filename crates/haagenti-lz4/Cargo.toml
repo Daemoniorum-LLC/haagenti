@@ -23,3 +23,9 @@ haagenti-simd = { workspace = true, optional = true }
 [dev-dependencies]
 proptest = { workspace = true }
 lz4_flex = { workspace = true }  # Reference implementation for testing
+criterion = { workspace = true }
+rand = { workspace = true }
+
+[[bench]]
+name = "lz4_benchmark"
+harness = false
