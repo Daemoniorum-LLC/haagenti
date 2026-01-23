@@ -228,7 +228,7 @@ impl Lz4HcContext {
             chain_count += 1;
         }
 
-        if best_len >= MIN_MATCH && best_offset > 0 && best_offset <= WINDOW_SIZE - 1 {
+        if best_len >= MIN_MATCH && best_offset > 0 && best_offset < WINDOW_SIZE {
             Some((best_offset, best_len))
         } else {
             None
@@ -333,8 +333,8 @@ pub fn compress_hc(input: &[u8], output: &mut [u8], level: usize) -> Result<usiz
             let use_current = if ctx.lazy_matching && input_pos + 1 < mf_limit {
                 if let Some((_, next_len)) = ctx.find_best_match(input, input_pos + 1, match_limit)
                 {
-                    // Use current match if it's at least as good as (next + 1)
-                    match_len >= next_len + 1
+                    // Use current match if it's better than the next match
+                    match_len > next_len
                 } else {
                     true
                 }
