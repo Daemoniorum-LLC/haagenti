@@ -695,26 +695,14 @@ impl SeededRng {
 
 /// Spectral holographic encoder using DCT.
 ///
-/// # Deprecated
+/// Encodes 2D tensor data into holographic fragments using DCT (Discrete Cosine Transform).
+/// Produces "SV03" format fragments that can be progressively decoded.
 ///
-/// **This encoder produces "SV03" format which is incompatible with
-/// `CompressiveSpectralDecoder` (used in HCT inference).**
+/// # Features
 ///
-/// For HCT model compression and inference, use [`CompressiveSpectralEncoder`]
-/// from the `compressive` module instead. It produces "HCT3" format with:
-/// - Bitmap-based coefficient retention (configurable retention ratio)
-/// - f16 coefficient storage for better compression
-/// - Compatible with GPU-accelerated decompression
-///
-/// This encoder is retained for:
-/// - Legacy format compatibility
-/// - Research/experimentation with alternative spectral formats
-///
-/// [`CompressiveSpectralEncoder`]: crate::compressive::CompressiveSpectralEncoder
-#[deprecated(
-    since = "0.2.0",
-    note = "Use CompressiveSpectralEncoder for HCT inference. SpectralEncoder produces SV03 format incompatible with CompressiveSpectralDecoder."
-)]
+/// - DCT-based frequency domain encoding
+/// - Configurable fragment count for progressive reconstruction
+/// - Essential coefficient ratio for quality control
 pub struct SpectralEncoder {
     num_fragments: u16,
     essential_ratio: f32,
@@ -807,29 +795,14 @@ const SPECTRAL_V3_MAGIC: u32 = 0x33305653;
 
 /// Spectral holographic decoder.
 ///
+/// Progressively reconstructs tensor data from holographic fragments.
 /// Supports V1 (legacy), V2 (compact), and V3 (SV03) formats.
 ///
-/// # Deprecated
+/// # Features
 ///
-/// **This decoder handles "SV03" format from [`SpectralEncoder`], which is
-/// separate from the "HCT3" format used in HCT inference.**
-///
-/// For HCT model inference, use [`CompressiveSpectralDecoder`] from the
-/// `compressive` module instead. It handles:
-/// - "HCT3" format with bitmap-based retention
-/// - f16 coefficient reconstruction
-/// - GPU-accelerated decompression
-///
-/// This decoder is retained for:
-/// - Legacy format compatibility (V1, V2, SV03)
-/// - Research/experimentation with alternative spectral formats
-///
-/// [`SpectralEncoder`]: SpectralEncoder
-/// [`CompressiveSpectralDecoder`]: crate::compressive::CompressiveSpectralDecoder
-#[deprecated(
-    since = "0.2.0",
-    note = "Use CompressiveSpectralDecoder for HCT inference. SpectralDecoder handles SV03 format from SpectralEncoder."
-)]
+/// - Progressive reconstruction from partial fragments
+/// - Multi-format support (V1, V2, SV03)
+/// - Quality improves as more fragments are added
 pub struct SpectralDecoder {
     width: usize,
     height: usize,
@@ -1352,16 +1325,14 @@ fn svd_power_iteration(
 pub struct LrdfEncoder {
     num_fragments: u16,
     max_rank: usize,
-    seed: u64,
 }
 
 impl LrdfEncoder {
     /// Create encoder.
-    pub fn new(num_fragments: u16, seed: u64) -> Self {
+    pub fn new(num_fragments: u16) -> Self {
         LrdfEncoder {
             num_fragments,
             max_rank: 256, // Increased from 64 for better reconstruction quality
-            seed,
         }
     }
 
@@ -1646,7 +1617,7 @@ impl HoloTensorEncoder {
                 RphEncoder::new(self.num_fragments, self.seed).encode(data)
             }
             HolographicEncoding::LowRankDistributed => {
-                LrdfEncoder::new(self.num_fragments, self.seed)
+                LrdfEncoder::new(self.num_fragments)
                     .with_max_rank(self.max_rank)
                     .encode_2d(data, rows, cols)
             }
@@ -2910,7 +2881,7 @@ mod tests {
             }
         }
 
-        let encoder = LrdfEncoder::new(4, 42).with_max_rank(8);
+        let encoder = LrdfEncoder::new(4).with_max_rank(8);
         let fragments = encoder.encode_2d(&data, rows, cols).unwrap();
 
         assert_eq!(fragments.len(), 4);
@@ -2939,7 +2910,7 @@ mod tests {
         let cols = 8;
         let data: Vec<f32> = (0..rows * cols).map(|i| i as f32).collect();
 
-        let encoder = LrdfEncoder::new(8, 42);
+        let encoder = LrdfEncoder::new(8);
         let fragments = encoder.encode_2d(&data, rows, cols).unwrap();
 
         let mut decoder = LrdfDecoder::new(rows, cols, 8);

@@ -1,3 +1,8 @@
+// Allow explicit indexing in numerical/DSP code where it's clearer
+#![allow(clippy::needless_range_loop)]
+// Allow from_str methods that don't implement FromStr trait
+#![allow(clippy::should_implement_trait)]
+
 //! # Haagenti
 //!
 //! Next-generation compression library for the Daemoniorum ecosystem.

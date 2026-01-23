@@ -121,21 +121,12 @@ impl DivergencePredictor {
     /// Get recommended checkpoints for caching
     pub fn recommended_checkpoints(&self) -> Vec<u32> {
         // Cache at strategic points that cover different similarity levels
-        let mut checkpoints = Vec::new();
-
-        // Early checkpoint (for high similarity matches)
-        checkpoints.push(self.total_steps / 4);
-
-        // Mid checkpoint (for medium similarity)
-        checkpoints.push(self.total_steps / 2);
-
-        // Late checkpoint (for lower similarity)
-        checkpoints.push(self.total_steps * 3 / 4);
-
-        // Near-final checkpoint (for very high similarity)
-        checkpoints.push(self.total_steps - 2);
-
-        checkpoints
+        vec![
+            self.total_steps / 4,      // Early (for high similarity matches)
+            self.total_steps / 2,      // Mid (for medium similarity)
+            self.total_steps * 3 / 4,  // Late (for lower similarity)
+            self.total_steps - 2,      // Near-final (for very high similarity)
+        ]
     }
 
     /// Update coefficients based on observed quality

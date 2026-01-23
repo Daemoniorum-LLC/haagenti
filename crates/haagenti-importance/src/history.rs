@@ -78,7 +78,7 @@ impl FragmentUsage {
     pub fn importance_score(&self) -> f32 {
         // Combine multiple factors
         let usage = self.usage_ratio();
-        let contribution = self.quality_contribution.max(0.0).min(1.0);
+        let contribution = self.quality_contribution.clamp(0.0, 1.0);
         let recency = 1.0 / (1.0 + (now() - self.updated_at) as f32 / 86400.0); // Decay over days
 
         // Weighted combination
@@ -214,6 +214,7 @@ impl UsageHistory {
     }
 
     /// Get aggregated statistics
+    #[allow(clippy::field_reassign_with_default)]
     pub fn stats(&self) -> UsageStats {
         let mut stats = UsageStats::default();
         stats.total_fragments = self.usage.len();

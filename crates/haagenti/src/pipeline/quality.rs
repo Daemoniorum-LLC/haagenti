@@ -117,10 +117,6 @@ pub struct QualitySampler {
     sample_rate: f32,
     /// Collected reports.
     reports: Vec<QualityReport>,
-    /// Random seed for reproducibility.
-    seed: u64,
-    /// Counter for deterministic sampling.
-    counter: usize,
 }
 
 impl QualitySampler {
@@ -128,13 +124,10 @@ impl QualitySampler {
     ///
     /// # Arguments
     /// * `sample_rate` - Fraction of tensors to sample (0.0-1.0)
-    /// * `seed` - Random seed for reproducibility
-    pub fn new(sample_rate: f32, seed: u64) -> Self {
+    pub fn new(sample_rate: f32) -> Self {
         Self {
             sample_rate: sample_rate.clamp(0.0, 1.0),
             reports: Vec::new(),
-            seed,
-            counter: 0,
         }
     }
 
@@ -289,52 +282,6 @@ impl QualitySummary {
         }
     }
 }
-
-/// Computes cosine similarity between two vectors.
-#[must_use]
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-
-    let mut dot = 0.0f64;
-    let mut norm_a = 0.0f64;
-    let mut norm_b = 0.0f64;
-
-    for (x, y) in a.iter().zip(b.iter()) {
-        let x = *x as f64;
-        let y = *y as f64;
-        dot += x * y;
-        norm_a += x * x;
-        norm_b += y * y;
-    }
-
-    if norm_a > 0.0 && norm_b > 0.0 {
-        (dot / (norm_a.sqrt() * norm_b.sqrt())) as f32
-    } else {
-        0.0
-    }
-}
-
-/// Computes mean squared error between two vectors.
-#[must_use]
-pub fn mean_squared_error(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return f32::INFINITY;
-    }
-
-    let sum: f64 = a
-        .iter()
-        .zip(b.iter())
-        .map(|(x, y)| {
-            let diff = (*x as f64) - (*y as f64);
-            diff * diff
-        })
-        .sum();
-
-    (sum / a.len() as f64) as f32
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_quality_sampler() {
-        let mut sampler = QualitySampler::new(0.5, 42);
+        let mut sampler = QualitySampler::new(0.5);
 
         // Should consistently sample or not based on name hash
         let first_result = sampler.should_sample("tensor.0");
@@ -375,19 +322,19 @@ mod tests {
 
     #[test]
     fn test_quality_sampler_always() {
-        let mut sampler = QualitySampler::new(1.0, 42);
+        let mut sampler = QualitySampler::new(1.0);
         assert!(sampler.should_sample("any_tensor"));
     }
 
     #[test]
     fn test_quality_sampler_never() {
-        let mut sampler = QualitySampler::new(0.0, 42);
+        let mut sampler = QualitySampler::new(0.0);
         assert!(!sampler.should_sample("any_tensor"));
     }
 
     #[test]
     fn test_quality_summary() {
-        let mut sampler = QualitySampler::new(1.0, 42);
+        let mut sampler = QualitySampler::new(1.0);
 
         let data = vec![1.0, 2.0, 3.0];
         sampler.validate("t0", &data, &data);

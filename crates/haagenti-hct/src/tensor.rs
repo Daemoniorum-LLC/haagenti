@@ -835,7 +835,6 @@ pub struct HctReaderV2<R: Read + Seek> {
     block_index: Vec<BlockIndexV2>,
     data_offset: u64,
     quantization: Option<QuantizationMetadata>,
-    header_checksum: u64,
 }
 
 impl<R: Read + Seek> HctReaderV2<R> {
@@ -920,7 +919,6 @@ impl<R: Read + Seek> HctReaderV2<R> {
             block_index,
             data_offset,
             quantization,
-            header_checksum: stored_checksum,
         })
     }
 

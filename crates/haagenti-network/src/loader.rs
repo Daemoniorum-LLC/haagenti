@@ -1,8 +1,8 @@
 //! Network loader for fragment streaming
 
 use crate::{
-    CacheConfig, CacheEntry, CdnEndpoint, ClientConfig, FragmentCache, HttpClient, NetworkConfig,
-    NetworkError, PrioritizedFragment, Priority, RangeRequest, Result, Scheduler, SchedulerConfig,
+    CacheConfig, CacheEntry, ClientConfig, FragmentCache, HttpClient, NetworkConfig, NetworkError,
+    PrioritizedFragment, Priority, RangeRequest, Result, Scheduler, SchedulerConfig,
 };
 use bytes::Bytes;
 use haagenti_fragments::FragmentId;
@@ -91,7 +91,6 @@ impl LoadResult {
 
 /// Network loader for fragment streaming
 pub struct NetworkLoader {
-    config: NetworkConfig,
     clients: Vec<HttpClient>,
     cache: Option<FragmentCache>,
     scheduler: Scheduler,
@@ -130,7 +129,6 @@ impl NetworkLoader {
         let scheduler = Scheduler::new(SchedulerConfig::from(&config));
 
         Ok(Self {
-            config,
             clients,
             cache,
             scheduler,
@@ -308,69 +306,6 @@ impl StreamingLoader {
             .await
             .ok()
             .flatten()
-    }
-}
-
-/// Builder for network loader
-pub struct NetworkLoaderBuilder {
-    config: NetworkConfig,
-}
-
-impl NetworkLoaderBuilder {
-    /// Create a new builder
-    pub fn new() -> Self {
-        Self {
-            config: NetworkConfig::default(),
-        }
-    }
-
-    /// Add a CDN endpoint
-    pub fn endpoint(mut self, endpoint: CdnEndpoint) -> Self {
-        self.config.endpoints.push(endpoint);
-        self
-    }
-
-    /// Set cache directory
-    pub fn cache_dir(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.config.cache_dir = Some(path.into());
-        self
-    }
-
-    /// Set maximum concurrent downloads
-    pub fn max_concurrent(mut self, max: usize) -> Self {
-        self.config.max_concurrent = max;
-        self
-    }
-
-    /// Set request timeout
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.config.timeout = timeout;
-        self
-    }
-
-    /// Use Hugging Face Hub configuration
-    pub fn huggingface(self) -> Self {
-        Self {
-            config: NetworkConfig::huggingface_hub(),
-        }
-    }
-
-    /// Use Civitai configuration
-    pub fn civitai(self) -> Self {
-        Self {
-            config: NetworkConfig::civitai(),
-        }
-    }
-
-    /// Build the loader
-    pub async fn build(self) -> Result<NetworkLoader> {
-        NetworkLoader::new(self.config).await
-    }
-}
-
-impl Default for NetworkLoaderBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

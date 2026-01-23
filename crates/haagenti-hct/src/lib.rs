@@ -73,7 +73,6 @@
 //! - `full` - All features (default)
 
 // Allow various lints in experimental holotensor code
-#![allow(dead_code, deprecated)]
 #![allow(clippy::needless_range_loop)]
 
 // Local modules (implementations owned by haagenti-hct)
@@ -146,13 +145,13 @@ pub use holotensor::{
 };
 
 /// Prelude module for common imports.
+///
+/// Convenient imports for common HCT operations.
+///
+/// ```ignore
+/// use haagenti_hct::prelude::*;
+/// ```
 pub mod prelude {
-    //! Convenient imports for common HCT operations.
-    //!
-    //! ```ignore
-    //! use haagenti_hct::prelude::*;
-    //! ```
-
     // Error handling
     pub use crate::{Error, Result};
 
@@ -359,7 +358,7 @@ mod tests {
         // Create small test matrix with low-rank structure
         let data: Vec<f32> = (0..64).map(|i| ((i / 8) + (i % 8)) as f32).collect();
 
-        let encoder = LrdfEncoder::new(4, 42);
+        let encoder = LrdfEncoder::new(4);
         let fragments = encoder.encode_2d(&data, 8, 8).expect("encode failed");
 
         assert_eq!(fragments.len(), 4);

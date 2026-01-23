@@ -1,3 +1,14 @@
+// PyO3 deprecation warnings - these require PyO3 version updates to fix properly
+#![allow(deprecated)]
+// Allow manual div_ceil in numeric code
+#![allow(clippy::manual_div_ceil)]
+// Unused import from numpy feature flags
+#![allow(unused_imports)]
+// PyO3 error handling macro false positives
+#![allow(clippy::useless_conversion)]
+// PyO3 cfg condition for gil-refs feature
+#![allow(unexpected_cfgs)]
+
 //! Python bindings for Haagenti tensor compression library.
 //!
 //! Provides:

@@ -1,3 +1,6 @@
+// Speculative loading is experimental - has some unfinished APIs
+#![allow(dead_code)]
+
 //! Speculative Fragment Loading
 //!
 //! This module implements intelligent prefetching based on:

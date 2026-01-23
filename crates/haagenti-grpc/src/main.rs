@@ -167,11 +167,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cert_path = args
             .tls_cert
             .as_ref()
-            .ok_or({ "TLS enabled but --tls-cert not provided" })?;
+            .ok_or("TLS enabled but --tls-cert not provided")?;
         let key_path = args
             .tls_key
             .as_ref()
-            .ok_or({ "TLS enabled but --tls-key not provided" })?;
+            .ok_or("TLS enabled but --tls-key not provided")?;
 
         // Build TLS configuration
         let mut tls_config = TlsConfig::from_pem(Path::new(cert_path), Path::new(key_path))?;

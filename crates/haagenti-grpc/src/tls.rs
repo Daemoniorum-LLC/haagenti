@@ -209,11 +209,6 @@ impl TlsConfig {
         &self.cert_chain
     }
 
-    /// Get the private key (for internal use only).
-    pub(crate) fn private_key(&self) -> &[u8] {
-        &self.private_key
-    }
-
     /// Build a tonic ServerTlsConfig from this configuration.
     pub fn to_server_tls_config(&self) -> TlsResult<ServerTlsConfig> {
         let identity = Identity::from_pem(&self.cert_chain, &self.private_key);

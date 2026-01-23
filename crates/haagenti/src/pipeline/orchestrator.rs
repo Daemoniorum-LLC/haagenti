@@ -192,7 +192,7 @@ impl CompressionPipeline {
         let encoder = CompressiveSpectralEncoder::new(config.num_fragments, config.retention);
 
         // Create sampler
-        let sampler = QualitySampler::new(config.quality_sample_rate, 42);
+        let sampler = QualitySampler::new(config.quality_sample_rate);
 
         Ok(Self {
             config,

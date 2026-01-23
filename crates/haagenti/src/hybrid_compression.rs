@@ -272,8 +272,6 @@ pub struct HybridEncoder {
     base_retention: f32,
     /// Number of fragments for DCT
     num_fragments: u16,
-    /// SVD encoder
-    svd_encoder: SvdEncoder,
     /// Use automatic method selection based on tensor name
     auto_select: bool,
 }
@@ -290,7 +288,6 @@ impl HybridEncoder {
         Self {
             base_retention: base_retention.clamp(0.01, 1.0),
             num_fragments: 8,
-            svd_encoder: SvdEncoder::new(base_retention),
             auto_select: true,
         }
     }
