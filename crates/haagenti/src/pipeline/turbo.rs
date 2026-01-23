@@ -134,8 +134,6 @@ pub struct TurboReport {
 struct SharedState {
     /// Atomic counter for completed tensors.
     completed: AtomicUsize,
-    /// Atomic counter for failed tensors.
-    failed: AtomicUsize,
     /// Atomic counter for skipped tensors.
     skipped: AtomicUsize,
     /// Total input bytes processed.
@@ -150,7 +148,6 @@ impl SharedState {
     fn new() -> Self {
         Self {
             completed: AtomicUsize::new(0),
-            failed: AtomicUsize::new(0),
             skipped: AtomicUsize::new(0),
             input_bytes: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),

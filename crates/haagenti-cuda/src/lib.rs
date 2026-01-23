@@ -1,3 +1,8 @@
+// Experimental CUDA code - some patterns are idiomatic for GPU kernels
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::map_entry)]
+#![allow(dead_code)]
+
 //! CUDA GPU Decompression for Haagenti
 //!
 //! Provides GPU-accelerated decompression for LZ4 and Zstd compressed tensors,

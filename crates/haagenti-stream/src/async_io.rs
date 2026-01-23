@@ -79,10 +79,7 @@ where
         let mut this = self.project();
 
         if *this.finished {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
-                "writer already finished",
-            )));
+            return Poll::Ready(Err(io::Error::other("writer already finished")));
         }
 
         // First, flush any pending compressed data
@@ -109,7 +106,7 @@ where
             let compressed = this
                 .compressor
                 .compress(data)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| io::Error::other(e.to_string()))?;
 
             *this.compressed_buffer = compressed;
             this.buffer.clear();
@@ -127,7 +124,7 @@ where
             let compressed = this
                 .compressor
                 .compress(data)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| io::Error::other(e.to_string()))?;
 
             *this.compressed_buffer = compressed;
             this.buffer.clear();
@@ -255,7 +252,7 @@ where
                     if !this.input_buffer.is_empty() {
                         let decompressed = this
                             .decompressor
-                            .decompress(&this.input_buffer)
+                            .decompress(this.input_buffer)
                             .map_err(|e| {
                                 io::Error::new(io::ErrorKind::InvalidData, e.to_string())
                             })?;

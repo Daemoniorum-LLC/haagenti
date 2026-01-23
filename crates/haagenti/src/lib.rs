@@ -2,6 +2,12 @@
 #![allow(clippy::needless_range_loop)]
 // Allow from_str methods that don't implement FromStr trait
 #![allow(clippy::should_implement_trait)]
+// Allow complex types in turbo pipeline - matches batch processing patterns
+#![allow(clippy::type_complexity)]
+// Testing module uses manual div_ceil for clarity
+#![allow(clippy::manual_div_ceil)]
+// Testing uses cfg(feature = "half") that may not be in Cargo.toml
+#![allow(unexpected_cfgs)]
 
 //! # Haagenti
 //!

@@ -196,25 +196,30 @@ impl ChannelDecoder {
     ) -> Result<Self> {
         let (tx, mut rx) = mpsc::channel::<FragmentMessage>(16);
 
-        let handle = tokio::spawn(async move {
-            let mut decoder =
-                StreamingDecoder::new(device.clone(), pool.clone(), total_output_size)?;
-            decoder.init()?;
+        // Use spawn_blocking since CUDA operations are blocking and the decoder
+        // contains raw CUDA pointers that aren't Send-safe
+        let handle = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async move {
+                let mut decoder =
+                    StreamingDecoder::new(device.clone(), pool.clone(), total_output_size)?;
+                decoder.init()?;
 
-            while let Some(msg) = rx.recv().await {
-                match msg {
-                    FragmentMessage::Fragment {
-                        data,
-                        output_offset,
-                        output_size,
-                    } => {
-                        decoder.feed_fragment(&data, output_offset, output_size)?;
+                while let Some(msg) = rx.recv().await {
+                    match msg {
+                        FragmentMessage::Fragment {
+                            data,
+                            output_offset,
+                            output_size,
+                        } => {
+                            decoder.feed_fragment(&data, output_offset, output_size)?;
+                        }
+                        FragmentMessage::End => break,
                     }
-                    FragmentMessage::End => break,
                 }
-            }
 
-            decoder.finish()
+                decoder.finish()
+            })
         });
 
         Ok(ChannelDecoder { tx, handle })
