@@ -31,7 +31,6 @@
 //!            └──────────┘   └───────┘   └───────┘
 //! ```
 
-
 mod error;
 mod fragment;
 mod library;

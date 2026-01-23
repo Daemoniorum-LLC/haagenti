@@ -122,10 +122,10 @@ impl DivergencePredictor {
     pub fn recommended_checkpoints(&self) -> Vec<u32> {
         // Cache at strategic points that cover different similarity levels
         vec![
-            self.total_steps / 4,      // Early (for high similarity matches)
-            self.total_steps / 2,      // Mid (for medium similarity)
-            self.total_steps * 3 / 4,  // Late (for lower similarity)
-            self.total_steps - 2,      // Near-final (for very high similarity)
+            self.total_steps / 4,     // Early (for high similarity matches)
+            self.total_steps / 2,     // Mid (for medium similarity)
+            self.total_steps * 3 / 4, // Late (for lower similarity)
+            self.total_steps - 2,     // Near-final (for very high similarity)
         ]
     }
 

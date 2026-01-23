@@ -1616,11 +1616,9 @@ impl HoloTensorEncoder {
             HolographicEncoding::RandomProjection => {
                 RphEncoder::new(self.num_fragments, self.seed).encode(data)
             }
-            HolographicEncoding::LowRankDistributed => {
-                LrdfEncoder::new(self.num_fragments)
-                    .with_max_rank(self.max_rank)
-                    .encode_2d(data, rows, cols)
-            }
+            HolographicEncoding::LowRankDistributed => LrdfEncoder::new(self.num_fragments)
+                .with_max_rank(self.max_rank)
+                .encode_2d(data, rows, cols),
         }
     }
 
