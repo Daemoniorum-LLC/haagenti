@@ -33,7 +33,7 @@ fn main() {
     }
 
     // Also decode with reference
-    match zstd::decode_all(&ref_frame[..]) {
+    match zstd::decode_all(ref_frame) {
         Ok(decompressed) => {
             println!("\nReference decoder output: {} bytes", decompressed.len());
             println!("Content: {:?}", String::from_utf8_lossy(&decompressed));

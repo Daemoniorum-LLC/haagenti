@@ -194,7 +194,7 @@ fn parse_our_frame(data: &[u8]) {
 
     // Calculate approximate literal data size
     let lit_data_start = pos + lit_header_size;
-    let lit_data_end = if lit_type == 0 {
+    let _lit_data_end = if lit_type == 0 {
         lit_data_start + lit_regen_size
     } else if lit_type == 1 {
         lit_data_start + 1 // RLE is just 1 byte
@@ -224,7 +224,7 @@ fn parse_our_frame(data: &[u8]) {
             (count, 2)
         } else {
             let count =
-                (data[seq_start + 1] as usize) | ((data[seq_start + 2] as usize) << 8) + 0x7F00;
+                (data[seq_start + 1] as usize) | (((data[seq_start + 2] as usize) << 8) + 0x7F00);
             (count, 3)
         };
 

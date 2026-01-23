@@ -21,7 +21,6 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -141,9 +140,9 @@ fn f32_to_f16_bytes(value: f32) -> [u8; 2] {
 ///
 /// Returns (scales_f16_bytes, packed_int4_bytes).
 fn quantize_int4_symmetric(weights: &[f32]) -> (Vec<u8>, Vec<u8>) {
-    let num_blocks = (weights.len() + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
+    let num_blocks = weights.len().div_ceil(Q4_BLOCK_SIZE);
     let mut scales_bytes = Vec::with_capacity(num_blocks * 2);
-    let mut packed = Vec::with_capacity((weights.len() + 1) / 2);
+    let mut packed = Vec::with_capacity(weights.len().div_ceil(2));
 
     for block in weights.chunks(Q4_BLOCK_SIZE) {
         // Find max absolute value for symmetric quantization
@@ -242,7 +241,7 @@ fn convert_safetensors_to_int4(input: &Path, output_dir: &Path) -> Result<Conver
         let (scales_bytes, packed_int4) = quantize_int4_symmetric(&f32_weights);
 
         // Create output file
-        let safe_name = name.replace('/', "_").replace('.', "_");
+        let safe_name = name.replace(['/', '.'], "_");
         let output_path = output_dir.join(format!("{}.hct", safe_name));
 
         // Shape remains the same as original (element count, not packed)
@@ -276,7 +275,7 @@ fn convert_safetensors_to_int4(input: &Path, output_dir: &Path) -> Result<Conver
 
         // Print progress for larger tensors
         if original_size > 1_000_000 {
-            let num_blocks = (f32_weights.len() + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
+            let num_blocks = f32_weights.len().div_ceil(Q4_BLOCK_SIZE);
             println!(
                 "  {} ({:?} {:?}): {:.1}MB -> {:.1}MB ({:.2}x), {} blocks",
                 name,
@@ -377,7 +376,7 @@ fn main() {
         let src = input_dir.join(filename);
         let dst = output_dir.join(filename);
         if src.exists() {
-            fs::copy(&src, &dst).expect(&format!("Failed to copy {}", filename));
+            fs::copy(&src, &dst).unwrap_or_else(|_| panic!("Failed to copy {}", filename));
             println!("Copied {}", filename);
         }
     }

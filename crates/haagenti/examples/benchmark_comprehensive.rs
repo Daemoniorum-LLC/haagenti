@@ -9,10 +9,10 @@
 //! For full features:
 //!   cargo run --release --example benchmark_comprehensive --features "full"
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 // Core imports
-use haagenti::holotensor::{dct_1d, dct_2d, idct_1d, idct_2d};
+use haagenti::holotensor::{dct_1d, dct_2d};
 
 fn main() {
     println!("╔═══════════════════════════════════════════════════════════════════════════════╗");

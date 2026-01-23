@@ -51,7 +51,7 @@ fn test_encoding(name: &str, input: &[u8]) {
     let block_header =
         compressed[6] as u32 | ((compressed[7] as u32) << 8) | ((compressed[8] as u32) << 16);
     let block_type = (block_header >> 1) & 0x03;
-    let block_size = block_header >> 3;
+    let _block_size = block_header >> 3;
 
     let seq_count = if block_type == 2 {
         // Find sequence section

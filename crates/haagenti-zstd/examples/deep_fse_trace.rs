@@ -1,5 +1,5 @@
 //! Deep trace of FSE encoding to find the bug
-#![allow(unused_imports)]
+#![allow(unused_imports, unused_assignments)]
 
 use haagenti_zstd::block::Sequence;
 use haagenti_zstd::compress::EncodedSequence;
@@ -27,14 +27,14 @@ fn main() {
     .unwrap();
 
     // The failing case: 2 sequences
-    let sequences = vec![
+    let sequences = [
         Sequence::new(9, 12, 8), // LL=9, OF_value=12, ML=8
         Sequence::new(1, 1, 4),  // LL=1, OF_value=1, ML=4
     ];
 
     let encoded: Vec<_> = sequences
         .iter()
-        .map(|s| EncodedSequence::from_sequence(s))
+        .map(EncodedSequence::from_sequence)
         .collect();
 
     println!("Sequences:");

@@ -204,6 +204,7 @@ fn main() {
     // Compare LL table
     println!("=== LL Table (64 states) ===");
     let mut ll_match = true;
+    #[allow(clippy::needless_range_loop)]
     for state in 0..64 {
         let ours = ll_table.decode(state);
         let (ref_sym, ref_bits, ref_base) = ref_ll_table[state];
@@ -223,6 +224,7 @@ fn main() {
     // Compare ML table
     println!("\n=== ML Table (64 states) ===");
     let mut ml_match = true;
+    #[allow(clippy::needless_range_loop)]
     for state in 0..64 {
         let ours = ml_table.decode(state);
         let (ref_sym, ref_bits, ref_base) = ref_ml_table[state];
@@ -242,6 +244,7 @@ fn main() {
     // Compare OF table
     println!("\n=== OF Table (32 states) ===");
     let mut of_match = true;
+    #[allow(clippy::needless_range_loop)]
     for state in 0..32 {
         let ours = of_table.decode(state);
         let (ref_sym, ref_bits, ref_base) = ref_of_table[state];

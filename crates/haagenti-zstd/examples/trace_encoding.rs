@@ -124,7 +124,7 @@ fn main() {
     match zstd::decode_all(std::io::Cursor::new(&compressed)) {
         Ok(dec) => {
             println!("SUCCESS! Decoded {} bytes", dec.len());
-            if &dec == &input[..] {
+            if dec == input[..] {
                 println!("Content matches input!");
             } else {
                 println!("Content mismatch!");

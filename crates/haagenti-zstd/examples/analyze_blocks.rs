@@ -6,7 +6,7 @@ use haagenti_zstd::ZstdCompressor;
 fn parse_frame(data: &[u8], label: &str) {
     println!("\n=== {} ({} bytes) ===", label, data.len());
 
-    if data.len() < 4 || &data[0..4] != &[0x28, 0xB5, 0x2F, 0xFD] {
+    if data.len() < 4 || data[0..4] != [0x28, 0xB5, 0x2F, 0xFD] {
         println!("  Invalid magic number");
         return;
     }

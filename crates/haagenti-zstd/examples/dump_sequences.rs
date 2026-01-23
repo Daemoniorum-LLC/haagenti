@@ -163,7 +163,7 @@ fn decode_manual_sequences(fse_bits: &[u8]) {
         let ml_code = ml_decoder.peek_symbol();
 
         // Extra bits
-        let ll_extra = 0u32; // code 4 and 8 have no extra bits
+        let _ll_extra = 0u32; // code 4 and 8 have no extra bits
         let ml_extra = if ml_code == 33 {
             bits.read_bits(1).unwrap_or(0)
         } else {

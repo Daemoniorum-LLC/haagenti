@@ -30,7 +30,7 @@ fn main() {
     // Seq 1: ll=8, offset_value=1 (repeat_offset_1=4), ml=16 → of_code=0, ml_code=13
     // Note: offset_value=2 → of_code=1 (since 2 = (1<<1) + 0)
     // Note: offset_value=1 → of_code=0 (since 1 = (1<<0) + 0)
-    let sequences = vec![Sequence::new(4, 2, 36), Sequence::new(8, 1, 16)];
+    let sequences = [Sequence::new(4, 2, 36), Sequence::new(8, 1, 16)];
 
     let encoded: Vec<EncodedSequence> = sequences
         .iter()

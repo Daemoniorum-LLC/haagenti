@@ -9,7 +9,7 @@ use std::io::Cursor;
 fn test_pattern(name: &str, data: &[u8]) {
     let mut mf = MatchFinder::new(8);
     let matches = mf.find_matches(data);
-    let (literals, sequences) = matches_to_sequences(data, &matches);
+    let (_literals, sequences) = matches_to_sequences(data, &matches);
 
     let compressor = ZstdCompressor::with_level(CompressionLevel::Fast);
     let compressed = compressor.compress(data).unwrap();
@@ -17,7 +17,7 @@ fn test_pattern(name: &str, data: &[u8]) {
     let result = match zstd::decode_all(Cursor::new(&compressed)) {
         Ok(dec) if dec == data => "OK".to_string(),
         Ok(_) => "MISMATCH".to_string(),
-        Err(e) => format!("FAILED"),
+        Err(_) => "FAILED".to_string(),
     };
 
     println!(

@@ -156,7 +156,7 @@ struct BlockInfo {
 }
 
 fn parse_block(frame: &[u8]) -> Option<BlockInfo> {
-    if frame.len() < 4 || &frame[0..4] != &[0x28, 0xB5, 0x2F, 0xFD] {
+    if frame.len() < 4 || frame[0..4] != [0x28, 0xB5, 0x2F, 0xFD] {
         return None;
     }
 
@@ -288,9 +288,7 @@ fn parse_block(frame: &[u8]) -> Option<BlockInfo> {
         &[]
     };
 
-    let num_sequences = if seq_section.is_empty() {
-        0
-    } else if seq_section[0] == 0 {
+    let num_sequences = if seq_section.is_empty() || seq_section[0] == 0 {
         0
     } else if seq_section[0] < 128 {
         seq_section[0] as usize

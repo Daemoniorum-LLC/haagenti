@@ -15,6 +15,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+#[allow(unused_imports)]
 use haagenti::holotensor::HoloFragment;
 use haagenti::mixed_precision::{
     cosine_similarity, mse, MixedPrecisionDecoder, MixedPrecisionEncoder,
@@ -271,7 +272,7 @@ fn test_compressive_spectral(
 ) -> CompressionResult {
     // CompressiveSpectralEncoder takes num_fragments, not retention
     // Calculate fragments based on retention: more fragments = higher retention
-    let num_fragments = ((retention * 10.0) as u16).max(2).min(10);
+    let num_fragments = ((retention * 10.0) as u16).clamp(2, 10);
     let encoder = CompressiveSpectralEncoder::new(num_fragments, retention);
 
     let fragments = encoder.encode_2d(data, width, height).unwrap();
@@ -438,7 +439,7 @@ fn main() {
             let (height, width) = (info.shape[0], info.shape[1]);
             let n = width * height;
             // Limit to 256K elements max due to O(n²) DCT complexity
-            if n < 1024 || n > 256_000 {
+            if !(1024..=256_000).contains(&n) {
                 continue;
             }
 
@@ -465,40 +466,16 @@ fn main() {
             println!("Shape: {:?}, DType: {}", info.shape, info.dtype);
 
             // Run compression tests
-            let mut results = Vec::new();
-
-            // Mixed precision with different FP16 ratios
-            results.push(test_mixed_precision(
-                &tensor_f32,
-                width,
-                height,
-                retention,
-                0.10,
-            ));
-            results.push(test_mixed_precision(
-                &tensor_f32,
-                width,
-                height,
-                retention,
-                0.20,
-            ));
-            results.push(test_mixed_precision(
-                &tensor_f32,
-                width,
-                height,
-                retention,
-                0.30,
-            ));
-
-            // Baselines
-            results.push(test_all_int4(&tensor_f32, width, height, retention));
-            results.push(test_all_fp16(&tensor_f32, width, height, retention));
-            results.push(test_compressive_spectral(
-                &tensor_f32,
-                width,
-                height,
-                retention,
-            ));
+            let results = vec![
+                // Mixed precision with different FP16 ratios
+                test_mixed_precision(&tensor_f32, width, height, retention, 0.10),
+                test_mixed_precision(&tensor_f32, width, height, retention, 0.20),
+                test_mixed_precision(&tensor_f32, width, height, retention, 0.30),
+                // Baselines
+                test_all_int4(&tensor_f32, width, height, retention),
+                test_all_fp16(&tensor_f32, width, height, retention),
+                test_compressive_spectral(&tensor_f32, width, height, retention),
+            ];
 
             for r in &results {
                 r.print();

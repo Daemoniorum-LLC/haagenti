@@ -1,7 +1,7 @@
 //! Debug sequence encoding issue
 
 use haagenti_core::CompressionLevel;
-use haagenti_zstd::compress::{block, CompressContext, Match};
+use haagenti_zstd::compress::{block, CompressContext};
 
 fn main() {
     // Simple failing pattern: X*100 Y*100

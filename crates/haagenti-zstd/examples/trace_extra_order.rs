@@ -179,7 +179,7 @@ fn decode_with_trace(bitstream: &[u8], seq_count: usize) {
             0
         };
 
-        let ml_extra = if ml_extra_bits > 0 {
+        let _ml_extra = if ml_extra_bits > 0 {
             let v = bits.read_bits(ml_extra_bits as usize).unwrap_or(0);
             println!("      ML extra: read {} bits = {}", ml_extra_bits, v);
             v
@@ -200,7 +200,7 @@ fn decode_with_trace(bitstream: &[u8], seq_count: usize) {
         // Compute values
         let ll_value = get_ll_baseline(ll_code) + ll_extra as u32;
         let ml_value = (ml_code as u32) + 3;
-        let of_value = (1u32 << of_code) + of_extra as u32;
+        let of_value = (1u32 << of_code) + of_extra;
 
         println!(
             "    Values: LL={}, OF={} (code {}, extra {}), ML={}",

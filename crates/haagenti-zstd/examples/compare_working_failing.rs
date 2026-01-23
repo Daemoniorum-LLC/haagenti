@@ -155,7 +155,7 @@ fn analyze_and_compare(input: &[u8]) {
         };
 
         let ll_value = get_ll_baseline(ll_code) + ll_extra as u32;
-        let of_value = (1u32 << of_code) + of_extra as u32;
+        let of_value = (1u32 << of_code) + of_extra;
         let ml_value = (ml_code as u32) + 3 + ml_extra as u32;
 
         println!(

@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 description = "Python bindings for Haagenti tensor compression library"
 license.workspace = true
+repository.workspace = true
 authors.workspace = true
 keywords = ["python", "tensor", "compression", "machine-learning"]
 

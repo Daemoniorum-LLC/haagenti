@@ -183,7 +183,7 @@ fn analyze_bitstream(bitstream: &[u8]) {
         0
     };
 
-    let of_value = (1u32 << of_code) + of_extra as u32;
+    let of_value = (1u32 << of_code) + of_extra;
     let ml_value = get_ml_baseline(ml_code) + ml_extra as u32;
 
     println!(

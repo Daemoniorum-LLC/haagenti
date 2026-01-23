@@ -17,7 +17,7 @@ fn main() {
         println!("Test data: {} bytes\n", data.len());
 
         // Create context and find matches
-        let mut ctx = CompressContext::new(CompressionLevel::Default);
+        let _ctx = CompressContext::new(CompressionLevel::Default);
 
         // Use internal match finder directly
         let matches = {

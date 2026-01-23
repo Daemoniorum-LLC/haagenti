@@ -18,7 +18,6 @@ use std::path::PathBuf;
 use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
 use haagenti::importance::{
     cosine_similarity, mse, ImportanceGuidedDecoder, ImportanceGuidedEncoder, ImportanceMap,
-    Sensitivity,
 };
 
 // ============================================================================
@@ -441,7 +440,7 @@ fn main() {
             let n = width * height;
 
             // Limit to moderate tensor sizes for reasonable test time
-            if n < 1024 || n > 100_000 {
+            if !(1024..=100_000).contains(&n) {
                 continue;
             }
 

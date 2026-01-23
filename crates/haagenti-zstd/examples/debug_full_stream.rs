@@ -28,7 +28,7 @@ fn main() {
     }
 
     // Convert to sequences
-    let (literals, sequences) = matches_to_sequences(data, &matches);
+    let (_literals, sequences) = matches_to_sequences(data, &matches);
     println!("\nSequences ({}):", sequences.len());
     for (i, seq) in sequences.iter().enumerate() {
         let enc = EncodedSequence::from_sequence(seq);

@@ -57,9 +57,9 @@ fn parse_tensor_info(
     let dtype = if let Some(dtype_start) = tensor_section.find("\"dtype\":") {
         let rest = &tensor_section[dtype_start + 8..];
         let rest = rest.trim_start();
-        if rest.starts_with('"') {
-            let dtype_end = rest[1..].find('"').map(|p| p + 1)?;
-            rest[1..dtype_end].to_string()
+        if let Some(stripped) = rest.strip_prefix('"') {
+            let dtype_end = stripped.find('"')?;
+            stripped[..dtype_end].to_string()
         } else {
             return None;
         }

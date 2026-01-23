@@ -98,7 +98,7 @@ fn main() {
             println!("  Block size: {}", block_size);
 
             pos += 3;
-            let block_start = pos;
+            let _block_start = pos;
 
             // Literals section
             if pos >= compressed.len() {

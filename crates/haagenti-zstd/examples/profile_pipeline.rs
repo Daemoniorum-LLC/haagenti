@@ -2,7 +2,7 @@
 
 use haagenti_core::CompressionLevel;
 use haagenti_zstd::compress::{
-    block, CompressContext, CompressibilityFingerprint, LazyMatchFinder, Match,
+    block, CompressContext, CompressibilityFingerprint, LazyMatchFinder,
 };
 use std::time::Instant;
 

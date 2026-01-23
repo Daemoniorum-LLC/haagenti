@@ -32,7 +32,7 @@ fn main() {
     // Variant 3: With FCS (1 byte), multi-segment
     test_frame(
         "FCS=22, Multi-segment",
-        0x00 | 0x01,
+        0x01,
         Some(expected.len() as u64),
         literals,
         &bitstream,

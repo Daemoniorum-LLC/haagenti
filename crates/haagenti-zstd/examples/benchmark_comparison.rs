@@ -11,6 +11,7 @@ fn main() {
     println!();
 
     // Test data generators
+    #[allow(clippy::type_complexity)]
     let test_cases: Vec<(&str, Box<dyn Fn(usize) -> Vec<u8>>)> = vec![
         ("Text (English)", Box::new(generate_text)),
         ("Binary (Mixed)", Box::new(generate_binary)),
@@ -117,7 +118,7 @@ fn main() {
     let mut total_spec_compress = 0.0;
     let mut total_ref_decompress = 0.0;
     let mut total_our_decompress = 0.0;
-    let mut count = 0.0;
+    let mut _count = 0.0;
 
     for (_, generator) in &test_cases {
         for &size in &sizes {
@@ -130,7 +131,7 @@ fn main() {
             total_spec_compress += comp.spec_throughput;
             total_ref_decompress += decomp.ref_throughput;
             total_our_decompress += decomp.our_throughput;
-            count += 1.0;
+            _count += 1.0;
         }
     }
 

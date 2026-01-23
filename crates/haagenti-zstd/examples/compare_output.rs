@@ -133,7 +133,7 @@ fn parse_frame(label: &str, data: &[u8]) {
         pos += 1;
 
         // Print remaining bytes as sequence data
-        let remaining =
+        let _remaining =
             &data[pos..seq_start + (block_size - (seq_start - (seq_start - seq_count.max(1))))];
         print!("  Sequence data: ");
         for b in &data[pos..] {

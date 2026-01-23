@@ -86,8 +86,7 @@ fn main() {
     } else if seq_section[0] < 128 {
         seq_section[0] as usize
     } else if seq_section[0] < 255 {
-        let n = ((seq_section[0] as usize - 128) << 8) + seq_section[1] as usize;
-        n
+        ((seq_section[0] as usize - 128) << 8) + seq_section[1] as usize
     } else {
         let n = (seq_section[1] as usize) | ((seq_section[2] as usize) << 8);
         n + 0x7F00

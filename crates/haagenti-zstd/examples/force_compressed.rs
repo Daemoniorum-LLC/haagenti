@@ -16,19 +16,13 @@ fn main() {
         );
 
         // Get reference compression
-        let ref_compressed = zstd::encode_all(&input[..], 1).unwrap();
+        let ref_compressed = zstd::encode_all(input, 1).unwrap();
 
         // Check block type
         let fhd = ref_compressed[4];
         let single_segment = (fhd & 0x20) != 0;
-        let fcs_field = if single_segment { 1 } else { 0 };
-        let mut pos = 5 + fcs_field;
-        if !single_segment {
-            pos += 1;
-        }
 
-        // For single segment frames, FCS comes right after FHD
-        // Skip FCS field
+        // Calculate FCS field size
         let fcs_size = match fhd >> 6 {
             0 => {
                 if single_segment {
@@ -42,11 +36,12 @@ fn main() {
             3 => 8,
             _ => 0,
         };
-        if single_segment {
-            pos = 5 + fcs_size;
+        // Calculate position: FHD (byte 4) + window (if not single segment) + FCS
+        let pos = if single_segment {
+            5 + fcs_size
         } else {
-            pos = 5 + 1 + fcs_size; // FHD + window + FCS
-        }
+            5 + 1 + fcs_size // FHD + window + FCS
+        };
 
         if pos + 3 > ref_compressed.len() {
             println!("  Frame too short");

@@ -159,7 +159,7 @@ fn convert_safetensors_to_hct(config: &ConverterConfig) -> Result<ConversionStat
         let tensor_data = &data[data_start + info.data_offsets.0..data_start + info.data_offsets.1];
 
         // Create output file
-        let safe_name = name.replace('/', "_").replace('.', "_");
+        let safe_name = name.replace(['/', '.'], "_");
         let output_path = config.output_dir.join(format!("{}.hct", safe_name));
 
         let output_file = File::create(&output_path)

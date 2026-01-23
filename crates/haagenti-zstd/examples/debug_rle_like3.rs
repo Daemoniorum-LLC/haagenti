@@ -43,8 +43,8 @@ fn main() {
     println!("=== Pattern Tests ===\n");
 
     // Simple repeats
-    test_pattern("A*100", &vec![b'A'; 100]);
-    test_pattern("A*200", &vec![b'A'; 200]);
+    test_pattern("A*100", &[b'A'; 100]);
+    test_pattern("A*200", &[b'A'; 200]);
     test_pattern("A*400", &vec![b'A'; 400]);
 
     // Two-phase patterns

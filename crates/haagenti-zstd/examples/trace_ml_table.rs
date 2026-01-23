@@ -45,7 +45,7 @@ fn main() {
     println!("Bitstream as u32 LE: 0x{:08x}", bits);
     println!("Binary: {:032b}", bits);
 
-    let sentinel = 31 - bits.leading_zeros() as u32;
+    let sentinel = 31 - bits.leading_zeros();
     println!("Sentinel at bit: {}", sentinel);
 
     // States read from MSB (after sentinel)

@@ -21,6 +21,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use haagenti::compressive::CompressiveSpectralEncoder;
+#[allow(unused_imports)]
 use haagenti::{Codec, Compressor, ZstdCodec};
 
 /// Block size for INT4 quantization.
@@ -35,6 +36,7 @@ struct TensorInfo {
 }
 
 /// Compressed tensor output.
+#[allow(dead_code)]
 struct CompressedTensor {
     name: String,
     original_shape: Vec<usize>,
@@ -137,8 +139,8 @@ fn bytes_to_f32(data: &[u8], dtype: &str) -> Vec<f32> {
 /// Quantize f32 weights to INT4 with per-block FP16 scaling.
 /// Returns packed bytes: [scales_f16...][packed_int4...]
 fn quantize_int4(weights: &[f32]) -> Vec<u8> {
-    let num_blocks = (weights.len() + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
-    let mut output = Vec::with_capacity(num_blocks * 2 + (weights.len() + 1) / 2);
+    let num_blocks = weights.len().div_ceil(Q4_BLOCK_SIZE);
+    let mut output = Vec::with_capacity(num_blocks * 2 + weights.len().div_ceil(2));
 
     // First pass: compute and store scales
     let mut scales = Vec::with_capacity(num_blocks);
