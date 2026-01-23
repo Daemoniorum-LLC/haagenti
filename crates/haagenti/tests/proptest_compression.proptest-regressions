@@ -1,0 +1,15 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2cd737f6e33ba2930b9b27ac7131d284946fe4e594dc0de45e654fa54d65843a # shrinks to seed = 375
+cc 6d556ad56a7450b42fdab3faa91751f8599a8718c02b7aca697b8e0e72e0128d # shrinks to seed = 212
+cc ffebac5e1346f323e93a433366c146f25e2b4e5852cdaa7d4c8d322abd555a2c # shrinks to rows = 16, cols = 8, seed = 352
+cc 7674c629104a1003f0b3a6c8335ec0a6a040c8762574e37df2cfafb748c716ef # shrinks to seed = 9080
+cc 5e384f6a9db59627525746f838d23bdf53a790e4c4e6eace1ec5d162e7d347fb # shrinks to size = 8, seed = 908
+cc caf78b8473ff46f34664fbcd93a823cea3cf132f9a3b05b3fe17d48972e3525d # shrinks to rows = 8, cols = 8, seed = 115
+cc 6a73d2866037bbe7dea46eb461b840787951d370df6dd68b47f399d2a1f89818 # shrinks to size = 8, seed = 447
+cc 2ff7421eb81d55cfc378c16fd182c57690151df281690203b3e020c7ca447b2b # shrinks to rows = 8, cols = 8, seed = 687
+cc 311cfb43e9257722507984a0515a559c5635b7fb87b546aa0c75300a2781d874 # shrinks to seed = 4739
