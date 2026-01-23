@@ -207,7 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for (width, height) in &[(64, 64), (128, 128), (256, 256)] {
             let tensors: Vec<Vec<f32>> = (0..10)
-                .map(|i| generate_test_data(*width, *height))
+                .map(|_| generate_test_data(*width, *height))
                 .collect();
             let tensor_refs: Vec<&[f32]> = tensors.iter().map(|t| t.as_slice()).collect();
 
