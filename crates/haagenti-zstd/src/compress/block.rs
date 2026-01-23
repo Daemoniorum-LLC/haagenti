@@ -9,7 +9,7 @@
 //! providing up to 2-3x speedup for large literals.
 
 use super::Match;
-use super::sequences::{analyze_for_rle, encode_sequences_rle, encode_sequences_fse_with_encoded};
+use super::sequences::{analyze_for_rle, encode_sequences_fse_with_encoded};
 use crate::block::Sequence;
 use crate::huffman::HuffmanEncoder;
 use haagenti_core::Result;
@@ -120,9 +120,7 @@ impl RepeatOffsetsEncoder {
             } else if actual_offset == self.offsets[1] {
                 // Matches repeat_offset_2 - rotate [1] to front
                 // Decoder does: temp = [idx], shift down, [0] = temp
-                let temp = self.offsets[1];
-                self.offsets[1] = self.offsets[0];
-                self.offsets[0] = temp;
+                self.offsets.swap(1, 0);
                 return 2;
             } else if actual_offset == self.offsets[2] {
                 // Matches repeat_offset_3 - rotate [2] to front
@@ -373,16 +371,16 @@ fn encode_huffman_4stream(
     let regenerated_size = literals.len();
 
     // Split literals into 4 equal segments (with rounding for last segment)
-    let segment_size = (regenerated_size + 3) / 4;
+    let segment_size = regenerated_size.div_ceil(4);
     let mut segments: [&[u8]; 4] = [&[], &[], &[], &[]];
 
-    for i in 0..4 {
+    for (i, segment) in segments.iter_mut().enumerate() {
         let start = i * segment_size;
         if start >= regenerated_size {
-            segments[i] = &[];
+            *segment = &[];
         } else {
             let end = ((i + 1) * segment_size).min(regenerated_size);
-            segments[i] = &literals[start..end];
+            *segment = &literals[start..end];
         }
     }
 

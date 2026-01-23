@@ -1180,7 +1180,7 @@ impl GpuDctContext {
         let d_output: CudaSlice<f32> = self.device.alloc_zeros(size)?;
 
         // Launch IDCT on rows: coeffs -> temp
-        let blocks_x = (width as u32 + self.block_size - 1) / self.block_size;
+        let blocks_x = (width as u32).div_ceil(self.block_size);
         let row_config = LaunchConfig {
             block_dim: (self.block_size, 1, 1),
             grid_dim: (blocks_x, height as u32, 1),
@@ -1199,7 +1199,7 @@ impl GpuDctContext {
         self.device.synchronize()?;
 
         // Launch IDCT on columns: temp -> output
-        let blocks_y = (height as u32 + self.block_size - 1) / self.block_size;
+        let blocks_y = (height as u32).div_ceil(self.block_size);
         let col_config = LaunchConfig {
             block_dim: (1, self.block_size, 1),
             grid_dim: (width as u32, blocks_y, 1),
@@ -1251,7 +1251,7 @@ impl GpuDctContext {
         let d_output: CudaSlice<f32> = self.device.alloc_zeros(size)?;
 
         // DCT rows: data -> temp
-        let blocks_x = (width as u32 + self.block_size - 1) / self.block_size;
+        let blocks_x = (width as u32).div_ceil(self.block_size);
         let row_config = LaunchConfig {
             block_dim: (self.block_size, 1, 1),
             grid_dim: (blocks_x, height as u32, 1),
@@ -1270,7 +1270,7 @@ impl GpuDctContext {
         self.device.synchronize()?;
 
         // DCT columns: temp -> output
-        let blocks_y = (height as u32 + self.block_size - 1) / self.block_size;
+        let blocks_y = (height as u32).div_ceil(self.block_size);
         let col_config = LaunchConfig {
             block_dim: (1, self.block_size, 1),
             grid_dim: (width as u32, blocks_y, 1),
@@ -1557,7 +1557,7 @@ impl GpuDctContext {
         };
 
         // Launch config for row-wise operation
-        let blocks_x = (width as u32 + self.block_size - 1) / self.block_size;
+        let blocks_x = (width as u32).div_ceil(self.block_size);
         let row_config = LaunchConfig {
             block_dim: (self.block_size, 1, 1),
             grid_dim: (blocks_x, height as u32, 1),
@@ -1580,7 +1580,7 @@ impl GpuDctContext {
         self.device.synchronize()?;
 
         // Launch config for column-wise operation
-        let blocks_y = (height as u32 + self.block_size - 1) / self.block_size;
+        let blocks_y = (height as u32).div_ceil(self.block_size);
         let col_config = LaunchConfig {
             block_dim: (1, self.block_size, 1),
             grid_dim: (width as u32, blocks_y, 1),
