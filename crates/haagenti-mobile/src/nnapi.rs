@@ -47,7 +47,7 @@ pub enum ExecutionPreference {
 
 impl ExecutionPreference {
     /// Convert to NNAPI constant
-    pub fn to_nnapi(&self) -> i32 {
+    pub fn to_nnapi(self) -> i32 {
         match self {
             ExecutionPreference::LowPower => 0,
             ExecutionPreference::FastSingleAnswer => 1,
@@ -100,7 +100,8 @@ pub struct NnapiDevice {
 /// NNAPI model wrapper
 #[derive(Debug)]
 pub struct NnapiModel {
-    /// Configuration
+    /// Configuration (kept for future model reloading)
+    #[allow(dead_code)]
     config: NnapiConfig,
     /// Model name
     name: String,
@@ -155,7 +156,7 @@ impl NnapiModel {
     }
 
     /// Run inference
-    pub async fn predict(&self, input: &[f32]) -> Result<Vec<f32>> {
+    pub async fn predict(&self, _input: &[f32]) -> Result<Vec<f32>> {
         if !self.loaded {
             return Err(MobileError::ModelLoadError("Model not loaded".into()));
         }
@@ -225,14 +226,12 @@ impl NnapiRuntime {
         #[cfg(not(target_os = "android"))]
         {
             // Return simulated devices
-            vec![
-                NnapiDevice {
-                    name: "CPU".into(),
-                    device_type: DeviceType::Cpu,
-                    feature_level: 30,
-                    version: "1.0".into(),
-                },
-            ]
+            vec![NnapiDevice {
+                name: "CPU".into(),
+                device_type: DeviceType::Cpu,
+                feature_level: 30,
+                version: "1.0".into(),
+            }]
         }
     }
 

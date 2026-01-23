@@ -199,7 +199,12 @@ impl QualitySampler {
 
         let n = self.reports.len() as f32;
 
-        let avg_cosine = self.reports.iter().map(|r| r.cosine_similarity).sum::<f32>() / n;
+        let avg_cosine = self
+            .reports
+            .iter()
+            .map(|r| r.cosine_similarity)
+            .sum::<f32>()
+            / n;
         let avg_mse = self.reports.iter().map(|r| r.mse).sum::<f32>() / n;
         let avg_psnr = self.reports.iter().map(|r| r.psnr).sum::<f32>() / n;
 
@@ -209,11 +214,7 @@ impl QualitySampler {
             .map(|r| r.cosine_similarity)
             .fold(f32::INFINITY, f32::min);
 
-        let max_mse = self
-            .reports
-            .iter()
-            .map(|r| r.mse)
-            .fold(0.0f32, f32::max);
+        let max_mse = self.reports.iter().map(|r| r.mse).fold(0.0f32, f32::max);
 
         let acceptable_count = self.reports.iter().filter(|r| r.is_acceptable()).count();
 
@@ -234,10 +235,7 @@ impl QualitySampler {
         let mut grouped: HashMap<&'static str, Vec<&QualityReport>> = HashMap::new();
 
         for report in &self.reports {
-            grouped
-                .entry(report.grade())
-                .or_default()
-                .push(report);
+            grouped.entry(report.grade()).or_default().push(report);
         }
 
         grouped

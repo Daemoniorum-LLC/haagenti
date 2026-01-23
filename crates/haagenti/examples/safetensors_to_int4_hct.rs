@@ -57,8 +57,8 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
     let header_json = std::str::from_utf8(&data[8..8 + header_len])
         .map_err(|e| format!("Invalid UTF-8: {}", e))?;
 
-    let header: serde_json::Value = serde_json::from_str(header_json)
-        .map_err(|e| format!("Invalid JSON: {}", e))?;
+    let header: serde_json::Value =
+        serde_json::from_str(header_json).map_err(|e| format!("Invalid JSON: {}", e))?;
 
     let mut tensors = HashMap::new();
 
@@ -91,7 +91,14 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
                 let start = offsets[0].as_u64().ok_or("Invalid offset")? as usize;
                 let end = offsets[1].as_u64().ok_or("Invalid offset")? as usize;
 
-                tensors.insert(name, TensorInfo { dtype, shape, data_offsets: (start, end) });
+                tensors.insert(
+                    name,
+                    TensorInfo {
+                        dtype,
+                        shape,
+                        data_offsets: (start, end),
+                    },
+                );
             }
         }
     }
@@ -140,9 +147,7 @@ fn quantize_int4_symmetric(weights: &[f32]) -> (Vec<u8>, Vec<u8>) {
 
     for block in weights.chunks(Q4_BLOCK_SIZE) {
         // Find max absolute value for symmetric quantization
-        let max_abs = block.iter()
-            .map(|v| v.abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = block.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
 
         // Compute scale: we map [-max_abs, +max_abs] to [-8, +7] (nibbles 0-15)
         // So scale = max_abs / 7.0 (we use 7 since +7 is the max positive)
@@ -168,7 +173,11 @@ fn quantize_int4_symmetric(weights: &[f32]) -> (Vec<u8>, Vec<u8>) {
         // Pack 2 INT4 values per byte (low nibble first)
         for chunk in quantized.chunks(2) {
             let low = chunk[0] & 0x0F;
-            let high = if chunk.len() > 1 { (chunk[1] & 0x0F) << 4 } else { 0 };
+            let high = if chunk.len() > 1 {
+                (chunk[1] & 0x0F) << 4
+            } else {
+                0
+            };
             packed.push(low | high);
         }
     }
@@ -185,14 +194,15 @@ struct ConversionStats {
     elapsed_ms: u64,
 }
 
-fn convert_safetensors_to_int4(
-    input: &Path,
-    output_dir: &Path,
-) -> Result<ConversionStats, String> {
+fn convert_safetensors_to_int4(input: &Path, output_dir: &Path) -> Result<ConversionStats, String> {
     let start = Instant::now();
 
     let data = fs::read(input).map_err(|e| format!("Failed to read: {}", e))?;
-    println!("Read {} ({:.2} MB)", input.display(), data.len() as f64 / 1_000_000.0);
+    println!(
+        "Read {} ({:.2} MB)",
+        input.display(),
+        data.len() as f64 / 1_000_000.0
+    );
 
     let (data_start, tensors) = parse_safetensors_header(&data)?;
     println!("Found {} tensors", tensors.len());
@@ -220,8 +230,12 @@ fn convert_safetensors_to_int4(
         // Verify element count matches shape
         let expected_elements: usize = info.shape.iter().product();
         if f32_weights.len() != expected_elements {
-            println!("  Warning: {} element count mismatch: {} vs expected {}",
-                name, f32_weights.len(), expected_elements);
+            println!(
+                "  Warning: {} element count mismatch: {} vs expected {}",
+                name,
+                f32_weights.len(),
+                expected_elements
+            );
         }
 
         // Quantize to INT4 with symmetric scaling
@@ -234,8 +248,8 @@ fn convert_safetensors_to_int4(
         // Shape remains the same as original (element count, not packed)
         let shape: Vec<u64> = info.shape.iter().map(|&s| s as u64).collect();
 
-        let output_file = File::create(&output_path)
-            .map_err(|e| format!("Failed to create file: {}", e))?;
+        let output_file =
+            File::create(&output_path).map_err(|e| format!("Failed to create file: {}", e))?;
 
         // Write as I4 HCT
         let mut writer = HctWriter::new(output_file, CompressionAlgorithm::Lz4, DType::I4, shape)
@@ -246,9 +260,12 @@ fn convert_safetensors_to_int4(
         quant_data.extend_from_slice(&scales_bytes);
         quant_data.extend_from_slice(&packed_int4);
 
-        writer.compress_data(&quant_data, &compressor)
+        writer
+            .compress_data(&quant_data, &compressor)
             .map_err(|e| format!("Compression failed: {}", e))?;
-        writer.finish().map_err(|e| format!("Failed to finish: {}", e))?;
+        writer
+            .finish()
+            .map_err(|e| format!("Failed to finish: {}", e))?;
 
         let compressed_size = fs::metadata(&output_path)
             .map_err(|e| format!("Failed to get size: {}", e))?
@@ -262,10 +279,13 @@ fn convert_safetensors_to_int4(
             let num_blocks = (f32_weights.len() + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
             println!(
                 "  {} ({:?} {:?}): {:.1}MB -> {:.1}MB ({:.2}x), {} blocks",
-                name, info.dtype, info.shape,
+                name,
+                info.dtype,
+                info.shape,
                 original_size as f64 / 1_000_000.0,
                 compressed_size as f64 / 1_000_000.0,
-                ratio, num_blocks
+                ratio,
+                num_blocks
             );
         }
 
@@ -367,7 +387,10 @@ fn main() {
     let mut total_stats = ConversionStats::default();
 
     for safetensors_path in &safetensors_files {
-        println!("Processing: {}", safetensors_path.file_name().unwrap().to_string_lossy());
+        println!(
+            "Processing: {}",
+            safetensors_path.file_name().unwrap().to_string_lossy()
+        );
 
         match convert_safetensors_to_int4(safetensors_path, &output_dir) {
             Ok(stats) => {
@@ -383,13 +406,22 @@ fn main() {
         println!();
     }
 
-    let ratio = total_stats.total_original_bytes as f64 / total_stats.total_compressed_bytes.max(1) as f64;
-    let throughput = total_stats.total_original_bytes as f64 / (total_stats.elapsed_ms as f64 / 1000.0) / 1_000_000.0;
+    let ratio =
+        total_stats.total_original_bytes as f64 / total_stats.total_compressed_bytes.max(1) as f64;
+    let throughput = total_stats.total_original_bytes as f64
+        / (total_stats.elapsed_ms as f64 / 1000.0)
+        / 1_000_000.0;
 
     println!("=== Summary ===");
     println!("Tensors:    {}", total_stats.total_tensors);
-    println!("Original:   {:.2} GB", total_stats.total_original_bytes as f64 / 1_000_000_000.0);
-    println!("Compressed: {:.2} GB", total_stats.total_compressed_bytes as f64 / 1_000_000_000.0);
+    println!(
+        "Original:   {:.2} GB",
+        total_stats.total_original_bytes as f64 / 1_000_000_000.0
+    );
+    println!(
+        "Compressed: {:.2} GB",
+        total_stats.total_compressed_bytes as f64 / 1_000_000_000.0
+    );
     println!("Ratio:      {:.2}x", ratio);
     println!("Time:       {:.2}s", total_stats.elapsed_ms as f64 / 1000.0);
     println!("Throughput: {:.0} MB/s", throughput);

@@ -18,8 +18,8 @@ mod decoder;
 mod encoder;
 mod table;
 
-pub use decoder::{HuffmanDecoder, build_table_from_weights, parse_huffman_weights};
-pub use encoder::{HuffmanEncoder, HuffmanCode};
+pub use decoder::{build_table_from_weights, parse_huffman_weights, HuffmanDecoder};
+pub use encoder::{HuffmanCode, HuffmanEncoder};
 pub use table::{HuffmanTable, HuffmanTableEntry};
 
 /// Maximum number of symbols in a Huffman table (0-255 for literals).
@@ -52,9 +52,15 @@ mod tests {
     fn test_huffman_encoder_decoder_roundtrip() {
         // Create sample data with clear frequency distribution
         let mut data = Vec::new();
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
-        for _ in 0..25 { data.push(b'c'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
+        for _ in 0..25 {
+            data.push(b'c');
+        }
 
         // Build encoder
         let encoder = HuffmanEncoder::build(&data).expect("Should build encoder");
@@ -75,7 +81,9 @@ mod tests {
         let mut bits = BitReader::new_reversed(&encoded).expect("Should create reversed reader");
         let mut decoded = Vec::new();
         for _ in 0..data.len() {
-            let symbol = decoder.decode_symbol(&mut bits).expect("Should decode symbol");
+            let symbol = decoder
+                .decode_symbol(&mut bits)
+                .expect("Should decode symbol");
             decoded.push(symbol);
         }
 
@@ -88,8 +96,12 @@ mod tests {
     fn test_huffman_simple_encode_decode() {
         // Very simple case: just encode 'a' and 'b'
         let mut data = Vec::new();
-        for _ in 0..50 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
+        for _ in 0..50 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
 
         let encoder = HuffmanEncoder::build(&data).expect("Should build encoder");
         let encoded = encoder.encode(&data);
@@ -134,14 +146,30 @@ mod tests {
         // This tests the frequency -> weight conversion
         let mut data = Vec::new();
         // Symbol frequencies: a=100, b=50, c=25, d=12, e=6, f=3, g=2, h=1
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
-        for _ in 0..25 { data.push(b'c'); }
-        for _ in 0..12 { data.push(b'd'); }
-        for _ in 0..6 { data.push(b'e'); }
-        for _ in 0..3 { data.push(b'f'); }
-        for _ in 0..2 { data.push(b'g'); }
-        for _ in 0..1 { data.push(b'h'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
+        for _ in 0..25 {
+            data.push(b'c');
+        }
+        for _ in 0..12 {
+            data.push(b'd');
+        }
+        for _ in 0..6 {
+            data.push(b'e');
+        }
+        for _ in 0..3 {
+            data.push(b'f');
+        }
+        for _ in 0..2 {
+            data.push(b'g');
+        }
+        for _ in 0..1 {
+            data.push(b'h');
+        }
 
         let encoder = HuffmanEncoder::build(&data).expect("Should build from frequencies");
         let codes = encoder.get_codes();
@@ -153,7 +181,8 @@ mod tests {
         assert!(
             a_bits <= h_bits,
             "Most frequent symbol should have shorter code: a={} bits, h={} bits",
-            a_bits, h_bits
+            a_bits,
+            h_bits
         );
     }
 
@@ -161,17 +190,25 @@ mod tests {
     fn test_huffman_table_serialization_roundtrip() {
         // Test that serialized weights can be parsed back
         let mut data = Vec::new();
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
-        for _ in 0..25 { data.push(b'c'); }
-        for _ in 0..12 { data.push(b'd'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
+        for _ in 0..25 {
+            data.push(b'c');
+        }
+        for _ in 0..12 {
+            data.push(b'd');
+        }
 
         let encoder = HuffmanEncoder::build(&data).expect("Should build encoder");
         let serialized = encoder.serialize_weights();
 
         // Parse the serialized weights
-        let (parsed_weights, bytes_read) = parse_huffman_weights(&serialized)
-            .expect("Should parse serialized weights");
+        let (parsed_weights, bytes_read) =
+            parse_huffman_weights(&serialized).expect("Should parse serialized weights");
 
         assert!(bytes_read > 0, "Should read some bytes");
         assert!(!parsed_weights.is_empty(), "Should have parsed weights");
@@ -181,7 +218,10 @@ mod tests {
             .expect("Should build table from parsed weights");
 
         // Verify table is valid
-        assert!(table.max_bits() <= HUFFMAN_MAX_BITS, "Max bits should be within limit");
+        assert!(
+            table.max_bits() <= HUFFMAN_MAX_BITS,
+            "Max bits should be within limit"
+        );
     }
 
     #[test]
@@ -213,7 +253,9 @@ mod tests {
                 assert!(
                     code.num_bits <= HUFFMAN_MAX_BITS,
                     "Symbol {} has code length {} exceeding max {}",
-                    i, code.num_bits, HUFFMAN_MAX_BITS
+                    i,
+                    code.num_bits,
+                    HUFFMAN_MAX_BITS
                 );
             }
         }
@@ -236,7 +278,10 @@ mod tests {
 
         // Verify symbols are encoded
         assert!(encoder.num_symbols() >= 15, "Should have many symbols");
-        assert!(encoder.max_bits() <= HUFFMAN_MAX_BITS, "Should respect max bits");
+        assert!(
+            encoder.max_bits() <= HUFFMAN_MAX_BITS,
+            "Should respect max bits"
+        );
 
         // Encode the data and verify compression
         let encoded = encoder.encode(&data);
@@ -265,7 +310,9 @@ mod tests {
         assert!(
             ratio >= 2.0,
             "Compression ratio {:.2}x is below expected 2x (original: {}, compressed: {})",
-            ratio, original_size, compressed_size
+            ratio,
+            original_size,
+            compressed_size
         );
     }
 
@@ -282,22 +329,35 @@ mod tests {
         let data = vec![b'x'; 1000];
         let encoder = HuffmanEncoder::build(&data);
         // Should return None since single symbol is better handled by RLE
-        assert!(encoder.is_none(), "Single symbol data should not use Huffman");
+        assert!(
+            encoder.is_none(),
+            "Single symbol data should not use Huffman"
+        );
     }
 
     #[test]
     fn test_huffman_two_symbols_equal_frequency() {
         // Two symbols with equal frequency should each get 1-bit codes
         let mut data = Vec::new();
-        for _ in 0..500 { data.push(b'0'); }
-        for _ in 0..500 { data.push(b'1'); }
+        for _ in 0..500 {
+            data.push(b'0');
+        }
+        for _ in 0..500 {
+            data.push(b'1');
+        }
 
         let encoder = HuffmanEncoder::build(&data).expect("Should build encoder");
         let codes = encoder.get_codes();
 
         // Both symbols should have 1-bit codes
-        assert_eq!(codes[b'0' as usize].num_bits, 1, "Symbol '0' should have 1-bit code");
-        assert_eq!(codes[b'1' as usize].num_bits, 1, "Symbol '1' should have 1-bit code");
+        assert_eq!(
+            codes[b'0' as usize].num_bits, 1,
+            "Symbol '0' should have 1-bit code"
+        );
+        assert_eq!(
+            codes[b'1' as usize].num_bits, 1,
+            "Symbol '1' should have 1-bit code"
+        );
 
         // Compressed size should be about half the original (1 bit per symbol)
         let encoded = encoder.encode(&data);
@@ -316,7 +376,10 @@ mod tests {
         let encoder = HuffmanEncoder::build(&data).expect("Should build encoder for text");
 
         // Text has non-uniform character distribution
-        assert!(encoder.num_symbols() > 10, "Text should have multiple symbols");
+        assert!(
+            encoder.num_symbols() > 10,
+            "Text should have multiple symbols"
+        );
 
         // Encode
         let encoded = encoder.encode(&data);
@@ -335,17 +398,28 @@ mod tests {
         let space_code = encoder.get_codes()[b' ' as usize];
         assert!(space_code.num_bits > 0, "Space should be encoded");
         // Space should have a reasonable code length (not the longest)
-        assert!(space_code.num_bits <= encoder.max_bits(), "Space code should fit within max bits");
+        assert!(
+            space_code.num_bits <= encoder.max_bits(),
+            "Space code should fit within max bits"
+        );
     }
 
     #[test]
     fn test_huffman_batch_encode_consistency() {
         // Test that regular and batch encoding produce consistent results
         let mut data = Vec::new();
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
-        for _ in 0..25 { data.push(b'c'); }
-        for _ in 0..12 { data.push(b'd'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
+        for _ in 0..25 {
+            data.push(b'c');
+        }
+        for _ in 0..12 {
+            data.push(b'd');
+        }
 
         let encoder = HuffmanEncoder::build(&data).expect("Should build encoder");
 

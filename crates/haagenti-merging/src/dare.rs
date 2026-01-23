@@ -4,9 +4,9 @@
 //! enabling efficient parameter-space merging while maintaining
 //! model quality.
 
-use crate::{MergeError, Result, WeightTensor, WeightDelta};
-use rand::{Rng, SeedableRng};
+use crate::{MergeError, Result, WeightDelta, WeightTensor};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -159,18 +159,15 @@ impl DareMerger {
         }
 
         // Apply DARE to each delta
-        let dared: Vec<WeightTensor> = deltas
-            .iter()
-            .map(|d| self.dare(&d.delta))
-            .collect();
+        let dared: Vec<WeightTensor> = deltas.iter().map(|d| self.dare(&d.delta)).collect();
 
         // Combine based on method
         let n = dared[0].data.len();
         let mut result = vec![0.0f32; n];
 
-        let weights = weights.map(|w| w.to_vec()).unwrap_or_else(|| {
-            vec![1.0; deltas.len()]
-        });
+        let weights = weights
+            .map(|w| w.to_vec())
+            .unwrap_or_else(|| vec![1.0; deltas.len()]);
 
         match self.config.combine_method {
             CombineMethod::Sum => {

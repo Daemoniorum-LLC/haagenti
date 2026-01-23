@@ -1,6 +1,6 @@
 //! HNSW-based similarity search for embeddings
 
-use crate::{ClipEmbedding, CacheError, Result};
+use crate::ClipEmbedding;
 use instant_distance::{Builder, HnswMap, Search};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};

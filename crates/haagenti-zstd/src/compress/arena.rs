@@ -75,7 +75,11 @@ impl Arena {
     /// Allocate a mutable slice of bytes.
     ///
     /// Returns `None` if there's not enough space in the arena.
+    /// SAFETY: This returns a mutable reference from a shared reference, which is safe
+    /// because we use interior mutability (Cell) to track the allocation position,
+    /// ensuring each region is only handed out once.
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice(&self, len: usize) -> Option<&mut [u8]> {
         let pos = self.pos.get();
         let new_pos = pos.checked_add(len)?;

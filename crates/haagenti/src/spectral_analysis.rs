@@ -15,8 +15,8 @@
 //! By adapting retention per-tensor, we can achieve the same quality with
 //! significantly less storage (or better quality at same storage).
 
-use haagenti_core::Result;
 use crate::holotensor::dct_2d;
+use haagenti_core::Result;
 
 /// Spectral energy analyzer for adaptive compression.
 ///
@@ -37,9 +37,9 @@ pub struct SpectralAnalyzer {
 impl Default for SpectralAnalyzer {
     fn default() -> Self {
         Self {
-            target_quality: 0.95,  // 95% energy retention
-            min_retention: 0.05,   // At least 5% of coefficients
-            max_retention: 0.90,   // At most 90%
+            target_quality: 0.95, // 95% energy retention
+            min_retention: 0.05,  // At least 5% of coefficients
+            max_retention: 0.90,  // At most 90%
         }
     }
 }
@@ -184,7 +184,7 @@ impl SpectralAnalyzer {
         // Compute curvature at each point
         // Curvature ≈ |f''| / (1 + f'^2)^1.5
         for i in 1..n - 1 {
-            let x = i as f32 / n as f32;
+            let _x = i as f32 / n as f32;
             let y_prev = cumulative_energy[i - 1];
             let y = cumulative_energy[i];
             let y_next = cumulative_energy[i + 1];
@@ -422,7 +422,11 @@ mod tests {
         let retention = analyzer.compute_optimal_retention(&data, 8, 8).unwrap();
 
         // Low-rank matrix should have low optimal retention
-        assert!(retention < 0.5, "Low-rank matrix should need low retention, got {}", retention);
+        assert!(
+            retention < 0.5,
+            "Low-rank matrix should need low retention, got {}",
+            retention
+        );
     }
 
     #[test]
@@ -430,12 +434,18 @@ mod tests {
         let analyzer = SpectralAnalyzer::new(0.95);
 
         // Random-ish data should need higher retention
-        let data: Vec<f32> = (0..64).map(|i| ((i * 17 + 3) % 100) as f32 / 100.0).collect();
+        let data: Vec<f32> = (0..64)
+            .map(|i| ((i * 17 + 3) % 100) as f32 / 100.0)
+            .collect();
 
         let retention = analyzer.compute_optimal_retention(&data, 8, 8).unwrap();
 
         // Should need more retention for "random" data
-        assert!(retention > 0.1, "Random data should need higher retention, got {}", retention);
+        assert!(
+            retention > 0.1,
+            "Random data should need higher retention, got {}",
+            retention
+        );
     }
 
     #[test]
@@ -495,6 +505,9 @@ mod tests {
 
         let retention = analyzer.compute_optimal_retention(&data, 8, 8).unwrap();
         // All zeros should result in minimum retention
-        assert!(retention <= 0.10, "All-zero tensor should use minimum retention");
+        assert!(
+            retention <= 0.10,
+            "All-zero tensor should use minimum retention"
+        );
     }
 }

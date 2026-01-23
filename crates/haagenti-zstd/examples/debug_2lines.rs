@@ -36,7 +36,8 @@ fn main() {
                 return;
             }
 
-            let magic = u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+            let magic =
+                u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
             println!("Magic: 0x{:08x} (expected 0xFD2FB528)", magic);
 
             if compressed.len() < 5 {
@@ -76,16 +77,24 @@ fn main() {
                 return;
             }
 
-            let bh = u32::from_le_bytes([compressed[pos], compressed[pos+1], compressed[pos+2], 0]);
+            let bh =
+                u32::from_le_bytes([compressed[pos], compressed[pos + 1], compressed[pos + 2], 0]);
             let last_block = (bh & 1) != 0;
             let block_type = (bh >> 1) & 3;
             let block_size = (bh >> 3) as usize;
 
             println!("\nBlock header at offset {}: 0x{:06x}", pos, bh);
             println!("  Last block: {}", last_block);
-            println!("  Block type: {} ({})", block_type, match block_type {
-                0 => "Raw", 1 => "RLE", 2 => "Compressed", _ => "Reserved"
-            });
+            println!(
+                "  Block type: {} ({})",
+                block_type,
+                match block_type {
+                    0 => "Raw",
+                    1 => "RLE",
+                    2 => "Compressed",
+                    _ => "Reserved",
+                }
+            );
             println!("  Block size: {}", block_size);
 
             pos += 3;
@@ -100,9 +109,17 @@ fn main() {
             let lit_byte0 = compressed[pos];
             let lit_type = lit_byte0 & 3;
             println!("\nLiterals at offset {}:", pos);
-            println!("  Type: {} ({})", lit_type, match lit_type {
-                0 => "Raw", 1 => "RLE", 2 => "Compressed", 3 => "Treeless", _ => "?"
-            });
+            println!(
+                "  Type: {} ({})",
+                lit_type,
+                match lit_type {
+                    0 => "Raw",
+                    1 => "RLE",
+                    2 => "Compressed",
+                    3 => "Treeless",
+                    _ => "?",
+                }
+            );
         }
     }
 

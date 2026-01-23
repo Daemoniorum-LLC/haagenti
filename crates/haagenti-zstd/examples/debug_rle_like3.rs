@@ -10,14 +10,30 @@ fn test_pattern(name: &str, data: &[u8]) {
     match zstd::decode_all(std::io::Cursor::new(&compressed)) {
         Ok(decompressed) => {
             if decompressed == data {
-                println!("{}: PASS ({} -> {} bytes, {:.1}x)", name, data.len(), compressed.len(),
-                         data.len() as f64 / compressed.len() as f64);
+                println!(
+                    "{}: PASS ({} -> {} bytes, {:.1}x)",
+                    name,
+                    data.len(),
+                    compressed.len(),
+                    data.len() as f64 / compressed.len() as f64
+                );
             } else {
-                println!("{}: MISMATCH ({} -> {} bytes)", name, data.len(), compressed.len());
+                println!(
+                    "{}: MISMATCH ({} -> {} bytes)",
+                    name,
+                    data.len(),
+                    compressed.len()
+                );
             }
         }
         Err(e) => {
-            println!("{}: FAIL ({} -> {} bytes): {}", name, data.len(), compressed.len(), e);
+            println!(
+                "{}: FAIL ({} -> {} bytes): {}",
+                name,
+                data.len(),
+                compressed.len(),
+                e
+            );
         }
     }
 }
@@ -79,5 +95,9 @@ fn main() {
     println!("\n=== Reference zstd ===\n");
     let data = xyzx.clone();
     let ref_compressed = zstd::encode_all(std::io::Cursor::new(&data), 1).unwrap();
-    println!("Reference: {} -> {} bytes", data.len(), ref_compressed.len());
+    println!(
+        "Reference: {} -> {} bytes",
+        data.len(),
+        ref_compressed.len()
+    );
 }

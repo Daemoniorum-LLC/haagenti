@@ -15,7 +15,10 @@ fn main() {
     let mut pos = 0;
 
     // Magic
-    println!("\n0x{:04x}: Magic = {:02x} {:02x} {:02x} {:02x}", pos, ours[0], ours[1], ours[2], ours[3]);
+    println!(
+        "\n0x{:04x}: Magic = {:02x} {:02x} {:02x} {:02x}",
+        pos, ours[0], ours[1], ours[2], ours[3]
+    );
     pos += 4;
 
     // FHD
@@ -23,7 +26,10 @@ fn main() {
     println!("0x{:04x}: FHD = 0x{:02x} (binary: {:08b})", pos, fhd, fhd);
     let single_segment = (fhd >> 5) & 1 != 0;
     let fcs_flag = (fhd >> 6) & 3;
-    println!("        Single_Segment = {}, FCS_flag = {}", single_segment, fcs_flag);
+    println!(
+        "        Single_Segment = {}, FCS_flag = {}",
+        single_segment, fcs_flag
+    );
     pos += 1;
 
     // Window Descriptor
@@ -34,17 +40,29 @@ fn main() {
         let mantissa = wd & 7;
         let window_base = 1u64 << (10 + exp);
         let window_size = window_base + window_base / 8 * mantissa as u64;
-        println!("        exp={}, mantissa={}, window_size={} bytes", exp, mantissa, window_size);
+        println!(
+            "        exp={}, mantissa={}, window_size={} bytes",
+            exp, mantissa, window_size
+        );
         pos += 1;
     }
 
     // Block header
-    let bh = u32::from_le_bytes([ours[pos], ours[pos+1], ours[pos+2], 0]);
-    println!("0x{:04x}: Block header = {:02x} {:02x} {:02x}", pos, ours[pos], ours[pos+1], ours[pos+2]);
+    let bh = u32::from_le_bytes([ours[pos], ours[pos + 1], ours[pos + 2], 0]);
+    println!(
+        "0x{:04x}: Block header = {:02x} {:02x} {:02x}",
+        pos,
+        ours[pos],
+        ours[pos + 1],
+        ours[pos + 2]
+    );
     let last = bh & 1;
     let block_type = (bh >> 1) & 3;
     let block_size = (bh >> 3) as usize;
-    println!("        last={}, type={}, size={}", last, block_type, block_size);
+    println!(
+        "        last={}, type={}, size={}",
+        last, block_type, block_size
+    );
     pos += 3;
 
     // Block content
@@ -61,16 +79,16 @@ fn main() {
     let (lit_size, header_len) = match size_format {
         0 | 2 => ((lit_byte >> 3) as usize, 1usize),
         1 => {
-            let size = ((ours[pos] >> 4) as usize) | ((ours[pos+1] as usize) << 4);
+            let size = ((ours[pos] >> 4) as usize) | ((ours[pos + 1] as usize) << 4);
             (size, 2)
         }
         3 => {
             let size = ((ours[pos] >> 4) as usize)
-                | ((ours[pos+1] as usize) << 4)
-                | ((ours[pos+2] as usize) << 12);
+                | ((ours[pos + 1] as usize) << 4)
+                | ((ours[pos + 2] as usize) << 12);
             (size, 3)
         }
-        _ => unreachable!()
+        _ => unreachable!(),
     };
     println!("          lit_size={}, header_len={}", lit_size, header_len);
     pos += header_len;
@@ -80,7 +98,10 @@ fn main() {
     for i in 0..lit_size {
         print!("{:02x} ", ours[pos + i]);
     }
-    println!("(\"{}\")", String::from_utf8_lossy(&ours[pos..pos+lit_size]));
+    println!(
+        "(\"{}\")",
+        String::from_utf8_lossy(&ours[pos..pos + lit_size])
+    );
     pos += lit_size;
 
     // Sequence section
@@ -96,17 +117,29 @@ fn main() {
         let ll_mode = mode_byte & 3;
         let of_mode = (mode_byte >> 2) & 3;
         let ml_mode = (mode_byte >> 4) & 3;
-        println!("      LL_mode={}, OF_mode={}, ML_mode={}", ll_mode, of_mode, ml_mode);
+        println!(
+            "      LL_mode={}, OF_mode={}, ML_mode={}",
+            ll_mode, of_mode, ml_mode
+        );
         pos += 1;
 
         // RLE symbols if all RLE
         if ll_mode == 1 && of_mode == 1 && ml_mode == 1 {
-            println!("    RLE symbols: LL={}, OF={}, ML={}", ours[pos], ours[pos+1], ours[pos+2]);
+            println!(
+                "    RLE symbols: LL={}, OF={}, ML={}",
+                ours[pos],
+                ours[pos + 1],
+                ours[pos + 2]
+            );
             pos += 3;
         }
 
         // Bitstream
-        println!("    Bitstream ({} bytes): {:02x?}", block_end - pos, &ours[pos..block_end]);
+        println!(
+            "    Bitstream ({} bytes): {:02x?}",
+            block_end - pos,
+            &ours[pos..block_end]
+        );
     }
 
     // Try to decode the sequence

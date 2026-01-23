@@ -3,10 +3,10 @@
 //! Tests the throughput of streaming operations including
 //! scheduler modes and protocol message handling.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use haagenti_streaming::{
-    PreviewQuality, PreviewConfig, PreviewScheduler, ScheduleMode, ScheduleStats,
-    StreamMessage, MessageType, StreamProtocol,
+    MessageType, PreviewConfig, PreviewQuality, PreviewScheduler, ScheduleMode, ScheduleStats,
+    StreamMessage, StreamProtocol,
 };
 
 /// Benchmark scheduler performance with different modes
@@ -34,10 +34,8 @@ fn bench_scheduler_modes(c: &mut Criterion) {
             &interval,
             |b, interval| {
                 b.iter(|| {
-                    let scheduler = PreviewScheduler::new(
-                        ScheduleMode::Interval { steps: *interval },
-                        25,
-                    );
+                    let scheduler =
+                        PreviewScheduler::new(ScheduleMode::Interval { steps: *interval }, 25);
                     let mut previews = 0;
                     for step in 0..25 {
                         if scheduler.should_preview(black_box(step)) {
@@ -76,10 +74,7 @@ fn bench_scheduler_modes(c: &mut Criterion) {
 /// Benchmark schedule stats calculation
 fn bench_schedule_stats(c: &mut Criterion) {
     c.bench_function("schedule_stats_calculation", |b| {
-        let scheduler = PreviewScheduler::new(
-            ScheduleMode::Interval { steps: 5 },
-            100,
-        );
+        let scheduler = PreviewScheduler::new(ScheduleMode::Interval { steps: 5 }, 100);
         b.iter(|| {
             let stats = scheduler.stats();
             black_box(stats)

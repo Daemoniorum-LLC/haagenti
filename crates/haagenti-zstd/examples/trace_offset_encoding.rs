@@ -15,15 +15,26 @@ fn main() {
     let fhd = compressed[4];
     let single_segment = (fhd & 0x20) != 0;
     let fcs_size = match fhd >> 6 {
-        0 => if single_segment { 1 } else { 0 },
-        1 => 2, 2 => 4, 3 => 8, _ => 0,
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
+        1 => 2,
+        2 => 4,
+        3 => 8,
+        _ => 0,
     };
     let mut pos = 5;
-    if !single_segment { pos += 1; } // window desc
+    if !single_segment {
+        pos += 1;
+    } // window desc
     pos += fcs_size; // skip FCS
 
     // Block header
-    let bh = u32::from_le_bytes([compressed[pos], compressed[pos+1], compressed[pos+2], 0]);
+    let bh = u32::from_le_bytes([compressed[pos], compressed[pos + 1], compressed[pos + 2], 0]);
     let block_type = (bh >> 1) & 0x3;
     let block_size = (bh >> 3) as usize;
     pos += 3;
@@ -33,7 +44,7 @@ fn main() {
         return;
     }
 
-    let block_data = &compressed[pos..pos+block_size];
+    let block_data = &compressed[pos..pos + block_size];
     println!("Block data: {:02x?}", block_data);
 
     // Parse literals
@@ -42,10 +53,15 @@ fn main() {
         let size_format = (block_data[0] >> 2) & 0x3;
         match size_format {
             0 | 1 => ((block_data[0] >> 3) as usize, 1),
-            2 => (((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF, 2),
+            2 => (
+                ((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF,
+                2,
+            ),
             _ => (0, 1),
         }
-    } else { (0, 1) };
+    } else {
+        (0, 1)
+    };
 
     let seq_section = &block_data[lit_header_size + lit_size..];
     println!("Literals: {} bytes", lit_size);
@@ -65,7 +81,15 @@ fn main() {
     let of_code = 31 - offset_value.leading_zeros();
     let of_baseline = 1u32 << of_code;
     let of_extra = offset_value - of_baseline;
-    println!("actual_offset={}, offset_value={}", actual_offset, offset_value);
+    println!(
+        "actual_offset={}, offset_value={}",
+        actual_offset, offset_value
+    );
     println!("OF_code={}, OF_extra={}", of_code, of_extra);
-    println!("Verify: (1 << {}) + {} = {}", of_code, of_extra, (1u32 << of_code) + of_extra);
+    println!(
+        "Verify: (1 << {}) + {} = {}",
+        of_code,
+        of_extra,
+        (1u32 << of_code) + of_extra
+    );
 }

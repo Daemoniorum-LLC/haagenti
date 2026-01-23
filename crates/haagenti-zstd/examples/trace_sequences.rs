@@ -6,7 +6,11 @@ use haagenti_zstd::ZstdCompressor;
 fn main() {
     // Simple repeating pattern
     let input = b"ABCDABCDABCDABCD";
-    println!("Input: {:?} ({} bytes)", String::from_utf8_lossy(input), input.len());
+    println!(
+        "Input: {:?} ({} bytes)",
+        String::from_utf8_lossy(input),
+        input.len()
+    );
 
     let compressor = ZstdCompressor::new();
     let compressed = compressor.compress(input).unwrap();
@@ -28,7 +32,13 @@ fn main() {
     }
     let fcs_flag = (fhd >> 6) & 3;
     let fcs_size = match fcs_flag {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -57,7 +67,11 @@ fn main() {
 
     println!("\n=== Sequence Section ===");
     println!("Starts at pos {} (block offset {})", pos, pos - block_start);
-    println!("Block size: {}, remaining: {}", block_size, block_start + block_size - pos);
+    println!(
+        "Block size: {}, remaining: {}",
+        block_size,
+        block_start + block_size - pos
+    );
 
     let seq_section = &compressed[pos..block_start + block_size];
     println!("Sequence bytes ({}):", seq_section.len());
@@ -81,9 +95,18 @@ fn main() {
     println!("Sequence count: {}", seq_count);
 
     // Parse compression mode byte
-    let mode_pos = if seq_section[0] < 128 { 1 } else if seq_section[0] < 255 { 2 } else { 3 };
+    let mode_pos = if seq_section[0] < 128 {
+        1
+    } else if seq_section[0] < 255 {
+        2
+    } else {
+        3
+    };
     let mode_byte = seq_section[mode_pos];
-    println!("\nCompression mode byte: 0x{:02x} (binary: {:08b})", mode_byte, mode_byte);
+    println!(
+        "\nCompression mode byte: 0x{:02x} (binary: {:08b})",
+        mode_byte, mode_byte
+    );
 
     let ll_mode = mode_byte & 0x03;
     let of_mode = (mode_byte >> 2) & 0x03;

@@ -3,10 +3,8 @@
 //! Tests preview generation performance across different quality levels
 //! and buffer configurations.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use haagenti_streaming::{
-    PreviewQuality, PreviewConfig, PreviewFrame, PreviewData, PreviewBuffer,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use haagenti_streaming::{PreviewBuffer, PreviewConfig, PreviewData, PreviewFrame, PreviewQuality};
 use std::time::Instant;
 
 /// Generate a synthetic preview frame for benchmarking

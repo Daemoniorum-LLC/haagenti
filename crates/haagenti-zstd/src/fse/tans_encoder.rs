@@ -26,10 +26,10 @@
 //! Uses `Arc<[T]>` for immutable table data, making Clone O(1) via reference
 //! counting instead of O(n) deep copies. Only the mutable `state` is copied.
 
-use std::sync::Arc;
 use super::table::FseTable;
+use std::sync::Arc;
 
-use super::{cloned_ll_encoder, cloned_of_encoder, cloned_ml_encoder};
+use super::{cloned_ll_encoder, cloned_ml_encoder, cloned_of_encoder};
 
 /// tANS encoding parameters for a single symbol.
 #[derive(Debug, Clone, Copy, Default)]
@@ -58,9 +58,11 @@ pub struct TansEncoder {
     state_table: Arc<[u16]>,
     /// Num bits to output for each decode state (indexed by decode_state = encoder_state - table_size).
     /// Shared via Arc for O(1) clone.
+    #[allow(dead_code)]
     num_bits_per_state: Arc<[u8]>,
     /// Baseline for each decode state (for computing decoder's next state).
     /// Shared via Arc for O(1) clone.
+    #[allow(dead_code)]
     baseline_per_state: Arc<[u16]>,
     /// Current encoder state (in [table_size, 2*table_size)).
     state: u32,
@@ -86,7 +88,8 @@ impl TansEncoder {
         }
 
         // Find highest symbol with non-zero probability
-        let max_symbol = symbol_probs.iter()
+        let max_symbol = symbol_probs
+            .iter()
             .enumerate()
             .rev()
             .find(|&(_, &p)| p > 0)
@@ -206,7 +209,11 @@ impl TansEncoder {
         let value = ((nb_bits_out as u64) << 16).wrapping_sub(params.delta_nb_bits as u64) as u32;
 
         // 3. state = stateTable[(value >> nbBitsOut) + deltaFindState]
-        let value_shifted = if nb_bits_out >= 32 { 0 } else { value >> nb_bits_out };
+        let value_shifted = if nb_bits_out >= 32 {
+            0
+        } else {
+            value >> nb_bits_out
+        };
         let idx = value_shifted as i64 + params.delta_find_state as i64;
 
         if idx >= 0 && (idx as usize) < self.state_table.len() {
@@ -240,11 +247,19 @@ impl TansEncoder {
         let nb_bits_out = ((self.state as u64 + params.delta_nb_bits as u64) >> 16) as u8;
 
         // Step 2: Output low nbBitsOut bits of state
-        let bits_mask = if nb_bits_out >= 32 { u32::MAX } else { (1u32 << nb_bits_out) - 1 };
+        let bits_mask = if nb_bits_out >= 32 {
+            u32::MAX
+        } else {
+            (1u32 << nb_bits_out) - 1
+        };
         let bits = self.state & bits_mask;
 
         // Step 3: state = stateTable[(state >> nbBitsOut) + deltaFindState]
-        let state_shifted = if nb_bits_out >= 32 { 0 } else { self.state >> nb_bits_out };
+        let state_shifted = if nb_bits_out >= 32 {
+            0
+        } else {
+            self.state >> nb_bits_out
+        };
         let idx = state_shifted as i64 + params.delta_find_state as i64;
 
         let next_state = if idx >= 0 && (idx as usize) < self.state_table.len() {
@@ -316,7 +331,11 @@ impl InterleavedTansEncoder {
     /// Create encoder from pre-built tANS encoders.
     ///
     /// This allows using custom FSE tables by building encoders separately.
-    pub fn from_encoders(ll_encoder: TansEncoder, of_encoder: TansEncoder, ml_encoder: TansEncoder) -> Self {
+    pub fn from_encoders(
+        ll_encoder: TansEncoder,
+        of_encoder: TansEncoder,
+        ml_encoder: TansEncoder,
+    ) -> Self {
         Self {
             ll_encoder,
             of_encoder,
@@ -384,9 +403,9 @@ impl InterleavedTansEncoder {
 mod tests {
     use super::*;
     use crate::fse::{
-        LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG,
-        MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-        OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+        LITERAL_LENGTH_ACCURACY_LOG, LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
+        MATCH_LENGTH_ACCURACY_LOG, MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+        OFFSET_DEFAULT_DISTRIBUTION,
     };
 
     #[test]
@@ -394,7 +413,8 @@ mod tests {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let encoder = TansEncoder::from_decode_table(&table);
         assert_eq!(encoder.accuracy_log(), LITERAL_LENGTH_ACCURACY_LOG);
@@ -406,7 +426,8 @@ mod tests {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut encoder = TansEncoder::from_decode_table(&table);
         let table_size = encoder.table_size;
@@ -415,10 +436,18 @@ mod tests {
         encoder.init_state(0);
 
         // State should be in valid range [table_size, 2*table_size)
-        assert!(encoder.state >= table_size,
-            "State {} should be >= table_size {}", encoder.state, table_size);
-        assert!(encoder.state < 2 * table_size,
-            "State {} should be < 2*table_size {}", encoder.state, 2 * table_size);
+        assert!(
+            encoder.state >= table_size,
+            "State {} should be >= table_size {}",
+            encoder.state,
+            table_size
+        );
+        assert!(
+            encoder.state < 2 * table_size,
+            "State {} should be < 2*table_size {}",
+            encoder.state,
+            2 * table_size
+        );
     }
 
     #[test]
@@ -426,7 +455,8 @@ mod tests {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut encoder = TansEncoder::from_decode_table(&table);
         encoder.init_state(0);
@@ -438,13 +468,20 @@ mod tests {
             let (bits, num_bits) = encoder.encode_symbol(0);
 
             // num_bits should be reasonable
-            assert!(num_bits <= LITERAL_LENGTH_ACCURACY_LOG + 1,
-                "num_bits {} too large", num_bits);
+            assert!(
+                num_bits <= LITERAL_LENGTH_ACCURACY_LOG + 1,
+                "num_bits {} too large",
+                num_bits
+            );
 
             // bits should fit in num_bits
             if num_bits > 0 && num_bits < 32 {
-                assert!(bits < (1 << num_bits),
-                    "bits {} doesn't fit in {} bits", bits, num_bits);
+                assert!(
+                    bits < (1 << num_bits),
+                    "bits {} doesn't fit in {} bits",
+                    bits,
+                    num_bits
+                );
             }
 
             // State should remain valid
@@ -458,7 +495,8 @@ mod tests {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut encoder = TansEncoder::from_decode_table(&table);
         let table_size = encoder.table_size;
@@ -470,14 +508,26 @@ mod tests {
             let (bits, num_bits) = encoder.encode_symbol(symbol);
 
             // Verify reasonable output
-            assert!(num_bits <= LITERAL_LENGTH_ACCURACY_LOG + 1,
-                "Symbol {} produced {} bits", symbol, num_bits);
+            assert!(
+                num_bits <= LITERAL_LENGTH_ACCURACY_LOG + 1,
+                "Symbol {} produced {} bits",
+                symbol,
+                num_bits
+            );
 
             // State should be valid after encoding
-            assert!(encoder.state >= table_size,
-                "Symbol {} left state {} < table_size", symbol, encoder.state);
-            assert!(encoder.state < 2 * table_size,
-                "Symbol {} left state {} >= 2*table_size", symbol, encoder.state);
+            assert!(
+                encoder.state >= table_size,
+                "Symbol {} left state {} < table_size",
+                symbol,
+                encoder.state
+            );
+            assert!(
+                encoder.state < 2 * table_size,
+                "Symbol {} left state {} >= 2*table_size",
+                symbol,
+                encoder.state
+            );
         }
     }
 
@@ -486,15 +536,15 @@ mod tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
 
         let mut encoder = InterleavedTansEncoder::new(&ll_table, &of_table, &ml_table);
         encoder.init_states(0, 0, 0);
@@ -521,10 +571,9 @@ mod tests {
 mod debug_tests {
     use super::*;
     use crate::fse::{
-        FseTable, LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG,
-        MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-        OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
-        FseDecoder, FseBitWriter, BitReader,
+        BitReader, FseBitWriter, FseDecoder, FseTable, LITERAL_LENGTH_ACCURACY_LOG,
+        LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
+        MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION,
     };
 
     /// Test that our FSE bitstream exactly matches reference.
@@ -541,15 +590,15 @@ mod debug_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Build interleaved encoder
         let mut tans = InterleavedTansEncoder::new(&ll_table, &of_table, &ml_table);
@@ -558,21 +607,26 @@ mod debug_tests {
         let ll_code = 4u8;
         let of_code = 2u8;
         let ml_code = 41u8;
-        let of_extra = 3u32;  // 2 bits
+        let of_extra = 3u32; // 2 bits
         let of_bits = 2u8;
         let ml_extra = 13u32; // 4 bits
         let ml_bits = 4u8;
-        let ll_extra = 0u32;  // 0 bits
+        let ll_extra = 0u32; // 0 bits
         let ll_bits = 0u8;
 
         println!("Codes: LL={}, OF={}, ML={}", ll_code, of_code, ml_code);
-        println!("Extras: LL={}({} bits), OF={}({} bits), ML={}({} bits)",
-            ll_extra, ll_bits, of_extra, of_bits, ml_extra, ml_bits);
+        println!(
+            "Extras: LL={}({} bits), OF={}({} bits), ML={}({} bits)",
+            ll_extra, ll_bits, of_extra, of_bits, ml_extra, ml_bits
+        );
 
         // Init states
         tans.init_states(ll_code, of_code, ml_code);
         let (ll_state, of_state, ml_state) = tans.get_states();
-        println!("Init states: LL={}, OF={}, ML={}", ll_state, of_state, ml_state);
+        println!(
+            "Init states: LL={}, OF={}, ML={}",
+            ll_state, of_state, ml_state
+        );
 
         // Build bitstream exactly like build_fse_bitstream does for single sequence
         let mut bits = FseBitWriter::new();
@@ -597,11 +651,17 @@ mod debug_tests {
 
         // 3. Write final states: ML, OF, LL order
         println!("\nWriting states:");
-        println!("  ML state: {} ({} bits)", ml_state, MATCH_LENGTH_ACCURACY_LOG);
+        println!(
+            "  ML state: {} ({} bits)",
+            ml_state, MATCH_LENGTH_ACCURACY_LOG
+        );
         bits.write_bits(ml_state, MATCH_LENGTH_ACCURACY_LOG);
         println!("  OF state: {} ({} bits)", of_state, OFFSET_ACCURACY_LOG);
         bits.write_bits(of_state, OFFSET_ACCURACY_LOG);
-        println!("  LL state: {} ({} bits)", ll_state, LITERAL_LENGTH_ACCURACY_LOG);
+        println!(
+            "  LL state: {} ({} bits)",
+            ll_state, LITERAL_LENGTH_ACCURACY_LOG
+        );
         bits.write_bits(ll_state, LITERAL_LENGTH_ACCURACY_LOG);
 
         let our_bitstream = bits.finish();
@@ -615,14 +675,28 @@ mod debug_tests {
         for i in 0..3 {
             let our_byte = our_bitstream.get(i).copied().unwrap_or(0);
             let ref_byte = ref_bitstream[i];
-            println!("  Byte {}: our={:08b}, ref={:08b}, diff={}",
-                i, our_byte, ref_byte, if our_byte == ref_byte { "MATCH" } else { "DIFFER" });
+            println!(
+                "  Byte {}: our={:08b}, ref={:08b}, diff={}",
+                i,
+                our_byte,
+                ref_byte,
+                if our_byte == ref_byte {
+                    "MATCH"
+                } else {
+                    "DIFFER"
+                }
+            );
         }
 
         // Analyze what's in the bits
         // Total bits: 2 (of_extra) + 4 (ml_extra) + 0 (ll_extra) + 6 (ml_state) + 5 (of_state) + 6 (ll_state) = 23 bits
-        println!("\nTotal bits: {} + {} + {} + 6 + 5 + 6 = {} bits",
-            of_bits, ml_bits, ll_bits, of_bits as usize + ml_bits as usize + ll_bits as usize + 17);
+        println!(
+            "\nTotal bits: {} + {} + {} + 6 + 5 + 6 = {} bits",
+            of_bits,
+            ml_bits,
+            ll_bits,
+            of_bits as usize + ml_bits as usize + ll_bits as usize + 17
+        );
 
         // What reference produces:
         // [fd, e4, 88] = [11111101, 11100100, 10001000] (binary, MSB first)
@@ -639,16 +713,30 @@ mod debug_tests {
         // ML extra at bits 2-5: ours=1011 (11 if read MSB-first from 5 down to 2)
 
         // Let's verify what values we get when reading MSB-first vs LSB-first
-        println!("Our bits 2-5: {} {} {} {} = {} (LSB-first) or {} (MSB-first)",
-            (0xF7 >> 2) & 1, (0xF7 >> 3) & 1, (0xF7 >> 4) & 1, (0xF7 >> 5) & 1,
+        println!(
+            "Our bits 2-5: {} {} {} {} = {} (LSB-first) or {} (MSB-first)",
+            (0xF7 >> 2) & 1,
+            (0xF7 >> 3) & 1,
+            (0xF7 >> 4) & 1,
+            (0xF7 >> 5) & 1,
             (0xF7 >> 2) & 0xF, // LSB-first read
-            ((0xF7 >> 5) & 1) << 3 | ((0xF7 >> 4) & 1) << 2 | ((0xF7 >> 3) & 1) << 1 | ((0xF7 >> 2) & 1) // MSB-first read
+            ((0xF7 >> 5) & 1) << 3
+                | ((0xF7 >> 4) & 1) << 2
+                | ((0xF7 >> 3) & 1) << 1
+                | ((0xF7 >> 2) & 1)  // MSB-first read
         );
 
-        println!("Ref bits 2-5: {} {} {} {} = {} (LSB-first) or {} (MSB-first)",
-            (0xFD >> 2) & 1, (0xFD >> 3) & 1, (0xFD >> 4) & 1, (0xFD >> 5) & 1,
+        println!(
+            "Ref bits 2-5: {} {} {} {} = {} (LSB-first) or {} (MSB-first)",
+            (0xFD >> 2) & 1,
+            (0xFD >> 3) & 1,
+            (0xFD >> 4) & 1,
+            (0xFD >> 5) & 1,
             (0xFD >> 2) & 0xF,
-            ((0xFD >> 5) & 1) << 3 | ((0xFD >> 4) & 1) << 2 | ((0xFD >> 3) & 1) << 1 | ((0xFD >> 2) & 1)
+            ((0xFD >> 5) & 1) << 3
+                | ((0xFD >> 4) & 1) << 2
+                | ((0xFD >> 3) & 1) << 1
+                | ((0xFD >> 2) & 1)
         );
 
         // The issue: we write 13 = 0b1101 LSB-first at bits 2-5
@@ -671,14 +759,19 @@ mod debug_tests {
         let ref_ll = ref_bits.read_bits(6).unwrap();
         let ref_of = ref_bits.read_bits(5).unwrap();
         let ref_ml = ref_bits.read_bits(6).unwrap();
-        println!("\nReference decoded states: LL={}, OF={}, ML={}", ref_ll, ref_of, ref_ml);
+        println!(
+            "\nReference decoded states: LL={}, OF={}, ML={}",
+            ref_ll, ref_of, ref_ml
+        );
 
         // Read extras
         let ref_ll_extra = 0u32; // 0 bits for LL code 4
         let ref_ml_extra = ref_bits.read_bits(4).unwrap();
         let ref_of_extra = ref_bits.read_bits(2).unwrap();
-        println!("Reference decoded extras: LL_extra={}, ML_extra={}, OF_extra={}",
-            ref_ll_extra, ref_ml_extra, ref_of_extra);
+        println!(
+            "Reference decoded extras: LL_extra={}, ML_extra={}, OF_extra={}",
+            ref_ll_extra, ref_ml_extra, ref_of_extra
+        );
 
         // Now decode our bitstream
         let mut our_bits = BitReader::new(&our_bitstream);
@@ -687,13 +780,18 @@ mod debug_tests {
         let our_ll = our_bits.read_bits(6).unwrap();
         let our_of = our_bits.read_bits(5).unwrap();
         let our_ml = our_bits.read_bits(6).unwrap();
-        println!("\nOur decoded states: LL={}, OF={}, ML={}", our_ll, our_of, our_ml);
+        println!(
+            "\nOur decoded states: LL={}, OF={}, ML={}",
+            our_ll, our_of, our_ml
+        );
 
         let our_ll_extra = 0u32;
         let our_ml_extra = our_bits.read_bits(4).unwrap();
         let our_of_extra = our_bits.read_bits(2).unwrap();
-        println!("Our decoded extras: LL_extra={}, ML_extra={}, OF_extra={}",
-            our_ll_extra, our_ml_extra, our_of_extra);
+        println!(
+            "Our decoded extras: LL_extra={}, ML_extra={}, OF_extra={}",
+            our_ll_extra, our_ml_extra, our_of_extra
+        );
 
         // The real question: does reference have different extra values, or is
         // the bit reading/writing order different?
@@ -739,7 +837,10 @@ mod debug_tests {
         // OF code 2 has 2 extra bits
 
         let ll_extra = 0u32; // 0 bits for LL code 4
-        println!("\nRead LL extra (0 bits): {} (no extra for code 4)", ll_extra);
+        println!(
+            "\nRead LL extra (0 bits): {} (no extra for code 4)",
+            ll_extra
+        );
         println!("  Bits remaining: {}", bits.bits_remaining());
 
         let ml_extra = bits.read_bits(4).unwrap();
@@ -760,7 +861,11 @@ mod debug_tests {
         // Calculate what match_length we get
         let match_length = 83 + ml_extra; // baseline 83 for ML code 41
         println!("\nMatch length: 83 + {} = {}", ml_extra, match_length);
-        println!("Total bytes: 4 (literals) + {} (match) = {}", match_length, 4 + match_length);
+        println!(
+            "Total bytes: 4 (literals) + {} (match) = {}",
+            match_length,
+            4 + match_length
+        );
     }
 
     /// Test full reference frame decompression
@@ -780,12 +885,16 @@ mod debug_tests {
         ];
 
         // Decompress with our decoder
-        let decompressed = crate::decompress::decompress_frame(&ref_frame).expect("Failed to decompress reference frame");
+        let decompressed = crate::decompress::decompress_frame(&ref_frame)
+            .expect("Failed to decompress reference frame");
         let expected = "ABCD".repeat(25);
 
         println!("Decompressed length: {}", decompressed.len());
         println!("Expected length: {}", expected.len());
-        println!("First 20 bytes: {:?}", &decompressed[..20.min(decompressed.len())]);
+        println!(
+            "First 20 bytes: {:?}",
+            &decompressed[..20.min(decompressed.len())]
+        );
 
         assert_eq!(decompressed.len(), 100, "Length mismatch");
         assert_eq!(decompressed, expected.as_bytes(), "Content mismatch");
@@ -805,15 +914,15 @@ mod debug_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Create decoders
         let mut ll_decoder = FseDecoder::new(&ll_table);
@@ -834,7 +943,10 @@ mod debug_tests {
         let of_state = of_decoder.state();
         let ml_state = ml_decoder.state();
 
-        println!("Initial states: LL={}, OF={}, ML={}", ll_state, of_state, ml_state);
+        println!(
+            "Initial states: LL={}, OF={}, ML={}",
+            ll_state, of_state, ml_state
+        );
         println!("Bits remaining after states: {}", bits.bits_remaining());
 
         // Get symbols from states
@@ -852,7 +964,10 @@ mod debug_tests {
 
         // LL code interpretation
         if ll_code <= 15 {
-            println!("  LL code {}: literal_length = {} (no extra bits)", ll_code, ll_code);
+            println!(
+                "  LL code {}: literal_length = {} (no extra bits)",
+                ll_code, ll_code
+            );
         } else {
             let extra_bits = match ll_code {
                 16..=17 => 1,
@@ -871,11 +986,18 @@ mod debug_tests {
         }
 
         // OF code = offset code, number of extra bits = of_code
-        println!("  OF code {}: offset = 2^{} + {} extra bits", of_code, of_code, of_code);
+        println!(
+            "  OF code {}: offset = 2^{} + {} extra bits",
+            of_code, of_code, of_code
+        );
 
         // ML code interpretation
         if ml_code <= 31 {
-            println!("  ML code {}: match_length = {} (no extra bits)", ml_code, ml_code + 3);
+            println!(
+                "  ML code {}: match_length = {} (no extra bits)",
+                ml_code,
+                ml_code + 3
+            );
         } else {
             println!("  ML code {}: needs extra bits", ml_code);
         }
@@ -898,7 +1020,8 @@ mod debug_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let encoder = TansEncoder::from_decode_table(&ll_table);
 
@@ -907,33 +1030,59 @@ mod debug_tests {
         for state in 0..64 {
             let entry = ll_table.decode(state);
             if entry.symbol == 0 {
-                println!("  State {}: symbol={}, num_bits={}, baseline={}",
-                    state, entry.symbol, entry.num_bits, entry.baseline);
+                println!(
+                    "  State {}: symbol={}, num_bits={}, baseline={}",
+                    state, entry.symbol, entry.num_bits, entry.baseline
+                );
             }
         }
 
         // Print symbol params for symbol 0
         let params = &encoder.symbol_params[0];
         println!("\nSymbol 0 params:");
-        println!("  delta_nb_bits: {} (0x{:x})", params.delta_nb_bits, params.delta_nb_bits);
+        println!(
+            "  delta_nb_bits: {} (0x{:x})",
+            params.delta_nb_bits, params.delta_nb_bits
+        );
         println!("  delta_find_state: {}", params.delta_find_state);
 
         // Trace init_state calculation
         let sym_idx = 0usize;
         let nb_bits_out = ((params.delta_nb_bits as u64 + 0x8000) >> 16) as u32;
         let value = ((nb_bits_out as u64) << 16).wrapping_sub(params.delta_nb_bits as u64) as u32;
-        let value_shifted = if nb_bits_out >= 32 { 0 } else { value >> nb_bits_out };
+        let value_shifted = if nb_bits_out >= 32 {
+            0
+        } else {
+            value >> nb_bits_out
+        };
         let idx = value_shifted as i64 + params.delta_find_state as i64;
 
         println!("\ninit_state(0) calculation:");
-        println!("  nb_bits_out = ({} + 0x8000) >> 16 = {}", params.delta_nb_bits, nb_bits_out);
-        println!("  value = ({} << 16) - {} = {}", nb_bits_out, params.delta_nb_bits, value);
-        println!("  value_shifted = {} >> {} = {}", value, nb_bits_out, value_shifted);
-        println!("  idx = {} + {} = {}", value_shifted, params.delta_find_state, idx);
-        println!("  state_table[{}] = {}", idx, encoder.state_table[idx as usize]);
-        println!("  Final decode_state = {} - 64 = {}",
+        println!(
+            "  nb_bits_out = ({} + 0x8000) >> 16 = {}",
+            params.delta_nb_bits, nb_bits_out
+        );
+        println!(
+            "  value = ({} << 16) - {} = {}",
+            nb_bits_out, params.delta_nb_bits, value
+        );
+        println!(
+            "  value_shifted = {} >> {} = {}",
+            value, nb_bits_out, value_shifted
+        );
+        println!(
+            "  idx = {} + {} = {}",
+            value_shifted, params.delta_find_state, idx
+        );
+        println!(
+            "  state_table[{}] = {}",
+            idx, encoder.state_table[idx as usize]
+        );
+        println!(
+            "  Final decode_state = {} - 64 = {}",
             encoder.state_table[idx as usize],
-            encoder.state_table[idx as usize] as i32 - 64);
+            encoder.state_table[idx as usize] as i32 - 64
+        );
 
         // What init state does our encoder produce?
         let mut test_encoder = TansEncoder::from_decode_table(&ll_table);
@@ -947,7 +1096,10 @@ mod debug_tests {
 
         // What's at state 38 (reference)?
         let ref_entry = ll_table.decode(38);
-        println!("\nReference state 38 decodes to symbol {}", ref_entry.symbol);
+        println!(
+            "\nReference state 38 decodes to symbol {}",
+            ref_entry.symbol
+        );
     }
 
     /// Test init_state for the specific codes used by reference.
@@ -962,15 +1114,15 @@ mod debug_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Build encoders
         let mut ll_encoder = TansEncoder::from_decode_table(&ll_table);
@@ -993,7 +1145,10 @@ mod debug_tests {
         let of_state_for_code1 = of_encoder.get_state();
         println!("\nOF code 1 (repeat offset 2 = 4):");
         println!("  Our state: {}", of_state_for_code1);
-        println!("  Decodes to symbol: {}", of_table.decode(of_state_for_code1 as usize).symbol);
+        println!(
+            "  Decodes to symbol: {}",
+            of_table.decode(of_state_for_code1 as usize).symbol
+        );
 
         // Test OF code 2
         of_encoder.init_state(2);
@@ -1028,8 +1183,10 @@ mod debug_tests {
         println!("\n--- Full OF table (state -> symbol) ---");
         for state in 0..32 {
             let entry = of_table.decode(state);
-            println!("  State {:2} -> symbol {:2} (num_bits={}, baseline={})",
-                state, entry.symbol, entry.num_bits, entry.baseline);
+            println!(
+                "  State {:2} -> symbol {:2} (num_bits={}, baseline={})",
+                state, entry.symbol, entry.num_bits, entry.baseline
+            );
         }
 
         println!("\n--- States that decode to symbol 1 in OF table (for offset 4) ---");
@@ -1067,7 +1224,8 @@ mod debug_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let encoder = TansEncoder::from_decode_table(&ll_table);
 
@@ -1077,8 +1235,10 @@ mod debug_tests {
             let encoder_state = encoder.state_table[i];
             let decode_state = encoder_state as i32 - 64;
             let entry = ll_table.decode(decode_state as usize);
-            println!("  state_table[{:2}] = {} (decode_state={}, symbol={})",
-                i, encoder_state, decode_state, entry.symbol);
+            println!(
+                "  state_table[{:2}] = {} (decode_state={}, symbol={})",
+                i, encoder_state, decode_state, entry.symbol
+            );
         }
 
         // Print symbol params
@@ -1086,8 +1246,10 @@ mod debug_tests {
         for sym in 0..10 {
             if sym < encoder.symbol_params.len() {
                 let params = &encoder.symbol_params[sym];
-                println!("  Symbol {:2}: delta_nb_bits={:6}, delta_find_state={:3}",
-                    sym, params.delta_nb_bits, params.delta_find_state);
+                println!(
+                    "  Symbol {:2}: delta_nb_bits={:6}, delta_find_state={:3}",
+                    sym, params.delta_nb_bits, params.delta_find_state
+                );
             }
         }
     }
@@ -1097,7 +1259,8 @@ mod debug_tests {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut encoder = TansEncoder::from_decode_table(&table);
         let accuracy_log = encoder.accuracy_log;
@@ -1106,41 +1269,61 @@ mod debug_tests {
         let symbols = [0u8, 0, 0];
 
         println!("symbol_params len: {}", encoder.symbol_params.len());
-        println!("num_bits_per_state len: {}", encoder.num_bits_per_state.len());
-        println!("baseline_per_state len: {}", encoder.baseline_per_state.len());
+        println!(
+            "num_bits_per_state len: {}",
+            encoder.num_bits_per_state.len()
+        );
+        println!(
+            "baseline_per_state len: {}",
+            encoder.baseline_per_state.len()
+        );
 
         // Debug: print symbol params for symbol 0
         let params0 = &encoder.symbol_params[0];
-        println!("Symbol 0 params: delta_nb_bits={}, delta_find_state={}",
-            params0.delta_nb_bits, params0.delta_find_state);
-        println!("  Expected nbBitsOut at state 64: (64 + {}) >> 16 = {}",
-            params0.delta_nb_bits, (64u64 + params0.delta_nb_bits as u64) >> 16);
+        println!(
+            "Symbol 0 params: delta_nb_bits={}, delta_find_state={}",
+            params0.delta_nb_bits, params0.delta_find_state
+        );
+        println!(
+            "  Expected nbBitsOut at state 64: (64 + {}) >> 16 = {}",
+            params0.delta_nb_bits,
+            (64u64 + params0.delta_nb_bits as u64) >> 16
+        );
 
         // Print decode table for first few states
         println!("Decode table:");
         for s in 0..4 {
             let entry = table.decode(s);
-            println!("  state {}: symbol={}, num_bits={}, baseline={}",
-                s, entry.symbol, entry.num_bits, entry.baseline);
+            println!(
+                "  state {}: symbol={}, num_bits={}, baseline={}",
+                s, entry.symbol, entry.num_bits, entry.baseline
+            );
         }
 
         // Initialize with last symbol (no bits output)
         encoder.init_state(symbols[2]);
         let init_state = encoder.state;
-        println!("After init_state(0): encoder_state={}, decode_state={}",
-            init_state, init_state.saturating_sub(64));
+        println!(
+            "After init_state(0): encoder_state={}, decode_state={}",
+            init_state,
+            init_state.saturating_sub(64)
+        );
 
         // Collect bits from encoding remaining symbols in reverse
         let mut all_bits: Vec<(u32, u8)> = Vec::new();
         for &sym in symbols[..2].iter().rev() {
             let old_state = encoder.state;
             let old_decode = old_state.saturating_sub(64);
-            println!("Before encode sym={}: encoder_state={}, decode_state={}",
-                sym, old_state, old_decode);
+            println!(
+                "Before encode sym={}: encoder_state={}, decode_state={}",
+                sym, old_state, old_decode
+            );
             let (bits, nb) = encoder.encode_symbol(sym);
             let new_decode = encoder.state.saturating_sub(64);
-            println!("After encode: bits={}, nb_bits={}, new_decode_state={}",
-                bits, nb, new_decode);
+            println!(
+                "After encode: bits={}, nb_bits={}, new_decode_state={}",
+                bits, nb, new_decode
+            );
             all_bits.push((bits, nb));
         }
 
@@ -1165,12 +1348,18 @@ mod debug_tests {
         let mut decoder = FseDecoder::new(&table);
         let mut bits_reader = BitReader::new(&bitstream);
         bits_reader.init_from_end().unwrap();
-        println!("Bits remaining after init_from_end: {}", bits_reader.bits_remaining());
+        println!(
+            "Bits remaining after init_from_end: {}",
+            bits_reader.bits_remaining()
+        );
 
         // Read initial state
         decoder.init_state(&mut bits_reader).unwrap();
         println!("Decoder initial state: {}", decoder.state());
-        println!("Bits remaining after init_state: {}", bits_reader.bits_remaining());
+        println!(
+            "Bits remaining after init_state: {}",
+            bits_reader.bits_remaining()
+        );
 
         // Decode symbols
         // Note: For N symbols, we encode N-1 (the first is just initialized)
@@ -1180,8 +1369,13 @@ mod debug_tests {
         // Decode first N-1 symbols (these read bits)
         for i in 0..2 {
             let entry = table.decode(decoder.state());
-            println!("Before decode[{}]: state={}, needs {} bits, bits_remaining={}",
-                i, decoder.state(), entry.num_bits, bits_reader.bits_remaining());
+            println!(
+                "Before decode[{}]: state={}, needs {} bits, bits_remaining={}",
+                i,
+                decoder.state(),
+                entry.num_bits,
+                bits_reader.bits_remaining()
+            );
 
             let sym = decoder.decode_symbol(&mut bits_reader).unwrap();
             decoded.push(sym);
@@ -1194,7 +1388,11 @@ mod debug_tests {
         println!("Last symbol (peek): {}", last_sym);
 
         println!("Decoded sequence: {:?}", decoded);
-        assert_eq!(decoded, symbols.to_vec(), "Decoded sequence doesn't match original");
+        assert_eq!(
+            decoded,
+            symbols.to_vec(),
+            "Decoded sequence doesn't match original"
+        );
     }
 
     #[test]
@@ -1202,14 +1400,17 @@ mod debug_tests {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Debug: print decode table for first 40 states
         println!("Decode table (first 40 states):");
         for s in 0..40 {
             let entry = table.decode(s);
-            println!("  state {:2}: symbol={:2}, num_bits={}, baseline={:2}",
-                s, entry.symbol, entry.num_bits, entry.baseline);
+            println!(
+                "  state {:2}: symbol={:2}, num_bits={}, baseline={:2}",
+                s, entry.symbol, entry.num_bits, entry.baseline
+            );
         }
 
         let mut encoder = TansEncoder::from_decode_table(&table);
@@ -1228,8 +1429,10 @@ mod debug_tests {
         let mut all_bits: Vec<(u32, u8)> = Vec::new();
         for &sym in symbols[..4].iter().rev() {
             let (bits, nb) = encoder.encode_symbol(sym);
-            println!("Encode sym={}: bits={}, nb_bits={}, new_state={}",
-                sym, bits, nb, encoder.state);
+            println!(
+                "Encode sym={}: bits={}, nb_bits={}, new_state={}",
+                sym, bits, nb, encoder.state
+            );
             all_bits.push((bits, nb));
         }
 
@@ -1240,7 +1443,8 @@ mod debug_tests {
         // Bits are read backwards, so write in forward order: B4, B3, B2, B1, then D_0
         // This way reader gets: D_0, B1, B2, B3, B4 (correct order for decoding)
         let mut writer = FseBitWriter::new();
-        for (bits, nb) in all_bits.iter() {  // Forward order: B4, B3, B2, B1
+        for (bits, nb) in all_bits.iter() {
+            // Forward order: B4, B3, B2, B1
             writer.write_bits(*bits, *nb);
         }
         writer.write_bits(final_state, accuracy_log);
@@ -1266,7 +1470,11 @@ mod debug_tests {
         decoded.push(last_sym);
 
         println!("Decoded sequence: {:?}", decoded);
-        assert_eq!(decoded, symbols.to_vec(), "Decoded sequence doesn't match original");
+        assert_eq!(
+            decoded,
+            symbols.to_vec(),
+            "Decoded sequence doesn't match original"
+        );
     }
 
     #[test]
@@ -1277,7 +1485,8 @@ mod debug_tests {
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut encoder = TansEncoder::from_decode_table(&ml_table);
 
@@ -1285,17 +1494,31 @@ mod debug_tests {
         encoder.init_state(38);
         let state_38 = encoder.get_state();
         let decode_38 = ml_table.decode(state_38 as usize);
-        println!("ML code 38 -> state {} -> decodes to symbol {}", state_38, decode_38.symbol);
+        println!(
+            "ML code 38 -> state {} -> decodes to symbol {}",
+            state_38, decode_38.symbol
+        );
 
         // Test code 43
         encoder.init_state(43);
         let state_43 = encoder.get_state();
         let decode_43 = ml_table.decode(state_43 as usize);
-        println!("ML code 43 -> state {} -> decodes to symbol {}", state_43, decode_43.symbol);
+        println!(
+            "ML code 43 -> state {} -> decodes to symbol {}",
+            state_43, decode_43.symbol
+        );
 
         // Verify they decode correctly
-        assert_eq!(decode_38.symbol, 38, "State {} should decode to symbol 38", state_38);
-        assert_eq!(decode_43.symbol, 43, "State {} should decode to symbol 43", state_43);
+        assert_eq!(
+            decode_38.symbol, 38,
+            "State {} should decode to symbol 38",
+            state_38
+        );
+        assert_eq!(
+            decode_43.symbol, 43,
+            "State {} should decode to symbol 43",
+            state_43
+        );
     }
 
     #[test]
@@ -1306,7 +1529,8 @@ mod debug_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut encoder = TansEncoder::from_decode_table(&ll_table);
 
@@ -1314,10 +1538,17 @@ mod debug_tests {
         encoder.init_state(23);
         let state_23 = encoder.get_state();
         let decode_23 = ll_table.decode(state_23 as usize);
-        println!("LL code 23 -> state {} -> decodes to symbol {}", state_23, decode_23.symbol);
+        println!(
+            "LL code 23 -> state {} -> decodes to symbol {}",
+            state_23, decode_23.symbol
+        );
 
         // Verify it decodes correctly
-        assert_eq!(decode_23.symbol, 23, "State {} should decode to symbol 23", state_23);
+        assert_eq!(
+            decode_23.symbol, 23,
+            "State {} should decode to symbol 23",
+            state_23
+        );
     }
 }
 
@@ -1325,28 +1556,28 @@ mod debug_tests {
 mod trace_tests {
     use super::*;
     use crate::fse::{
-        LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG,
-        MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-        OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+        LITERAL_LENGTH_ACCURACY_LOG, LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
+        MATCH_LENGTH_ACCURACY_LOG, MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+        OFFSET_DEFAULT_DISTRIBUTION,
     };
 
     #[test]
     fn test_trace_encode_sequence() {
         println!("\n=== Trace FSE Encode Sequence ===\n");
-        
+
         // Build tables
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Build encoders
         let mut ll_enc = TansEncoder::from_decode_table(&ll_table);
@@ -1354,10 +1585,14 @@ mod trace_tests {
         let mut ml_enc = TansEncoder::from_decode_table(&ml_table);
 
         // Print symbol params for relevant symbols
-        println!("LL symbol 0 params: delta_nb_bits={}, delta_find_state={}",
-            ll_enc.symbol_params[0].delta_nb_bits, ll_enc.symbol_params[0].delta_find_state);
-        println!("LL symbol 4 params: delta_nb_bits={}, delta_find_state={}",
-            ll_enc.symbol_params[4].delta_nb_bits, ll_enc.symbol_params[4].delta_find_state);
+        println!(
+            "LL symbol 0 params: delta_nb_bits={}, delta_find_state={}",
+            ll_enc.symbol_params[0].delta_nb_bits, ll_enc.symbol_params[0].delta_find_state
+        );
+        println!(
+            "LL symbol 4 params: delta_nb_bits={}, delta_find_state={}",
+            ll_enc.symbol_params[4].delta_nb_bits, ll_enc.symbol_params[4].delta_find_state
+        );
 
         // Init with seq[1] codes
         ll_enc.init_state(0);
@@ -1368,52 +1603,103 @@ mod trace_tests {
         let of_s0 = of_enc.state;
         let ml_s0 = ml_enc.state;
         println!("\nAfter init:");
-        println!("  LL: encoder_state={}, decoder_state={}", ll_s0, ll_s0 - 64);
-        println!("  OF: encoder_state={}, decoder_state={}", of_s0, of_s0 - 32);
-        println!("  ML: encoder_state={}, decoder_state={}", ml_s0, ml_s0 - 64);
+        println!(
+            "  LL: encoder_state={}, decoder_state={}",
+            ll_s0,
+            ll_s0 - 64
+        );
+        println!(
+            "  OF: encoder_state={}, decoder_state={}",
+            of_s0,
+            of_s0 - 32
+        );
+        println!(
+            "  ML: encoder_state={}, decoder_state={}",
+            ml_s0,
+            ml_s0 - 64
+        );
 
         // Encode seq[0] codes
         println!("\nEncoding seq[0] codes (4, 2, 45):");
-        
+
         // LL
         let ll_params = &ll_enc.symbol_params[4];
         let ll_nb = ((ll_s0 as u64 + ll_params.delta_nb_bits as u64) >> 16) as u8;
         let ll_bits = ll_s0 & ((1u32 << ll_nb) - 1);
-        println!("  LL: state={}, delta_nb_bits={}, nb_bits_out={}, bits={}",
-            ll_s0, ll_params.delta_nb_bits, ll_nb, ll_bits);
+        println!(
+            "  LL: state={}, delta_nb_bits={}, nb_bits_out={}, bits={}",
+            ll_s0, ll_params.delta_nb_bits, ll_nb, ll_bits
+        );
         let (ll_out_bits, ll_out_nb) = ll_enc.encode_symbol(4);
-        println!("  LL encode_symbol output: bits={}, nb={}", ll_out_bits, ll_out_nb);
-        
+        println!(
+            "  LL encode_symbol output: bits={}, nb={}",
+            ll_out_bits, ll_out_nb
+        );
+
         // OF
         let of_params = &of_enc.symbol_params[2];
         let of_nb = ((of_s0 as u64 + of_params.delta_nb_bits as u64) >> 16) as u8;
         let of_bits = of_s0 & ((1u32 << of_nb) - 1);
-        println!("  OF: state={}, delta_nb_bits={}, nb_bits_out={}, bits={}",
-            of_s0, of_params.delta_nb_bits, of_nb, of_bits);
+        println!(
+            "  OF: state={}, delta_nb_bits={}, nb_bits_out={}, bits={}",
+            of_s0, of_params.delta_nb_bits, of_nb, of_bits
+        );
         let (of_out_bits, of_out_nb) = of_enc.encode_symbol(2);
-        println!("  OF encode_symbol output: bits={}, nb={}", of_out_bits, of_out_nb);
-        
+        println!(
+            "  OF encode_symbol output: bits={}, nb={}",
+            of_out_bits, of_out_nb
+        );
+
         // ML
         let ml_params = &ml_enc.symbol_params[45];
         let ml_nb = ((ml_s0 as u64 + ml_params.delta_nb_bits as u64) >> 16) as u8;
         let ml_bits = ml_s0 & ((1u32 << ml_nb) - 1);
-        println!("  ML: state={}, delta_nb_bits={}, nb_bits_out={}, bits={}",
-            ml_s0, ml_params.delta_nb_bits, ml_nb, ml_bits);
+        println!(
+            "  ML: state={}, delta_nb_bits={}, nb_bits_out={}, bits={}",
+            ml_s0, ml_params.delta_nb_bits, ml_nb, ml_bits
+        );
         let (ml_out_bits, ml_out_nb) = ml_enc.encode_symbol(45);
-        println!("  ML encode_symbol output: bits={}, nb={}", ml_out_bits, ml_out_nb);
+        println!(
+            "  ML encode_symbol output: bits={}, nb={}",
+            ml_out_bits, ml_out_nb
+        );
 
         let ll_s1 = ll_enc.state;
         let of_s1 = of_enc.state;
         let ml_s1 = ml_enc.state;
         println!("\nAfter encode:");
-        println!("  LL: encoder_state={}, decoder_state={}", ll_s1, ll_s1 - 64);
-        println!("  OF: encoder_state={}, decoder_state={}", of_s1, of_s1 - 32);
-        println!("  ML: encoder_state={}, decoder_state={}", ml_s1, ml_s1 - 64);
+        println!(
+            "  LL: encoder_state={}, decoder_state={}",
+            ll_s1,
+            ll_s1 - 64
+        );
+        println!(
+            "  OF: encoder_state={}, decoder_state={}",
+            of_s1,
+            of_s1 - 32
+        );
+        println!(
+            "  ML: encoder_state={}, decoder_state={}",
+            ml_s1,
+            ml_s1 - 64
+        );
 
         // Verify decode table
         println!("\nDecode table verification:");
-        println!("  LL[{}] = symbol {}", ll_s1 - 64, ll_table.decode((ll_s1 - 64) as usize).symbol);
-        println!("  OF[{}] = symbol {}", of_s1 - 32, of_table.decode((of_s1 - 32) as usize).symbol);
-        println!("  ML[{}] = symbol {}", ml_s1 - 64, ml_table.decode((ml_s1 - 64) as usize).symbol);
+        println!(
+            "  LL[{}] = symbol {}",
+            ll_s1 - 64,
+            ll_table.decode((ll_s1 - 64) as usize).symbol
+        );
+        println!(
+            "  OF[{}] = symbol {}",
+            of_s1 - 32,
+            of_table.decode((of_s1 - 32) as usize).symbol
+        );
+        println!(
+            "  ML[{}] = symbol {}",
+            ml_s1 - 64,
+            ml_table.decode((ml_s1 - 64) as usize).symbol
+        );
     }
 }

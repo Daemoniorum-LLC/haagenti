@@ -65,7 +65,10 @@ fn main() {
     println!("  Our compress size: {} bytes", our_comp.len());
 
     match zstd::decode_all(std::io::Cursor::new(&our_comp)) {
-        Ok(dec) => println!("  Ref decode our: {}", if dec == uniform { "PASS" } else { "FAIL" }),
+        Ok(dec) => println!(
+            "  Ref decode our: {}",
+            if dec == uniform { "PASS" } else { "FAIL" }
+        ),
         Err(e) => println!("  Ref decode our: FAIL - {}", e),
     }
 }

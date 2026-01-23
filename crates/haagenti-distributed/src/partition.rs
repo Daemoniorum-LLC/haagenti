@@ -1,6 +1,5 @@
 //! Tensor and model partitioning strategies
 
-use crate::{DistributedError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Partition strategy for distributed inference
@@ -58,7 +57,7 @@ pub struct TensorPartition {
 impl TensorPartition {
     /// Create partitions for a tensor dimension
     pub fn create(world_size: usize, dim_size: usize, dim: usize) -> Vec<Self> {
-        let chunk_size = (dim_size + world_size - 1) / world_size;
+        let chunk_size = dim_size.div_ceil(world_size);
 
         (0..world_size)
             .map(|i| {
@@ -115,7 +114,7 @@ impl ModelPartition {
             }
             PartitionStrategy::PipelineParallel { num_stages, .. } => {
                 let stages = *num_stages.min(&num_workers);
-                let layers_per_stage = (total_layers + stages - 1) / stages;
+                let layers_per_stage = total_layers.div_ceil(stages);
 
                 (0..stages)
                     .map(|i| {
@@ -131,7 +130,7 @@ impl ModelPartition {
             } => {
                 // Expert parallel: each group handles specific experts
                 let total_experts = num_expert_groups * experts_per_group;
-                let experts_per_worker = (total_experts + num_workers - 1) / num_workers;
+                let experts_per_worker = total_experts.div_ceil(num_workers);
 
                 (0..num_workers.min(total_experts))
                     .map(|i| {
@@ -144,7 +143,7 @@ impl ModelPartition {
             PartitionStrategy::Hybrid { tp_size, pp_size } => {
                 // Hybrid: combine tensor and pipeline parallelism
                 let total_workers = tp_size * pp_size;
-                let layers_per_stage = (total_layers + pp_size - 1) / pp_size;
+                let layers_per_stage = total_layers.div_ceil(*pp_size);
 
                 (0..total_workers.min(num_workers))
                     .map(|i| {
@@ -187,7 +186,7 @@ impl TensorParallel {
         world_size: usize,
         rank: usize,
     ) -> Vec<T> {
-        let cols_per_rank = (cols + world_size - 1) / world_size;
+        let cols_per_rank = cols.div_ceil(world_size);
         let start_col = rank * cols_per_rank;
         let end_col = ((rank + 1) * cols_per_rank).min(cols);
         let local_cols = end_col - start_col;
@@ -211,7 +210,7 @@ impl TensorParallel {
         world_size: usize,
         rank: usize,
     ) -> Vec<T> {
-        let rows_per_rank = (rows + world_size - 1) / world_size;
+        let rows_per_rank = rows.div_ceil(world_size);
         let start_row = rank * rows_per_rank;
         let end_row = ((rank + 1) * rows_per_rank).min(rows);
 
@@ -233,7 +232,7 @@ pub struct PipelineParallel;
 impl PipelineParallel {
     /// Calculate number of micro-batches needed
     pub fn num_micro_batches(batch_size: usize, micro_batch_size: usize) -> usize {
-        (batch_size + micro_batch_size - 1) / micro_batch_size
+        batch_size.div_ceil(micro_batch_size)
     }
 
     /// Calculate pipeline bubble overhead
@@ -248,7 +247,7 @@ impl PipelineParallel {
     pub fn optimal_micro_batch_size(batch_size: usize, num_stages: usize) -> usize {
         // Rule of thumb: micro_batches >= 4 * num_stages for < 25% bubble
         let target_micro_batches = 4 * num_stages;
-        let micro_batch_size = (batch_size + target_micro_batches - 1) / target_micro_batches;
+        let micro_batch_size = batch_size.div_ceil(target_micro_batches);
         micro_batch_size.max(1)
     }
 }
@@ -279,7 +278,7 @@ impl ExpertParallel {
         if load_balance <= 0.0 {
             return 2.0;
         }
-        (1.0 / load_balance).min(2.0).max(1.0)
+        (1.0 / load_balance).clamp(1.0, 2.0)
     }
 }
 

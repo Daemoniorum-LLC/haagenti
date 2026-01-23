@@ -48,7 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--workers" | "-w" => {
                 i += 1;
-                num_workers = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(num_cpus());
+                num_workers = args
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(num_cpus());
             }
             "--help" | "-h" => {
                 print_help();
@@ -104,21 +107,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Categorize tensors
-    let mlp_tensors: Vec<_> = all_tensors.iter()
+    let mlp_tensors: Vec<_> = all_tensors
+        .iter()
         .filter(|(_, name, _)| is_mlp_tensor(name))
         .cloned()
         .collect();
-    let attention_tensors: Vec<_> = all_tensors.iter()
+    let attention_tensors: Vec<_> = all_tensors
+        .iter()
         .filter(|(_, name, _)| is_attention_tensor(name))
         .collect();
-    let other_tensors: Vec<_> = all_tensors.iter()
+    let other_tensors: Vec<_> = all_tensors
+        .iter()
         .filter(|(_, name, _)| !is_mlp_tensor(name) && !is_attention_tensor(name))
         .collect();
 
     println!("\nTensor breakdown:");
-    println!("  MLP tensors:       {} (will compress at {:.0}%)", mlp_tensors.len(), mlp_retention * 100.0);
-    println!("  Attention tensors: {} (keeping uncompressed)", attention_tensors.len());
-    println!("  Other tensors:     {} (skipped - loaded from safetensors)", other_tensors.len());
+    println!(
+        "  MLP tensors:       {} (will compress at {:.0}%)",
+        mlp_tensors.len(),
+        mlp_retention * 100.0
+    );
+    println!(
+        "  Attention tensors: {} (keeping uncompressed)",
+        attention_tensors.len()
+    );
+    println!(
+        "  Other tensors:     {} (skipped - loaded from safetensors)",
+        other_tensors.len()
+    );
     println!();
 
     // Set up thread pool
@@ -172,8 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Encode using compressive spectral encoder
         // CRITICAL: With num_fragments=1, we must set essential_ratio=1.0 to store ALL
         // retained coefficients in fragment 0. Otherwise only 20% of retained are stored.
-        let encoder = CompressiveSpectralEncoder::new(1, mlp_retention)
-            .with_essential_ratio(1.0);
+        let encoder = CompressiveSpectralEncoder::new(1, mlp_retention).with_essential_ratio(1.0);
         let fragments = match encoder.encode_2d(&data_f32, width, height) {
             Ok(f) => f,
             Err(e) => {
@@ -226,25 +241,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let elapsed = start_time.elapsed().as_secs_f64();
     let input_gb = total_input.load(Ordering::Relaxed) as f64 / 1_000_000_000.0;
     let output_gb = total_output.load(Ordering::Relaxed) as f64 / 1_000_000_000.0;
-    let compression_ratio = if output_gb > 0.0 { input_gb / output_gb } else { 0.0 };
+    let compression_ratio = if output_gb > 0.0 {
+        input_gb / output_gb
+    } else {
+        0.0
+    };
     let completed_count = completed.load(Ordering::Relaxed);
     let failed_count = failed.load(Ordering::Relaxed);
 
     println!("\nCompression Complete!");
     println!("=====================");
     println!("Output:              {}", output_dir.display());
-    println!("MLP Tensors:         {}/{} compressed ({} failed)", completed_count, total_mlp, failed_count);
-    println!("Attention Tensors:   {} (use from safetensors)", attention_tensors.len());
+    println!(
+        "MLP Tensors:         {}/{} compressed ({} failed)",
+        completed_count, total_mlp, failed_count
+    );
+    println!(
+        "Attention Tensors:   {} (use from safetensors)",
+        attention_tensors.len()
+    );
     println!("MLP Input Size:      {:.2} GB", input_gb);
     println!("MLP Output Size:     {:.2} GB", output_gb);
     println!("MLP Compression:     {:.1}x", compression_ratio);
     println!("Time:                {:.1} seconds", elapsed);
-    println!("Throughput:          {:.1} MB/s", (input_gb * 1000.0) / elapsed);
+    println!(
+        "Throughput:          {:.1} MB/s",
+        (input_gb * 1000.0) / elapsed
+    );
 
     // Estimate overall compression (MLP is ~67% of model for Llama)
     let mlp_fraction = 0.67;
     let overall_compression = 1.0 / (mlp_fraction / compression_ratio + (1.0 - mlp_fraction));
-    println!("\nEstimated Overall:   {:.2}x (MLP={:.0}% of params)", overall_compression, mlp_fraction * 100.0);
+    println!(
+        "\nEstimated Overall:   {:.2}x (MLP={:.0}% of params)",
+        overall_compression,
+        mlp_fraction * 100.0
+    );
 
     println!("\nDone!");
 
@@ -265,15 +297,19 @@ fn is_mlp_tensor(name: &str) -> bool {
 
 /// Check if tensor name indicates attention layer
 fn is_attention_tensor(name: &str) -> bool {
-    name.contains("self_attn.q_proj") ||
-    name.contains("self_attn.k_proj") ||
-    name.contains("self_attn.v_proj") ||
-    name.contains("self_attn.o_proj") ||
-    name.contains("self_attn_q_proj") ||
-    name.contains("self_attn_k_proj") ||
-    name.contains("self_attn_v_proj") ||
-    name.contains("self_attn_o_proj") ||
-    (name.contains("attn") && (name.contains("q_proj") || name.contains("k_proj") || name.contains("v_proj") || name.contains("o_proj")))
+    name.contains("self_attn.q_proj")
+        || name.contains("self_attn.k_proj")
+        || name.contains("self_attn.v_proj")
+        || name.contains("self_attn.o_proj")
+        || name.contains("self_attn_q_proj")
+        || name.contains("self_attn_k_proj")
+        || name.contains("self_attn_v_proj")
+        || name.contains("self_attn_o_proj")
+        || (name.contains("attn")
+            && (name.contains("q_proj")
+                || name.contains("k_proj")
+                || name.contains("v_proj")
+                || name.contains("o_proj")))
 }
 
 fn num_cpus() -> usize {

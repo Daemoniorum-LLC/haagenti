@@ -23,12 +23,11 @@ use std::path::Path;
 
 use clap::Parser;
 use tonic::transport::Server;
-use tracing::{info, warn, Level};
+use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use haagenti_grpc::proto::compression_service_server::CompressionServiceServer;
 use haagenti_grpc::service::CompressionServiceImpl;
-use haagenti_grpc::config::ServerConfig;
 use haagenti_grpc::tls::TlsConfig;
 
 #[derive(Parser, Debug)]
@@ -106,8 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_thread_ids(true)
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set tracing subscriber");
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
 
     // Initialize metrics if enabled
     if args.metrics {
@@ -139,8 +137,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting Haagenti gRPC server...");
     info!("  Address:          {}", addr);
     info!("  Max message size: {} MB", args.max_message_size_mb);
-    info!("  TLS:              {}", if args.tls { "enabled" } else { "disabled" });
-    info!("  Metrics:          {}", if args.metrics { format!("port {}", args.metrics_port) } else { "disabled".to_string() });
+    info!(
+        "  TLS:              {}",
+        if args.tls { "enabled" } else { "disabled" }
+    );
+    info!(
+        "  Metrics:          {}",
+        if args.metrics {
+            format!("port {}", args.metrics_port)
+        } else {
+            "disabled".to_string()
+        }
+    );
     info!("");
     info!("Available algorithms:");
     info!("  • Zstd (levels 1-22)");
@@ -156,23 +164,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build and run server
     if args.tls {
         // Validate TLS arguments
-        let cert_path = args.tls_cert.as_ref().ok_or_else(|| {
-            "TLS enabled but --tls-cert not provided"
-        })?;
-        let key_path = args.tls_key.as_ref().ok_or_else(|| {
-            "TLS enabled but --tls-key not provided"
-        })?;
+        let cert_path = args
+            .tls_cert
+            .as_ref()
+            .ok_or({ "TLS enabled but --tls-cert not provided" })?;
+        let key_path = args
+            .tls_key
+            .as_ref()
+            .ok_or({ "TLS enabled but --tls-key not provided" })?;
 
         // Build TLS configuration
-        let mut tls_config = TlsConfig::from_pem(
-            Path::new(cert_path),
-            Path::new(key_path),
-        )?;
+        let mut tls_config = TlsConfig::from_pem(Path::new(cert_path), Path::new(key_path))?;
 
         // Add client CA for mTLS if specified
         if let Some(ref client_ca_path) = args.tls_client_ca {
             tls_config = tls_config.with_client_ca(Path::new(client_ca_path))?;
-            info!("  mTLS:             enabled (client CA: {})", client_ca_path);
+            info!(
+                "  mTLS:             enabled (client CA: {})",
+                client_ca_path
+            );
         }
 
         if args.tls_require_client_cert {

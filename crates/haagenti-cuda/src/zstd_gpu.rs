@@ -56,7 +56,11 @@ impl Sequence {
 ///
 /// Executes Zstd sequences (literal copy + match copy) on the GPU.
 pub struct ZstdGpuDecoder {
+    /// Device handle kept for ownership/lifetime
+    #[allow(dead_code)]
     device: Arc<CudaDevice>,
+    /// Stream for async operations
+    #[allow(dead_code)]
     stream: CudaStream,
     ready: bool,
 }
@@ -139,10 +143,7 @@ impl ZstdGpuDecoder {
     }
 
     /// Execute multiple independent blocks in a batch.
-    pub fn execute_batch(
-        &self,
-        blocks: &[(Vec<u8>, Vec<Sequence>)],
-    ) -> Result<Vec<Vec<u8>>> {
+    pub fn execute_batch(&self, blocks: &[(Vec<u8>, Vec<Sequence>)]) -> Result<Vec<Vec<u8>>> {
         blocks
             .iter()
             .map(|(literals, sequences)| self.execute_sequences(sequences, literals, &[]))
@@ -152,8 +153,7 @@ impl ZstdGpuDecoder {
     /// Decompress a complete Zstd frame.
     pub fn decompress(&self, compressed: &[u8]) -> Result<Vec<u8>> {
         // Use CPU fallback for now - GPU kernel implementation would go here
-        zstd::decode_all(compressed)
-            .map_err(|e| CudaError::DecompressionFailed(e.to_string()))
+        zstd::decode_all(compressed).map_err(|e| CudaError::DecompressionFailed(e.to_string()))
     }
 }
 
@@ -255,6 +255,8 @@ impl FseTable {
 
 /// GPU-accelerated FSE decoder.
 pub struct FseGpuDecoder {
+    /// Device handle kept for ownership/lifetime
+    #[allow(dead_code)]
     device: Arc<CudaDevice>,
     table: FseTable,
     ready: bool,
@@ -304,11 +306,7 @@ impl FseGpuDecoder {
     }
 
     /// Decode multiple streams in batch.
-    pub fn decode_batch(
-        &self,
-        streams: &[Vec<u8>],
-        lengths: &[usize],
-    ) -> Result<Vec<Vec<u8>>> {
+    pub fn decode_batch(&self, streams: &[Vec<u8>], lengths: &[usize]) -> Result<Vec<Vec<u8>>> {
         streams
             .iter()
             .zip(lengths.iter())
@@ -376,11 +374,7 @@ impl ZstdGpuPipeline {
     }
 
     /// Decompress with dictionary.
-    pub fn decompress_with_dict(
-        &self,
-        compressed: &[u8],
-        _dict: &[u8],
-    ) -> Result<Vec<u8>> {
+    pub fn decompress_with_dict(&self, compressed: &[u8], _dict: &[u8]) -> Result<Vec<u8>> {
         // CPU fallback with dictionary
         let mut decoder = zstd::Decoder::with_dictionary(compressed, _dict)
             .map_err(|e| CudaError::DecompressionFailed(e.to_string()))?;
@@ -420,7 +414,9 @@ mod gpu_sequence_tests {
     // Helper to create a test GPU context (uses CPU fallback)
     fn test_context() -> Option<crate::GpuContext> {
         // Use catch_unwind to handle case where CUDA isn't available
-        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok()).ok().flatten()
+        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok())
+            .ok()
+            .flatten()
     }
 
     #[test]
@@ -460,7 +456,9 @@ mod gpu_sequence_tests {
         let literals = b"Hello, World!";
         let sequences = vec![Sequence::literal_only(literals.len())];
 
-        let result = decoder.execute_sequences(&sequences, literals, &[]).unwrap();
+        let result = decoder
+            .execute_sequences(&sequences, literals, &[])
+            .unwrap();
         assert_eq!(result.as_slice(), literals.as_slice());
     }
 
@@ -478,7 +476,9 @@ mod gpu_sequence_tests {
             Sequence::new(0, 3, 3), // match: offset=3, length=3
         ];
 
-        let result = decoder.execute_sequences(&sequences, literals, &[]).unwrap();
+        let result = decoder
+            .execute_sequences(&sequences, literals, &[])
+            .unwrap();
         assert_eq!(result.as_slice(), b"abcabc");
     }
 
@@ -497,7 +497,9 @@ mod gpu_sequence_tests {
             Sequence::new(0, 1, 10), // match: offset=1, length=10
         ];
 
-        let result = decoder.execute_sequences(&sequences, literals, &[]).unwrap();
+        let result = decoder
+            .execute_sequences(&sequences, literals, &[])
+            .unwrap();
         assert_eq!(result.as_slice(), b"aaaaaaaaaaa"); // 11 a's
     }
 
@@ -515,7 +517,9 @@ mod gpu_sequence_tests {
             Sequence::new(0, 20, 5), // Copy 5 bytes from beginning
         ];
 
-        let result = decoder.execute_sequences(&sequences, literals, &[]).unwrap();
+        let result = decoder
+            .execute_sequences(&sequences, literals, &[])
+            .unwrap();
         assert_eq!(result.len(), 25);
     }
 
@@ -578,11 +582,13 @@ mod gpu_sequence_tests {
         literals[0..5].copy_from_slice(b"MATCH");
 
         let sequences = vec![
-            Sequence::new(1000, 0, 0),  // All literals
-            Sequence::new(0, 1000, 5),  // Match from very beginning
+            Sequence::new(1000, 0, 0), // All literals
+            Sequence::new(0, 1000, 5), // Match from very beginning
         ];
 
-        let result = decoder.execute_sequences(&sequences, &literals, &[]).unwrap();
+        let result = decoder
+            .execute_sequences(&sequences, &literals, &[])
+            .unwrap();
 
         assert_eq!(&result[1000..1005], b"MATCH");
     }
@@ -628,7 +634,9 @@ mod gpu_fse_tests {
 
     fn test_context() -> Option<crate::GpuContext> {
         // Use catch_unwind to handle case where CUDA isn't available
-        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok()).ok().flatten()
+        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok())
+            .ok()
+            .flatten()
     }
 
     #[test]
@@ -717,9 +725,7 @@ mod gpu_fse_tests {
         let table = FseTable::predefined_literals();
         let decoder = FseGpuDecoder::new(&ctx, &table).unwrap();
 
-        let streams: Vec<Vec<u8>> = (0..10)
-            .map(|i| vec![(i % 256) as u8; 100])
-            .collect();
+        let streams: Vec<Vec<u8>> = (0..10).map(|i| vec![(i % 256) as u8; 100]).collect();
         let lengths: Vec<usize> = vec![100; 10];
 
         let results = decoder.decode_batch(&streams, &lengths).unwrap();
@@ -830,11 +836,15 @@ mod gpu_pipeline_tests {
 
     fn test_context() -> Option<crate::GpuContext> {
         // Use catch_unwind to handle case where CUDA isn't available
-        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok()).ok().flatten()
+        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok())
+            .ok()
+            .flatten()
     }
 
     fn generate_test_data(size: usize) -> Vec<u8> {
-        (0..size).map(|i| ((i * 17 + i / 256) % 256) as u8).collect()
+        (0..size)
+            .map(|i| ((i * 17 + i / 256) % 256) as u8)
+            .collect()
     }
 
     #[test]
@@ -1006,9 +1016,8 @@ mod gpu_pipeline_tests {
         }
         let elapsed = start.elapsed();
 
-        let throughput_mbs = (iterations as f64 * original.len() as f64)
-            / elapsed.as_secs_f64()
-            / 1_000_000.0;
+        let throughput_mbs =
+            (iterations as f64 * original.len() as f64) / elapsed.as_secs_f64() / 1_000_000.0;
 
         // Just verify it runs (actual GPU would be much faster)
         assert!(throughput_mbs > 0.0);

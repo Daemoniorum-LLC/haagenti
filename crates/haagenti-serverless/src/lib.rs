@@ -13,12 +13,14 @@ mod provider;
 mod snapshot;
 mod state;
 
-pub use cold_start::{ColdStartOptimizer, WarmupConfig, WarmupStats};
-pub use error::{ServerlessError, Result};
-pub use fragment_pool::{FragmentPool, PoolConfig, PooledFragment};
-pub use provider::{Provider, ProviderConfig, ProviderType};
+pub use cold_start::{
+    ColdStartMetrics, ColdStartOptimizer, WarmupConfig, WarmupScheduler, WarmupStats,
+};
+pub use error::{Result, ServerlessError};
+pub use fragment_pool::{FragmentPool, FragmentPrewarmer, PoolConfig, PooledFragment};
+pub use provider::{Provider, ProviderCapabilities, ProviderConfig, ProviderType, RequestContext};
 pub use snapshot::{GpuSnapshot, SnapshotConfig, SnapshotManager};
-pub use state::{FunctionState, StateManager, StateSerializer};
+pub use state::{FunctionState, StateDiff, StateManager, StateSerializer};
 
 /// Serverless deployment environment
 pub mod env {

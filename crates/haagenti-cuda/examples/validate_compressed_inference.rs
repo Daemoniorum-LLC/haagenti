@@ -37,14 +37,20 @@ fn find_huggingface_model(model_name: &str) -> Option<PathBuf> {
 }
 
 /// Simple safetensors header parser - extracts tensor info without full JSON parsing
-fn parse_tensor_info(header_str: &str, tensor_name: &str) -> Option<(String, Vec<usize>, usize, usize)> {
+fn parse_tensor_info(
+    header_str: &str,
+    tensor_name: &str,
+) -> Option<(String, Vec<usize>, usize, usize)> {
     // Find the tensor entry in JSON
     let search = format!("\"{}\"", tensor_name);
     let pos = header_str.find(&search)?;
 
     // Find the end of this tensor's entry (next tensor or end of object)
     let tensor_section = &header_str[pos..];
-    let section_end = tensor_section[1..].find("},").map(|p| p + 2).unwrap_or(tensor_section.len());
+    let section_end = tensor_section[1..]
+        .find("},")
+        .map(|p| p + 2)
+        .unwrap_or(tensor_section.len());
     let tensor_section = &tensor_section[..section_end];
 
     // Find dtype - look for "dtype":"<type>"
@@ -109,11 +115,13 @@ fn read_safetensors_header(path: &std::path::Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|e| format!("Failed to open: {}", e))?;
 
     let mut len_bytes = [0u8; 8];
-    file.read_exact(&mut len_bytes).map_err(|e| format!("Failed to read header length: {}", e))?;
+    file.read_exact(&mut len_bytes)
+        .map_err(|e| format!("Failed to read header length: {}", e))?;
     let header_len = u64::from_le_bytes(len_bytes) as usize;
 
     let mut header_bytes = vec![0u8; header_len];
-    file.read_exact(&mut header_bytes).map_err(|e| format!("Failed to read header: {}", e))?;
+    file.read_exact(&mut header_bytes)
+        .map_err(|e| format!("Failed to read header: {}", e))?;
 
     Ok(String::from_utf8_lossy(&header_bytes).to_string())
 }
@@ -122,26 +130,30 @@ fn read_tensor_data(path: &std::path::Path, offset: usize, len: usize) -> Result
     let mut file = File::open(path).map_err(|e| format!("Failed to open: {}", e))?;
 
     let mut len_bytes = [0u8; 8];
-    file.read_exact(&mut len_bytes).map_err(|e| format!("Failed to read header length: {}", e))?;
+    file.read_exact(&mut len_bytes)
+        .map_err(|e| format!("Failed to read header length: {}", e))?;
     let header_len = u64::from_le_bytes(len_bytes) as usize;
 
     file.seek(SeekFrom::Start((8 + header_len + offset) as u64))
         .map_err(|e| format!("Failed to seek: {}", e))?;
 
     let mut data = vec![0u8; len];
-    file.read_exact(&mut data).map_err(|e| format!("Failed to read tensor: {}", e))?;
+    file.read_exact(&mut data)
+        .map_err(|e| format!("Failed to read tensor: {}", e))?;
 
     Ok(data)
 }
 
 fn bytes_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4)
+    bytes
+        .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect()
 }
 
 fn bytes_to_f16_as_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(2)
+    bytes
+        .chunks_exact(2)
         .map(|chunk| {
             let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
             half::f16::from_bits(bits).to_f32()
@@ -150,7 +162,8 @@ fn bytes_to_f16_as_f32(bytes: &[u8]) -> Vec<f32> {
 }
 
 fn bytes_to_bf16_as_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(2)
+    bytes
+        .chunks_exact(2)
         .map(|chunk| {
             let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
             half::bf16::from_bits(bits).to_f32()
@@ -211,7 +224,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "lm_head.weight",
     ];
 
-    println!("{:50} {:>10} {:>10} {:>10}", "Tensor", "Elements", "Cosine", "Status");
+    println!(
+        "{:50} {:>10} {:>10} {:>10}",
+        "Tensor", "Elements", "Cosine", "Status"
+    );
     println!("{}", "-".repeat(85));
 
     let mut total_cosine = 0.0;
@@ -221,7 +237,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let orig_info = match parse_tensor_info(&orig_header, tensor_name) {
             Some(info) => info,
             None => {
-                println!("{:50} {:>10} {:>10} {:>10}", tensor_name, "N/A", "N/A", "NOT FOUND");
+                println!(
+                    "{:50} {:>10} {:>10} {:>10}",
+                    tensor_name, "N/A", "N/A", "NOT FOUND"
+                );
                 continue;
             }
         };
@@ -229,7 +248,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let comp_info = match parse_tensor_info(&comp_header, tensor_name) {
             Some(info) => info,
             None => {
-                println!("{:50} {:>10} {:>10} {:>10}", tensor_name, "N/A", "N/A", "NOT FOUND");
+                println!(
+                    "{:50} {:>10} {:>10} {:>10}",
+                    tensor_name, "N/A", "N/A", "NOT FOUND"
+                );
                 continue;
             }
         };
@@ -247,7 +269,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "F16" => bytes_to_f16_as_f32(&orig_bytes),
             "BF16" => bytes_to_bf16_as_f32(&orig_bytes),
             _ => {
-                println!("{:50} {:>10} {:>10} {:>10}", tensor_name, elements, "N/A", &orig_dtype);
+                println!(
+                    "{:50} {:>10} {:>10} {:>10}",
+                    tensor_name, elements, "N/A", &orig_dtype
+                );
                 continue;
             }
         };
@@ -257,7 +282,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "F16" => bytes_to_f16_as_f32(&comp_bytes),
             "BF16" => bytes_to_bf16_as_f32(&comp_bytes),
             _ => {
-                println!("{:50} {:>10} {:>10} {:>10}", tensor_name, elements, "N/A", &comp_dtype);
+                println!(
+                    "{:50} {:>10} {:>10} {:>10}",
+                    tensor_name, elements, "N/A", &comp_dtype
+                );
                 continue;
             }
         };
@@ -274,7 +302,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "DEGRADED"
         };
 
-        println!("{:50} {:>10} {:>10.4} {:>10}", tensor_name, elements, cos, status);
+        println!(
+            "{:50} {:>10} {:>10.4} {:>10}",
+            tensor_name, elements, cos, status
+        );
         total_cosine += cos;
         count += 1;
     }

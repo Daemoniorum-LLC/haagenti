@@ -15,12 +15,12 @@ mod hardware;
 mod profiler;
 mod tuner;
 
-pub use bayesian::{BayesianOptimizer, BayesianConfig, AcquisitionFunction};
+pub use bayesian::{AcquisitionFunction, BayesianConfig, BayesianOptimizer};
 pub use error::{OptError, Result};
-pub use genetic::{GeneticSearch, GeneticConfig, SearchSpace};
-pub use hardware::{HardwareProfile, HardwareOptimizer, DeviceCapability};
-pub use profiler::{Profiler, ProfileResult, Bottleneck};
-pub use tuner::{AutoTuner, TunerConfig, TuningResult};
+pub use genetic::{GeneticConfig, GeneticSearch, SearchSpace};
+pub use hardware::{DeviceCapability, HardwareOptimizer, HardwareProfile, ProfileDatabase};
+pub use profiler::{Bottleneck, ProfileResult, Profiler, ScopedTimer};
+pub use tuner::{presets, AutoTuner, TunerConfig, TuningResult};
 
 /// Optimization strategy
 #[derive(Debug, Clone)]

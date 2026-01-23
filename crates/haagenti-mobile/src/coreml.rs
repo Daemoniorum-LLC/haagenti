@@ -62,7 +62,8 @@ impl ComputeUnit {
 /// CoreML model wrapper
 #[derive(Debug)]
 pub struct CoreMLModel {
-    /// Configuration
+    /// Configuration (kept for future model reloading)
+    #[allow(dead_code)]
     config: CoreMLConfig,
     /// Model name
     name: String,
@@ -123,7 +124,7 @@ impl CoreMLModel {
     }
 
     /// Run inference
-    pub async fn predict(&self, input: &[f32]) -> Result<Vec<f32>> {
+    pub async fn predict(&self, _input: &[f32]) -> Result<Vec<f32>> {
         if !self.loaded {
             return Err(MobileError::ModelLoadError("Model not loaded".into()));
         }

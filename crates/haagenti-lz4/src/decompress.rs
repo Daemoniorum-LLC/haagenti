@@ -1,8 +1,7 @@
 //! LZ4 decompressor implementation.
 
 use haagenti_core::{
-    Algorithm, CompressionStats, Decompressor, Result, Error,
-    StreamingDecompressor,
+    Algorithm, CompressionStats, Decompressor, Error, Result, StreamingDecompressor,
 };
 
 use crate::block::decompress_block;

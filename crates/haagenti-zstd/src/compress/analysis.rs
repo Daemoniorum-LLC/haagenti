@@ -234,7 +234,8 @@ impl CompressibilityFingerprint {
 
         // Calculate entropy estimate
         let len = data.len() as f32;
-        let entropy: f32 = freq.iter()
+        let entropy: f32 = freq
+            .iter()
             .filter(|&&f| f > 0)
             .map(|&f| {
                 let p = f as f32 / len;
@@ -293,7 +294,9 @@ impl CompressibilityFingerprint {
             PatternType::LowEntropy => CompressionStrategy::PredefinedFse,
             // Try FSE for high entropy data with run patterns (RLE-like)
             PatternType::HighEntropy if has_runs => CompressionStrategy::PredefinedFse,
-            PatternType::HighEntropy if estimated_ratio < 0.95 => CompressionStrategy::PredefinedFse,
+            PatternType::HighEntropy if estimated_ratio < 0.95 => {
+                CompressionStrategy::PredefinedFse
+            }
             _ => CompressionStrategy::RawBlock,
         };
 
@@ -312,7 +315,8 @@ impl CompressibilityFingerprint {
         if matches.is_empty() {
             // No matches found, adjust strategy
             if self.strategy == CompressionStrategy::RleSequences
-                || self.strategy == CompressionStrategy::PredefinedFse {
+                || self.strategy == CompressionStrategy::PredefinedFse
+            {
                 self.strategy = CompressionStrategy::RawBlock;
                 self.estimated_ratio = 1.05; // Slight expansion expected
             }
@@ -384,8 +388,12 @@ fn is_text_like(freq: &[u32; 256]) -> bool {
     }
 
     // Also check for common text bytes (space, e, t, a, o, etc.)
-    let common_text = freq[32] + freq[b'e' as usize] + freq[b't' as usize]
-                    + freq[b'a' as usize] + freq[b'o' as usize] + freq[b'n' as usize];
+    let common_text = freq[32]
+        + freq[b'e' as usize]
+        + freq[b't' as usize]
+        + freq[b'a' as usize]
+        + freq[b'o' as usize]
+        + freq[b'n' as usize];
 
     printable as f32 / total as f32 > 0.8 && common_text as f32 / total as f32 > 0.2
 }
@@ -401,21 +409,13 @@ fn analyze_match_uniformity(matches: &[Match]) -> (bool, bool) {
 
     // Check if all offsets are within a small range
     let uniform_offsets = matches.iter().all(|m| {
-        let diff = if m.offset > first_offset {
-            m.offset - first_offset
-        } else {
-            first_offset - m.offset
-        };
+        let diff = m.offset.abs_diff(first_offset);
         diff <= 3 // Within 3 of each other
     });
 
     // Check if all lengths are within a small range
     let uniform_lengths = matches.iter().all(|m| {
-        let diff = if m.length > first_length {
-            m.length - first_length
-        } else {
-            first_length - m.length
-        };
+        let diff = m.length.abs_diff(first_length);
         diff <= 2 // Within 2 of each other
     });
 
@@ -443,10 +443,12 @@ mod tests {
     #[test]
     fn test_random_detection() {
         // Pseudo-random data (using u64 to avoid overflow)
-        let data: Vec<u8> = (0u64..256).map(|i| {
-            let x = i.wrapping_mul(1103515245).wrapping_add(12345);
-            (x >> 16) as u8
-        }).collect();
+        let data: Vec<u8> = (0u64..256)
+            .map(|i| {
+                let x = i.wrapping_mul(1103515245).wrapping_add(12345);
+                (x >> 16) as u8
+            })
+            .collect();
 
         let fp = CompressibilityFingerprint::analyze(&data);
         assert!(fp.entropy > 6.0, "Entropy was {}", fp.entropy);
@@ -488,7 +490,10 @@ mod tests {
 
         assert!(fp.entropy < 2.0, "Entropy was {}", fp.entropy);
         // May be classified as LowEntropy or Periodic depending on period detection
-        assert!(matches!(fp.pattern, PatternType::LowEntropy | PatternType::Periodic { .. }));
+        assert!(matches!(
+            fp.pattern,
+            PatternType::LowEntropy | PatternType::Periodic { .. }
+        ));
     }
 
     #[test]
@@ -560,18 +565,28 @@ mod tests {
     fn test_fast_entropy_estimate_zeros() {
         let data = vec![0u8; 1000];
         let entropy = fast_entropy_estimate(&data);
-        assert!(entropy < 0.1, "Zeros should have ~0 entropy, got {}", entropy);
+        assert!(
+            entropy < 0.1,
+            "Zeros should have ~0 entropy, got {}",
+            entropy
+        );
     }
 
     #[test]
     fn test_fast_entropy_estimate_random() {
         // Pseudo-random data covering all 256 values
-        let data: Vec<u8> = (0u64..1000).map(|i| {
-            let x = i.wrapping_mul(1103515245).wrapping_add(12345);
-            (x % 256) as u8
-        }).collect();
+        let data: Vec<u8> = (0u64..1000)
+            .map(|i| {
+                let x = i.wrapping_mul(1103515245).wrapping_add(12345);
+                (x % 256) as u8
+            })
+            .collect();
         let entropy = fast_entropy_estimate(&data);
-        assert!(entropy > 7.0, "Random should have high entropy, got {}", entropy);
+        assert!(
+            entropy > 7.0,
+            "Random should have high entropy, got {}",
+            entropy
+        );
     }
 
     #[test]
@@ -579,8 +594,11 @@ mod tests {
         let data = b"The quick brown fox jumps over the lazy dog. ";
         let entropy = fast_entropy_estimate(data);
         // Text typically has 4-5 bits/byte entropy
-        assert!(entropy > 3.5 && entropy < 6.0,
-            "Text should have moderate entropy, got {}", entropy);
+        assert!(
+            entropy > 3.5 && entropy < 6.0,
+            "Text should have moderate entropy, got {}",
+            entropy
+        );
     }
 
     #[test]
@@ -593,25 +611,34 @@ mod tests {
         assert!(fast_should_compress(text), "Text should be compressible");
 
         let repeated = b"abcdefgh".repeat(100);
-        assert!(fast_should_compress(&repeated), "Repeated pattern should be compressible");
+        assert!(
+            fast_should_compress(&repeated),
+            "Repeated pattern should be compressible"
+        );
     }
 
     #[test]
     fn test_fast_should_compress_incompressible() {
         // Truly random data should return false
         // Use cryptographic-quality randomness simulation
-        let random: Vec<u8> = (0u64..1000).map(|i| {
-            // Better random simulation - uses mixing
-            let x = i.wrapping_mul(0x5851f42d4c957f2d)
-                .wrapping_add(0x14057b7ef767814f);
-            ((x >> 32) ^ x) as u8
-        }).collect();
+        let random: Vec<u8> = (0u64..1000)
+            .map(|i| {
+                // Better random simulation - uses mixing
+                let x = i
+                    .wrapping_mul(0x5851f42d4c957f2d)
+                    .wrapping_add(0x14057b7ef767814f);
+                ((x >> 32) ^ x) as u8
+            })
+            .collect();
 
         // Note: May still return true if sampling happens to hit non-random pattern
         // This test documents expected behavior, not strict requirement
         let should = fast_should_compress(&random);
-        println!("Random data should_compress: {} (entropy: {})",
-            should, fast_entropy_estimate(&random));
+        println!(
+            "Random data should_compress: {} (entropy: {})",
+            should,
+            fast_entropy_estimate(&random)
+        );
     }
 
     #[test]
@@ -629,15 +656,20 @@ mod tests {
     #[test]
     fn test_fast_predict_block_type_raw_for_random() {
         // Generate high-entropy data
-        let data: Vec<u8> = (0..1000).map(|i| {
-            let x = (i as u64).wrapping_mul(0x5851f42d4c957f2d);
-            ((x >> 32) ^ x) as u8
-        }).collect();
+        let data: Vec<u8> = (0..1000)
+            .map(|i| {
+                let x = (i as u64).wrapping_mul(0x5851f42d4c957f2d);
+                ((x >> 32) ^ x) as u8
+            })
+            .collect();
 
         let block_type = fast_predict_block_type(&data);
         // High entropy should trigger Raw
-        println!("High entropy block type: {:?} (entropy: {})",
-            block_type, fast_entropy_estimate(&data));
+        println!(
+            "High entropy block type: {:?} (entropy: {})",
+            block_type,
+            fast_entropy_estimate(&data)
+        );
     }
 
     #[test]
@@ -652,7 +684,10 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should complete 10,000 iterations in < 100ms
-        assert!(elapsed.as_millis() < 100,
-            "fast_entropy_estimate too slow: {:?} for 10K iterations", elapsed);
+        assert!(
+            elapsed.as_millis() < 100,
+            "fast_entropy_estimate too slow: {:?} for 10K iterations",
+            elapsed
+        );
     }
 }

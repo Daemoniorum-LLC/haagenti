@@ -152,7 +152,9 @@ impl AdaptiveStreamManager {
     /// Record a transfer for bandwidth estimation
     pub fn record_transfer(&self, bytes: usize, duration: Duration) {
         let mut state = self.state.borrow_mut();
-        state.transfer_history.push_back(TransferSample { bytes, duration });
+        state
+            .transfer_history
+            .push_back(TransferSample { bytes, duration });
         if state.transfer_history.len() > self.max_samples {
             state.transfer_history.pop_front();
         }
@@ -179,7 +181,7 @@ impl AdaptiveStreamManager {
     /// Calculate fragments needed for a target quality
     pub fn fragments_for_target(&self, target_quality: f32, total_fragments: usize) -> usize {
         // Linear relationship: quality 0.0 = 1 fragment, quality 1.0 = all fragments
-        let fraction = target_quality.max(0.0).min(1.0);
+        let fraction = target_quality.clamp(0.0, 1.0);
         let fragments = (fraction * total_fragments as f32).ceil() as usize;
         fragments.max(1).min(total_fragments)
     }

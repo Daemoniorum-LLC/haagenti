@@ -4,7 +4,7 @@ use crate::{CacheError, Result};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::RwLock;
@@ -149,8 +149,8 @@ impl LatentStorage {
         }
 
         let data = fs::read_to_string(&index_path).await?;
-        let entries: Vec<LatentEntry> = serde_json::from_str(&data)
-            .map_err(|e| CacheError::Storage(e.to_string()))?;
+        let entries: Vec<LatentEntry> =
+            serde_json::from_str(&data).map_err(|e| CacheError::Storage(e.to_string()))?;
 
         let mut index = self.index.write().await;
         let mut total_size = 0u64;
@@ -219,13 +219,16 @@ impl LatentStorage {
             LatentEntry::new(entry_id.to_string(), String::new(), 0, String::new())
         });
 
-        entry.checkpoints.insert(step, StoredLatent {
+        entry.checkpoints.insert(
             step,
-            shape,
-            dtype: dtype.to_string(),
-            size,
-            compressed: self.config.compress,
-        });
+            StoredLatent {
+                step,
+                shape,
+                dtype: dtype.to_string(),
+                size,
+                compressed: self.config.compress,
+            },
+        );
         entry.total_size += size as u64;
 
         *self.current_size.write().await += size as u64;
@@ -248,10 +251,7 @@ impl LatentStorage {
         let data_path = self.latent_path(entry_id, step);
 
         if !data_path.exists() {
-            return Err(CacheError::NotFound(format!(
-                "{} step {}",
-                entry_id, step
-            )));
+            return Err(CacheError::NotFound(format!("{} step {}", entry_id, step)));
         }
 
         let data = fs::read(&data_path).await?;
@@ -272,12 +272,14 @@ impl LatentStorage {
     /// Find best checkpoint for a step
     pub async fn find_checkpoint(&self, entry_id: &str, target_step: u32) -> Option<u32> {
         let index = self.index.read().await;
-        index.get(entry_id).and_then(|e| e.has_checkpoint_before(target_step))
+        index
+            .get(entry_id)
+            .and_then(|e| e.has_checkpoint_before(target_step))
     }
 
     /// Ensure we have capacity for new data
     async fn ensure_capacity(&self, needed: u64) -> Result<()> {
-        let mut current = *self.current_size.read().await;
+        let current = *self.current_size.read().await;
 
         if current + needed <= self.config.max_size {
             return Ok(());
@@ -288,11 +290,7 @@ impl LatentStorage {
 
         let mut index = self.index.write().await;
         let mut entries: Vec<_> = index.values().collect();
-        entries.sort_by(|a, b| {
-            a.eviction_score()
-                .partial_cmp(&b.eviction_score())
-                .unwrap()
-        });
+        entries.sort_by(|a, b| a.eviction_score().partial_cmp(&b.eviction_score()).unwrap());
 
         let mut to_remove = Vec::new();
         let mut freed = 0u64;

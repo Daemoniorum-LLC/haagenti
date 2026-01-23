@@ -36,8 +36,12 @@ use std::sync::Arc;
 
 /// Get compute capability of a CUDA device.
 fn get_compute_capability(device: &Arc<CudaDevice>) -> Result<(usize, usize)> {
-    let major = device.attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)? as usize;
-    let minor = device.attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)? as usize;
+    let major = device
+        .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)?
+        as usize;
+    let minor = device
+        .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)?
+        as usize;
     Ok((major, minor))
 }
 
@@ -47,10 +51,12 @@ const WARP_SIZE: usize = 32;
 /// Shared memory size per block (48KB).
 const SHARED_MEM_SIZE: usize = 48 * 1024;
 
-/// Token cache size in shared memory.
+/// Token cache size in shared memory (used in PTX kernel).
+#[allow(dead_code)]
 const TOKEN_CACHE_SIZE: usize = 8 * 1024;
 
-/// Output ring buffer size.
+/// Output ring buffer size (used in PTX kernel).
+#[allow(dead_code)]
 const OUTPUT_RING_SIZE: usize = 32 * 1024;
 
 /// Native PTX kernel for warp-level LZ4 decompression.
@@ -556,6 +562,8 @@ DEQUANT_DONE:
 
 /// Native kernel manager.
 pub struct NativeKernels {
+    /// Device handle kept for ownership/lifetime
+    #[allow(dead_code)]
     device: Arc<CudaDevice>,
     lz4_warp_decompress: CudaFunction,
     lz4_scan_blocks: CudaFunction,
@@ -568,16 +576,18 @@ impl NativeKernels {
         // Check compute capability (need SM 8.0+ for full features)
         let (major, minor) = get_compute_capability(&device)?;
         if major < 7 {
-            return Err(CudaError::InsufficientComputeCapability(
-                major, minor, 7, 0,
-            ));
+            return Err(CudaError::InsufficientComputeCapability(major, minor, 7, 0));
         }
 
         // Load LZ4 kernels
         device.load_ptx(
             LZ4_WARP_KERNEL_PTX.into(),
             "lz4_native",
-            &["lz4_warp_decompress", "lz4_scan_blocks", "zstd_warp_decompress"],
+            &[
+                "lz4_warp_decompress",
+                "lz4_scan_blocks",
+                "zstd_warp_decompress",
+            ],
         )?;
 
         // Load dequantization kernels
@@ -597,7 +607,9 @@ impl NativeKernels {
 
         let dequantize_int4 = device
             .get_func("tensor_native", "dequantize_int4_to_fp16")
-            .ok_or_else(|| CudaError::KernelLaunch("Failed to load dequantize_int4_to_fp16".into()))?;
+            .ok_or_else(|| {
+                CudaError::KernelLaunch("Failed to load dequantize_int4_to_fp16".into())
+            })?;
 
         Ok(NativeKernels {
             device,
@@ -619,7 +631,7 @@ impl NativeKernels {
     ) -> Result<()> {
         // Launch config: 1 warp per block, multiple blocks per SM
         let warps_per_block = 4; // 128 threads per block
-        let blocks = (num_blocks as usize + warps_per_block - 1) / warps_per_block;
+        let blocks = (num_blocks as usize).div_ceil(warps_per_block);
 
         let config = LaunchConfig {
             grid_dim: (blocks as u32, 1, 1),
@@ -656,7 +668,7 @@ impl NativeKernels {
         _stream: &CudaStream,
     ) -> Result<()> {
         let config = LaunchConfig {
-            grid_dim: ((max_blocks + 255) / 256, 1, 1),
+            grid_dim: (max_blocks.div_ceil(256), 1, 1),
             block_dim: (256, 1, 1),
             shared_mem_bytes: 0,
         };
@@ -689,9 +701,9 @@ impl NativeKernels {
         _stream: &CudaStream,
     ) -> Result<()> {
         // Each thread processes 8 elements
-        let threads_needed = (num_elements + 7) / 8;
+        let threads_needed = num_elements.div_ceil(8);
         let block_size = 256;
-        let grid_size = (threads_needed + block_size - 1) / block_size;
+        let grid_size = threads_needed.div_ceil(block_size);
 
         let config = LaunchConfig {
             grid_dim: (grid_size, 1, 1),
@@ -730,8 +742,8 @@ impl KernelStats {
     /// Calculate throughput in GB/s.
     pub fn calculate_throughput(&mut self) {
         if self.kernel_time_ns > 0 {
-            self.throughput_gbps = (self.bytes_decompressed as f64 / 1e9)
-                / (self.kernel_time_ns as f64 / 1e9);
+            self.throughput_gbps =
+                (self.bytes_decompressed as f64 / 1e9) / (self.kernel_time_ns as f64 / 1e9);
         }
     }
 }

@@ -18,7 +18,7 @@
 //! data = reader.decompress_all()
 //! ```
 
-use numpy::{IntoPyArray, ToPyArray, PyArray1, PyReadonlyArray1};
+use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, ToPyArray};
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use std::fs::File;
@@ -26,14 +26,9 @@ use std::io::{BufReader, BufWriter};
 
 // Re-exports from haagenti
 use haagenti::{
-    CompressionAlgorithm as RustCompressionAlgorithm,
-    DType as RustDType,
-    HctHeader as RustHctHeader,
-    HctReaderV2,
-    HctWriterV2,
-    HolographicEncoding as RustHolographicEncoding,
-    QuantizationScheme as RustQuantizationScheme,
-    Compressor, Decompressor,
+    CompressionAlgorithm as RustCompressionAlgorithm, Compressor, DType as RustDType, Decompressor,
+    HctHeader as RustHctHeader, HctReaderV2, HctWriterV2,
+    HolographicEncoding as RustHolographicEncoding, QuantizationScheme as RustQuantizationScheme,
 };
 
 // Type aliases for V2 readers/writers
@@ -370,11 +365,7 @@ impl HctReader {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "HctReader('{}', blocks={})",
-            self.path,
-            self.num_blocks()
-        )
+        format!("HctReader('{}', blocks={})", self.path, self.num_blocks())
     }
 }
 
@@ -406,12 +397,7 @@ impl HctWriter {
             .map_err(|e| PyIOError::new_err(format!("Failed to create {}: {}", path, e)))?;
         let buf_writer = BufWriter::new(file);
 
-        let mut writer = RustHctWriterV2::new(
-            buf_writer,
-            algorithm.into(),
-            dtype.into(),
-            shape,
-        );
+        let mut writer = RustHctWriterV2::new(buf_writer, algorithm.into(), dtype.into(), shape);
 
         if let Some(bs) = block_size {
             writer = writer.with_block_size(bs);
@@ -432,10 +418,7 @@ impl HctWriter {
             .ok_or_else(|| PyValueError::new_err("Writer already finalized"))?;
 
         let slice = data.as_slice()?;
-        let bytes: Vec<u8> = slice
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let bytes: Vec<u8> = slice.iter().flat_map(|f| f.to_le_bytes()).collect();
 
         match self.algorithm {
             CompressionAlgorithm::Lz4 => {
@@ -513,8 +496,7 @@ impl HoloTensorEncoder {
         max_rank: Option<usize>,
     ) -> Self {
         let n_frags = n_fragments.unwrap_or(8);
-        let mut encoder = haagenti::HoloTensorEncoder::new(encoding.into())
-            .with_fragments(n_frags);
+        let mut encoder = haagenti::HoloTensorEncoder::new(encoding.into()).with_fragments(n_frags);
 
         if let Some(s) = seed {
             encoder = encoder.with_seed(s);
@@ -567,10 +549,8 @@ impl HoloTensorEncoder {
 
         // Convert to Python types
         let header_py = HoloTensorHeaderPy::from(&header);
-        let fragments_py: Vec<HoloFragmentPy> = fragments
-            .into_iter()
-            .map(HoloFragmentPy::from)
-            .collect();
+        let fragments_py: Vec<HoloFragmentPy> =
+            fragments.into_iter().map(HoloFragmentPy::from).collect();
 
         Ok((header_py, fragments_py))
     }
@@ -588,10 +568,8 @@ impl HoloTensorEncoder {
             .map_err(|e| PyValueError::new_err(format!("Encoding failed: {}", e)))?;
 
         let header_py = HoloTensorHeaderPy::from(&header);
-        let fragments_py: Vec<HoloFragmentPy> = fragments
-            .into_iter()
-            .map(HoloFragmentPy::from)
-            .collect();
+        let fragments_py: Vec<HoloFragmentPy> =
+            fragments.into_iter().map(HoloFragmentPy::from).collect();
 
         Ok((header_py, fragments_py))
     }
@@ -834,7 +812,8 @@ impl HoloFragmentPy {
     fn __repr__(&self) -> String {
         format!(
             "HoloFragment(index={}, size={})",
-            self.index, self.data.len()
+            self.index,
+            self.data.len()
         )
     }
 }
@@ -867,7 +846,7 @@ fn convert_safetensors_to_hct(
     let mut writer = RustHctWriterV2::new(
         buf_writer,
         algorithm.into(),
-        RustDType::F32, // Default to F32 for safetensors
+        RustDType::F32,          // Default to F32 for safetensors
         vec![data.len() as u64], // Treat as 1D for raw conversion
     );
 
@@ -1237,8 +1216,16 @@ fn bytes_to_f32(data: &[u8], dtype: RustDType) -> PyResult<Vec<f32>> {
                     let lo = (b & 0x0F) as i8;
                     let hi = ((b >> 4) & 0x0F) as i8;
                     // Sign-extend 4-bit to 8-bit
-                    let lo = if lo & 0x08 != 0 { lo | 0xF0u8 as i8 } else { lo };
-                    let hi = if hi & 0x08 != 0 { hi | 0xF0u8 as i8 } else { hi };
+                    let lo = if lo & 0x08 != 0 {
+                        lo | 0xF0u8 as i8
+                    } else {
+                        lo
+                    };
+                    let hi = if hi & 0x08 != 0 {
+                        hi | 0xF0u8 as i8
+                    } else {
+                        hi
+                    };
                     vec![lo as f32, hi as f32]
                 })
                 .collect())
@@ -1282,7 +1269,10 @@ fn _haagenti_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decompress, m)?)?;
 
     // C.5: Custom exceptions
-    m.add("DecompressionError", m.py().get_type_bound::<DecompressionError>())?;
+    m.add(
+        "DecompressionError",
+        m.py().get_type_bound::<DecompressionError>(),
+    )?;
 
     // Create streaming submodule
     let streaming = PyModule::new_bound(m.py(), "streaming")?;

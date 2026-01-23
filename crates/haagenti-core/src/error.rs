@@ -46,11 +46,17 @@ pub enum Error {
 
     /// Algorithm-specific error.
     #[error("{algorithm} error: {message}")]
-    Algorithm { algorithm: &'static str, message: String },
+    Algorithm {
+        algorithm: &'static str,
+        message: String,
+    },
 
     /// Stream state error.
     #[error("invalid state: expected {expected}, got {actual}")]
-    InvalidState { expected: &'static str, actual: &'static str },
+    InvalidState {
+        expected: &'static str,
+        actual: &'static str,
+    },
 
     /// Unsupported feature or format.
     #[error("unsupported: {0}")]
@@ -91,7 +97,7 @@ impl Error {
 
     /// Create an I/O error with a custom message.
     pub fn io(message: impl Into<String>) -> Self {
-        Error::Io(std::io::Error::new(std::io::ErrorKind::Other, message.into()))
+        Error::Io(std::io::Error::other(message.into()))
     }
 
     /// Create an algorithm-specific error.

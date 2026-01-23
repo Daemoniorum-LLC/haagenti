@@ -9,18 +9,15 @@
 //! - Importance-guided compression
 //! - Memory usage and throughput
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use haagenti::holotensor::{
-    dct_1d, idct_1d, dct_2d, idct_2d,
-    SpectralEncoder, SpectralDecoder,
-};
-use haagenti::compressive::{CompressiveSpectralEncoder, CompressiveSpectralDecoder};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use haagenti::adaptive::AdaptiveSpectralEncoder;
-use haagenti::mixed_precision::{MixedPrecisionEncoder, MixedPrecisionDecoder};
+use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+use haagenti::holotensor::{dct_1d, dct_2d, idct_1d, idct_2d, SpectralDecoder, SpectralEncoder};
 use haagenti::importance::{ImportanceGuidedEncoder, ImportanceMap};
-use rand::{Rng, SeedableRng};
+use haagenti::mixed_precision::{MixedPrecisionDecoder, MixedPrecisionEncoder};
 use rand::rngs::StdRng;
-use rand_distr::{Normal, Distribution};
+use rand::{Rng, SeedableRng};
+use rand_distr::{Distribution, Normal};
 
 fn generate_llm_weights_f32(size: usize) -> Vec<f32> {
     let mut rng = StdRng::seed_from_u64(42);
@@ -34,8 +31,12 @@ fn generate_attention_matrix(rows: usize, cols: usize) -> Vec<f32> {
     let rank = 10;
     let scale_factor = 0.5_f32;
     for r in 0..rank {
-        let row_vec: Vec<f32> = (0..rows).map(|_| Rng::r#gen::<f32>(&mut rng) - scale_factor).collect();
-        let col_vec: Vec<f32> = (0..cols).map(|_| Rng::r#gen::<f32>(&mut rng) - scale_factor).collect();
+        let row_vec: Vec<f32> = (0..rows)
+            .map(|_| Rng::r#gen::<f32>(&mut rng) - scale_factor)
+            .collect();
+        let col_vec: Vec<f32> = (0..cols)
+            .map(|_| Rng::r#gen::<f32>(&mut rng) - scale_factor)
+            .collect();
         let scale = 1.0 / (r as f32 + 1.0).sqrt();
         for i in 0..rows {
             for j in 0..cols {
@@ -70,13 +71,17 @@ fn bench_dct_primitives(c: &mut Criterion) {
         let mut output = vec![0.0f32; size];
         group.throughput(Throughput::Elements(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("dct_2d", format!("{}x{}", width, height)), &data, |b, data| {
-            b.iter(|| dct_2d(black_box(data), black_box(&mut output), width, height))
-        });
+        group.bench_with_input(
+            BenchmarkId::new("dct_2d", format!("{}x{}", width, height)),
+            &data,
+            |b, data| b.iter(|| dct_2d(black_box(data), black_box(&mut output), width, height)),
+        );
 
-        group.bench_with_input(BenchmarkId::new("idct_2d", format!("{}x{}", width, height)), &data, |b, data| {
-            b.iter(|| idct_2d(black_box(data), black_box(&mut output), width, height))
-        });
+        group.bench_with_input(
+            BenchmarkId::new("idct_2d", format!("{}x{}", width, height)),
+            &data,
+            |b, data| b.iter(|| idct_2d(black_box(data), black_box(&mut output), width, height)),
+        );
     }
     group.finish();
 }
@@ -93,7 +98,10 @@ fn bench_spectral_encoding(c: &mut Criterion) {
 
         for num_fragments in fragment_counts {
             group.bench_with_input(
-                BenchmarkId::new(format!("encode/{}_fragments", num_fragments), format!("{}x{}", width, height)),
+                BenchmarkId::new(
+                    format!("encode/{}_fragments", num_fragments),
+                    format!("{}x{}", width, height),
+                ),
                 &data,
                 |b, data| {
                     let encoder = SpectralEncoder::new(num_fragments);
@@ -110,7 +118,10 @@ fn bench_spectral_encoding(c: &mut Criterion) {
         let fragments = encoder.encode_2d(&data, width, height).unwrap();
 
         group.bench_function(
-            BenchmarkId::new(format!("decode_full/{}_fragments", num_fragments), format!("{}x{}", width, height)),
+            BenchmarkId::new(
+                format!("decode_full/{}_fragments", num_fragments),
+                format!("{}x{}", width, height),
+            ),
             |b| {
                 b.iter(|| {
                     let mut decoder = SpectralDecoder::new(width, height, num_fragments);
@@ -141,10 +152,12 @@ fn bench_reconstruction_quality(c: &mut Criterion) {
                     decoder.add_fragment(frag).unwrap();
                 }
                 let reconstructed = decoder.reconstruct();
-                let mse: f32 = data.iter()
+                let mse: f32 = data
+                    .iter()
                     .zip(reconstructed.iter())
                     .map(|(a, b)| (a - b).powi(2))
-                    .sum::<f32>() / data.len() as f32;
+                    .sum::<f32>()
+                    / data.len() as f32;
                 black_box(mse)
             })
         });
@@ -270,7 +283,11 @@ fn bench_importance_guided(c: &mut Criterion) {
             let label = format!("{}x{}/{}", width, height, short_name);
 
             group.bench_function(BenchmarkId::new("encode", &label), |b| {
-                b.iter(|| encoder.encode(black_box(&data), width, height, tensor_name).unwrap())
+                b.iter(|| {
+                    encoder
+                        .encode(black_box(&data), width, height, tensor_name)
+                        .unwrap()
+                })
             });
         }
     }
@@ -284,10 +301,10 @@ fn bench_throughput_scaling(c: &mut Criterion) {
 
     // Sizes representative of real model tensors
     let sizes = [
-        (256, 256),      // 64K - small attention
-        (512, 512),      // 256K - medium
-        (1024, 512),     // 512K - typical MLP
-        (1024, 1024),    // 1M - large attention
+        (256, 256),   // 64K - small attention
+        (512, 512),   // 256K - medium
+        (1024, 512),  // 512K - typical MLP
+        (1024, 1024), // 1M - large attention
     ];
 
     for (width, height) in sizes {
@@ -342,7 +359,16 @@ fn bench_encoder_comparison(c: &mut Criterion) {
     group.bench_function("importance_heuristic", |b| {
         let importance_map = ImportanceMap::heuristic_only();
         let encoder = ImportanceGuidedEncoder::new(0.50, importance_map);
-        b.iter(|| encoder.encode(black_box(&data), width, height, "model.layers.0.mlp.gate_proj.weight").unwrap())
+        b.iter(|| {
+            encoder
+                .encode(
+                    black_box(&data),
+                    width,
+                    height,
+                    "model.layers.0.mlp.gate_proj.weight",
+                )
+                .unwrap()
+        })
     });
 
     group.finish();

@@ -137,6 +137,8 @@ impl QuantizedTensor {
 /// Performs codebook lookup on GPU for fast tensor decompression.
 pub struct NeuralGpuDecoder {
     device: Arc<CudaDevice>,
+    /// Stream for async operations (kept for future pipelined execution)
+    #[allow(dead_code)]
     stream: CudaStream,
     codebook: Option<LayerCodebook>,
     gpu_codebook: Option<GpuBuffer>,
@@ -183,9 +185,10 @@ impl NeuralGpuDecoder {
     ///
     /// Maps indices to centroid vectors.
     pub fn lookup(&self, indices: &[u8]) -> Result<Vec<f32>> {
-        let codebook = self.codebook.as_ref().ok_or_else(|| {
-            CudaError::InvalidData("No codebook loaded".into())
-        })?;
+        let codebook = self
+            .codebook
+            .as_ref()
+            .ok_or_else(|| CudaError::InvalidData("No codebook loaded".into()))?;
 
         let code_dim = codebook.code_dim;
         let mut output = Vec::with_capacity(indices.len() * code_dim);
@@ -195,7 +198,7 @@ impl NeuralGpuDecoder {
             if let Some(code) = codebook.get_code(idx) {
                 output.extend_from_slice(code);
             } else {
-                output.extend(std::iter::repeat(0.0).take(code_dim));
+                output.extend(std::iter::repeat_n(0.0, code_dim));
             }
         }
 
@@ -210,6 +213,8 @@ impl NeuralGpuDecoder {
 
 /// Full neural GPU decompression pipeline.
 pub struct NeuralGpuPipeline {
+    /// Device handle kept for ownership/lifetime
+    #[allow(dead_code)]
     device: Arc<CudaDevice>,
     decoder: NeuralGpuDecoder,
     ready: bool,
@@ -353,7 +358,7 @@ impl NeuralDecoder {
             if let Some(code) = self.codebook.get_code(idx) {
                 output.extend_from_slice(code);
             } else {
-                output.extend(std::iter::repeat(0.0).take(code_dim));
+                output.extend(std::iter::repeat_n(0.0, code_dim));
             }
         }
 
@@ -371,7 +376,9 @@ mod gpu_codebook_tests {
 
     fn test_context() -> Option<crate::GpuContext> {
         // Use catch_unwind to handle case where CUDA isn't available
-        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok()).ok().flatten()
+        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok())
+            .ok()
+            .flatten()
     }
 
     #[test]
@@ -439,12 +446,12 @@ mod gpu_codebook_tests {
         let result = decoder.lookup(&indices).unwrap();
 
         let expected = vec![
-            1.0, 0.0,  // code 0
-            0.0, 1.0,  // code 1
+            1.0, 0.0, // code 0
+            0.0, 1.0, // code 1
             -1.0, 0.0, // code 2
             0.0, -1.0, // code 3
-            1.0, 0.0,  // code 0
-            0.0, 1.0,  // code 1
+            1.0, 0.0, // code 0
+            0.0, 1.0, // code 1
         ];
 
         assert_eq!(result.len(), expected.len());
@@ -464,9 +471,7 @@ mod gpu_codebook_tests {
         let mut decoder = NeuralGpuDecoder::new(&ctx).unwrap();
         decoder.upload_codebook(&codebook).unwrap();
 
-        let tensors: Vec<QuantizedTensor> = (0..10)
-            .map(|_| QuantizedTensor::random(100))
-            .collect();
+        let tensors: Vec<QuantizedTensor> = (0..10).map(|_| QuantizedTensor::random(100)).collect();
 
         let results = decoder.lookup_batch(&tensors).unwrap();
 
@@ -560,9 +565,8 @@ mod gpu_codebook_tests {
         let elapsed = start.elapsed();
 
         let output_bytes = indices.len() as f64 * 64.0 * 4.0;
-        let throughput_mbs = (iterations as f64 * output_bytes)
-            / elapsed.as_secs_f64()
-            / 1_000_000.0;
+        let throughput_mbs =
+            (iterations as f64 * output_bytes) / elapsed.as_secs_f64() / 1_000_000.0;
 
         println!("Codebook lookup throughput: {:.2} MB/s", throughput_mbs);
         assert!(throughput_mbs > 0.0);
@@ -579,7 +583,9 @@ mod gpu_neural_decode_tests {
 
     fn test_context() -> Option<crate::GpuContext> {
         // Use catch_unwind to handle case where CUDA isn't available
-        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok()).ok().flatten()
+        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok())
+            .ok()
+            .flatten()
     }
 
     #[test]
@@ -814,7 +820,9 @@ mod integration_tests {
 
     fn test_context() -> Option<crate::GpuContext> {
         // Use catch_unwind to handle case where CUDA isn't available
-        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok()).ok().flatten()
+        std::panic::catch_unwind(|| crate::GpuContext::new(0).ok())
+            .ok()
+            .flatten()
     }
 
     #[test]

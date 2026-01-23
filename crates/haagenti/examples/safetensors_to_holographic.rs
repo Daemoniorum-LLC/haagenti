@@ -27,9 +27,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use haagenti::holotensor::{
-    HolographicEncoding, HoloTensorEncoder, HoloTensorWriter,
-};
+use haagenti::holotensor::{HoloTensorEncoder, HoloTensorWriter, HolographicEncoding};
 use haagenti::tensor::{CompressionAlgorithm, DType};
 
 /// Tensor metadata from safetensors.
@@ -57,8 +55,8 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
     let header_json = std::str::from_utf8(&data[8..8 + header_len])
         .map_err(|e| format!("Invalid UTF-8 in header: {}", e))?;
 
-    let header: serde_json::Value = serde_json::from_str(header_json)
-        .map_err(|e| format!("Invalid JSON header: {}", e))?;
+    let header: serde_json::Value =
+        serde_json::from_str(header_json).map_err(|e| format!("Invalid JSON header: {}", e))?;
 
     let mut tensors = HashMap::new();
 
@@ -183,8 +181,7 @@ struct ConversionStats {
 fn convert_to_holographic(config: &HolographicConfig) -> Result<ConversionStats, String> {
     let start = Instant::now();
 
-    let data = fs::read(&config.input)
-        .map_err(|e| format!("Failed to read input: {}", e))?;
+    let data = fs::read(&config.input).map_err(|e| format!("Failed to read input: {}", e))?;
 
     println!(
         "Read {} ({:.2} GB)",
@@ -399,16 +396,24 @@ fn main() {
                 println!("  -o, --output-dir <DIR>      Output directory for .hct files");
                 println!("  -e, --encoding <ENC>        Encoding: spectral (default), lrdf, rph");
                 println!("  -f, --fragments <N>         Number of fragments [default: 16]");
-                println!("  -r, --essential-ratio <R>   Essential ratio for spectral [default: 0.15]");
+                println!(
+                    "  -r, --essential-ratio <R>   Essential ratio for spectral [default: 0.15]"
+                );
                 println!("  -m, --max-rank <R>          Max rank for LRDF [default: 256]");
-                println!("  -c, --compression <ALG>     Fragment compression: lz4, zstd [default: lz4]");
+                println!(
+                    "  -c, --compression <ALG>     Fragment compression: lz4, zstd [default: lz4]"
+                );
                 println!("  -s, --seed <N>              Random seed [default: 42]");
-                println!("  --skip-small <N>            Skip tensors smaller than N [default: 4096]");
+                println!(
+                    "  --skip-small <N>            Skip tensors smaller than N [default: 4096]"
+                );
                 println!("  -h, --help                  Show this help");
                 println!();
                 println!("Encoding Schemes:");
                 println!("  spectral  DCT-based, optimized for neural network weights");
-                println!("            Use --essential-ratio to control quality (0.1-0.3 recommended)");
+                println!(
+                    "            Use --essential-ratio to control quality (0.1-0.3 recommended)"
+                );
                 println!("  lrdf      SVD-based low-rank decomposition");
                 println!("            Use --max-rank to control quality (64-512 recommended)");
                 println!("  rph       Random projection (Johnson-Lindenstrauss)");
@@ -469,8 +474,9 @@ fn main() {
         Ok(stats) => {
             let overall_ratio =
                 stats.total_original_bytes as f64 / stats.total_compressed_bytes as f64;
-            let throughput =
-                stats.total_original_bytes as f64 / (stats.elapsed_ms as f64 / 1000.0) / 1_000_000.0;
+            let throughput = stats.total_original_bytes as f64
+                / (stats.elapsed_ms as f64 / 1000.0)
+                / 1_000_000.0;
 
             println!("\n=== Summary ===");
             println!("Total Tensors: {}", stats.total_tensors);

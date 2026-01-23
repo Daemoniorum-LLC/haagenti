@@ -20,8 +20,12 @@ fn main() {
         ("log-like data", {
             let mut v = Vec::new();
             for i in 0..100 {
-                let line = format!("[2024-01-{:02} 10:{:02}:00] INFO Processing request #{}\n",
-                                  (i % 28) + 1, i % 60, i * 1000);
+                let line = format!(
+                    "[2024-01-{:02} 10:{:02}:00] INFO Processing request #{}\n",
+                    (i % 28) + 1,
+                    i % 60,
+                    i * 1000
+                );
                 v.extend_from_slice(line.as_bytes());
             }
             v
@@ -30,8 +34,13 @@ fn main() {
             let mut v = Vec::new();
             v.extend_from_slice(b"[");
             for i in 0..50 {
-                if i > 0 { v.extend_from_slice(b","); }
-                let obj = format!(r#"{{"id":{},"name":"user{}","email":"user{}@example.com"}}"#, i, i, i);
+                if i > 0 {
+                    v.extend_from_slice(b",");
+                }
+                let obj = format!(
+                    r#"{{"id":{},"name":"user{}","email":"user{}@example.com"}}"#,
+                    i, i, i
+                );
                 v.extend_from_slice(obj.as_bytes());
             }
             v.extend_from_slice(b"]");
@@ -40,7 +49,9 @@ fn main() {
         ("HTML snippet", {
             let mut v = Vec::new();
             for _ in 0..20 {
-                v.extend_from_slice(b"<div class=\"container\"><h1>Title</h1><p>Content here</p></div>\n");
+                v.extend_from_slice(
+                    b"<div class=\"container\"><h1>Title</h1><p>Content here</p></div>\n",
+                );
             }
             v
         }),
@@ -52,8 +63,10 @@ fn main() {
         ("Best", CompressionLevel::Best),
     ];
 
-    println!("{:20} {:>8} {:>10} {:>10} {:>10} {:>10}",
-             "Pattern", "Size", "Fast", "Default", "Best", "Ref");
+    println!(
+        "{:20} {:>8} {:>10} {:>10} {:>10} {:>10}",
+        "Pattern", "Size", "Fast", "Default", "Best", "Ref"
+    );
     println!("{:-<70}", "");
 
     let decompressor = ZstdDecompressor;
@@ -69,7 +82,11 @@ fn main() {
 
             // Verify decompression works
             let decompressed = decompressor.decompress(&compressed).unwrap();
-            assert_eq!(&decompressed, data, "{} {} decompression mismatch", name, level_name);
+            assert_eq!(
+                &decompressed, data,
+                "{} {} decompression mismatch",
+                name, level_name
+            );
 
             let ratio = compressed.len() as f64 / data.len() as f64 * 100.0;
             print!(" {:9.1}%", ratio);

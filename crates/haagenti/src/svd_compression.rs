@@ -427,7 +427,13 @@ impl SvdEncoder {
     /// Analyze a matrix to determine optimal rank.
     ///
     /// Returns the rank needed to capture the target energy fraction.
-    pub fn analyze_rank(&self, data: &[f32], rows: usize, cols: usize, target_energy: f32) -> Result<usize> {
+    pub fn analyze_rank(
+        &self,
+        data: &[f32],
+        rows: usize,
+        cols: usize,
+        target_energy: f32,
+    ) -> Result<usize> {
         // Do a quick SVD to get singular values
         let max_rank = rows.min(cols).min(100); // Limit analysis to first 100 singular values
         let svd = self.direct_svd(data, rows, cols, max_rank)?;
@@ -461,7 +467,14 @@ impl SvdDecoder {
     ///
     /// Computes: A = U × diag(S) × V^T
     pub fn decompress(&self, compressed: &SvdCompressedWeight) -> Result<Vec<f32>> {
-        let SvdCompressedWeight { rows, cols, rank, u, s, vt } = compressed;
+        let SvdCompressedWeight {
+            rows,
+            cols,
+            rank,
+            u,
+            s,
+            vt,
+        } = compressed;
 
         if u.len() != rows * rank || s.len() != *rank || vt.len() != rank * cols {
             return Err(Error::corrupted("invalid SVD dimensions"));
@@ -492,7 +505,14 @@ impl SvdDecoder {
         compressed: &SvdCompressedWeight,
         use_rank: usize,
     ) -> Result<Vec<f32>> {
-        let SvdCompressedWeight { rows, cols, rank, u, s, vt } = compressed;
+        let SvdCompressedWeight {
+            rows,
+            cols,
+            rank,
+            u,
+            s,
+            vt,
+        } = compressed;
         let use_rank = use_rank.min(*rank);
 
         let mut result = vec![0.0f32; rows * cols];
@@ -632,7 +652,7 @@ mod tests {
 
         let rows = 64;
         let cols = 64;
-        let data: Vec<f32> = (0..rows*cols).map(|i| (i as f32).sin()).collect();
+        let data: Vec<f32> = (0..rows * cols).map(|i| (i as f32).sin()).collect();
 
         let compressed = encoder.compress(&data, rows, cols).unwrap();
 
@@ -709,7 +729,11 @@ mod tests {
         }
 
         let optimal_rank = encoder.analyze_rank(&data, rows, cols, 0.99).unwrap();
-        assert!(optimal_rank <= 4, "Rank-2 matrix should need few singular values: {}", optimal_rank);
+        assert!(
+            optimal_rank <= 4,
+            "Rank-2 matrix should need few singular values: {}",
+            optimal_rank
+        );
     }
 
     #[test]

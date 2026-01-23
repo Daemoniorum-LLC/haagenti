@@ -1,17 +1,15 @@
 //! Network loader for fragment streaming
 
 use crate::{
-    CacheConfig, CacheEntry, CdnEndpoint, ClientConfig, FragmentCache, HttpClient,
-    NetworkConfig, NetworkError, Priority, PrioritizedFragment, RangeRequest, Result,
-    Scheduler, SchedulerConfig,
+    CacheConfig, CacheEntry, CdnEndpoint, ClientConfig, FragmentCache, HttpClient, NetworkConfig,
+    NetworkError, PrioritizedFragment, Priority, RangeRequest, Result, Scheduler, SchedulerConfig,
 };
 use bytes::Bytes;
-use haagenti_fragments::{Fragment, FragmentId, FragmentLibrary, FragmentType};
-use serde::{Deserialize, Serialize};
+use haagenti_fragments::FragmentId;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 /// Request to load a fragment
 #[derive(Debug, Clone)]
@@ -170,7 +168,9 @@ impl NetworkLoader {
                     }
 
                     // Record bandwidth
-                    self.scheduler.record_success(data.len() as u64, duration).await;
+                    self.scheduler
+                        .record_success(data.len() as u64, duration)
+                        .await;
 
                     return LoadResult::Success {
                         fragment_id: request.fragment_id,
@@ -202,7 +202,9 @@ impl NetworkLoader {
             match client.fetch_range(&request.path, range.clone()).await {
                 Ok(data) => {
                     let duration = start_time.elapsed();
-                    self.scheduler.record_success(data.len() as u64, duration).await;
+                    self.scheduler
+                        .record_success(data.len() as u64, duration)
+                        .await;
 
                     return LoadResult::Success {
                         fragment_id: request.fragment_id,

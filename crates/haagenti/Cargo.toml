@@ -34,18 +34,113 @@ full = ["lz4", "zstd", "brotli", "deflate", "simd", "stream"]
 # High-performance pipeline with parallel processing
 turbo = ["parallel", "zstd"]
 
-# GPU-accelerated compression pipeline
+# ═══════════════════════════════════════════════════════════════════════════════
+# INFERENCE STACK - GPU acceleration and platform support for Infernum
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# GPU-accelerated compression/inference pipeline
 cuda = ["dep:haagenti-cuda", "turbo"]
 
+# WebGPU compute shaders (browser/cross-platform inference)
+webgpu = ["dep:haagenti-webgpu"]
+
+# Mobile inference backends (CoreML, NNAPI)
+mobile = ["dep:haagenti-mobile"]
+
+# Distributed inference topologies (Ring, Mesh, Tree, etc.)
+distributed = ["dep:haagenti-distributed"]
+
+# Serverless cold-start optimization
+serverless = ["dep:haagenti-serverless"]
+
+# Progressive streaming decompression
+inference-streaming = ["dep:haagenti-streaming"]
+
+# Cross-model fragment sharing
+fragments = ["dep:haagenti-fragments"]
+
+# ML-guided importance scoring
+importance = ["dep:haagenti-importance", "fragments"]
+
+# Runtime auto-optimization
+autoopt = ["dep:haagenti-autoopt"]
+
+# Online learning (LoRA, reservoir computing)
+learning = ["dep:haagenti-learning"]
+
+# Speculative execution
+speculative = ["dep:haagenti-speculative", "fragments"]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INFERENCE BUNDLES - convenient feature sets for Infernum integration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Full inference stack for local frontier model inference
+inference = [
+    "cuda",
+    "webgpu",
+    "inference-streaming",
+    "autoopt",
+    "fragments",
+    "importance",
+    "speculative",
+]
+
+# Mobile inference (iOS Neural Engine, Android NPU)
+inference-mobile = [
+    "mobile",
+    "inference-streaming",
+]
+
+# Distributed/federated inference
+inference-distributed = [
+    "distributed",
+    "inference-streaming",
+    "serverless",
+]
+
+# Everything (full sovereign inference stack)
+sovereign = [
+    "full",
+    "inference",
+    "inference-mobile",
+    "inference-distributed",
+    "learning",
+]
+
 [dependencies]
+# Core
 haagenti-core = { workspace = true, features = ["dct"] }
-haagenti-cuda = { workspace = true, optional = true }
+
+# HCT format (tensor and holotensor modules)
+haagenti-hct = { workspace = true }
+
+# Compression algorithms (optional)
 haagenti-lz4 = { workspace = true, optional = true }
 haagenti-zstd = { workspace = true, optional = true }
 haagenti-brotli = { workspace = true, optional = true }
 haagenti-deflate = { workspace = true, optional = true }
+
+# Performance (optional)
 haagenti-simd = { workspace = true, optional = true }
 haagenti-stream = { workspace = true, optional = true }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INFERENCE STACK (optional) - GPU, Mobile, Distributed inference support
+# ═══════════════════════════════════════════════════════════════════════════════
+haagenti-cuda = { workspace = true, optional = true }
+haagenti-webgpu = { workspace = true, optional = true }
+haagenti-mobile = { workspace = true, optional = true }
+haagenti-distributed = { workspace = true, optional = true }
+haagenti-serverless = { workspace = true, optional = true }
+haagenti-streaming = { workspace = true, optional = true }
+haagenti-autoopt = { workspace = true, optional = true }
+haagenti-learning = { workspace = true, optional = true }
+haagenti-fragments = { workspace = true, optional = true }
+haagenti-importance = { workspace = true, optional = true }
+haagenti-speculative = { workspace = true, optional = true }
+
+# External dependencies
 xxhash-rust = { workspace = true }
 rustfft = { workspace = true }
 half = "2.4"

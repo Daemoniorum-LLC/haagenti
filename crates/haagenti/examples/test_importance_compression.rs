@@ -15,11 +15,11 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
+use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
 use haagenti::importance::{
-    ImportanceGuidedEncoder, ImportanceGuidedDecoder, ImportanceMap,
-    Sensitivity, mse, cosine_similarity
+    cosine_similarity, mse, ImportanceGuidedDecoder, ImportanceGuidedEncoder, ImportanceMap,
+    Sensitivity,
 };
-use haagenti::compressive::{CompressiveSpectralEncoder, CompressiveSpectralDecoder};
 
 // ============================================================================
 // Safetensors Utilities
@@ -57,13 +57,21 @@ fn find_model_in_cache(model_name: &str) -> Option<Vec<PathBuf>> {
     if let Ok(entries) = std::fs::read_dir(&snapshot) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map(|e| e == "safetensors").unwrap_or(false) {
+            if path
+                .extension()
+                .map(|e| e == "safetensors")
+                .unwrap_or(false)
+            {
                 files.push(path);
             }
         }
     }
 
-    if files.is_empty() { None } else { Some(files) }
+    if files.is_empty() {
+        None
+    } else {
+        Some(files)
+    }
 }
 
 fn parse_safetensors_header(data: &[u8]) -> Option<(u64, HashMap<String, TensorInfo>)> {
@@ -94,12 +102,14 @@ fn parse_safetensors_header(data: &[u8]) -> Option<(u64, HashMap<String, TensorI
 
         let info_obj = info.as_object()?;
         let dtype = info_obj.get("dtype")?.as_str()?;
-        let shape: Vec<usize> = info_obj.get("shape")?
+        let shape: Vec<usize> = info_obj
+            .get("shape")?
             .as_array()?
             .iter()
             .filter_map(|v| v.as_u64().map(|x| x as usize))
             .collect();
-        let data_offsets: Vec<usize> = info_obj.get("data_offsets")?
+        let data_offsets: Vec<usize> = info_obj
+            .get("data_offsets")?
             .as_array()?
             .iter()
             .filter_map(|v| v.as_u64().map(|x| x as usize))
@@ -109,11 +119,14 @@ fn parse_safetensors_header(data: &[u8]) -> Option<(u64, HashMap<String, TensorI
             continue;
         }
 
-        tensors.insert(name.clone(), TensorInfo {
-            dtype: dtype.to_string(),
-            shape,
-            data_offsets: (data_offsets[0], data_offsets[1]),
-        });
+        tensors.insert(
+            name.clone(),
+            TensorInfo {
+                dtype: dtype.to_string(),
+                shape,
+                data_offsets: (data_offsets[0], data_offsets[1]),
+            },
+        );
     }
 
     Some((header_size, tensors))
@@ -128,16 +141,19 @@ struct TensorInfo {
 
 fn bytes_to_f32(data: &[u8], dtype: &str) -> Vec<f32> {
     match dtype {
-        "F32" => data.chunks_exact(4)
+        "F32" => data
+            .chunks_exact(4)
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect(),
-        "F16" => data.chunks_exact(2)
+        "F16" => data
+            .chunks_exact(2)
             .map(|c| {
                 let bits = u16::from_le_bytes([c[0], c[1]]);
                 half::f16::from_bits(bits).to_f32()
             })
             .collect(),
-        "BF16" => data.chunks_exact(2)
+        "BF16" => data
+            .chunks_exact(2)
             .map(|c| {
                 let bits = u16::from_le_bytes([c[0], c[1]]);
                 half::bf16::from_bits(bits).to_f32()
@@ -166,8 +182,10 @@ impl CompressionResult {
     fn print(&self) {
         println!("  {} compression:", self.name);
         println!("    Retention: {:.1}%", self.retention_used * 100.0);
-        println!("    Compression ratio: {:.2}x ({} -> {} bytes)",
-            self.ratio, self.original_bytes, self.compressed_bytes);
+        println!(
+            "    Compression ratio: {:.2}x ({} -> {} bytes)",
+            self.ratio, self.original_bytes, self.compressed_bytes
+        );
         println!("    Cosine similarity: {:.4}", self.cosine_sim);
         println!("    MSE: {:.6}", self.mse);
     }
@@ -249,7 +267,10 @@ fn analyze_importance_distribution(importance_map: &ImportanceMap, tensor_names:
     for name in tensor_names {
         let info = importance_map.get(name);
         let sens_name = format!("{:?}", info.sensitivity);
-        by_sensitivity.entry(sens_name).or_default().push(name.clone());
+        by_sensitivity
+            .entry(sens_name)
+            .or_default()
+            .push(name.clone());
     }
 
     println!("Tensors by sensitivity level:");
@@ -281,7 +302,8 @@ fn compare_retention_strategies(
 
     for (name, data, width, height) in tensors {
         // Importance-guided
-        let imp_result = test_importance_guided(data, *width, *height, base_retention, name, importance_map);
+        let imp_result =
+            test_importance_guided(data, *width, *height, base_retention, name, importance_map);
 
         // Uniform
         let uniform_result = test_uniform_compressive(data, *width, *height, base_retention);
@@ -296,12 +318,18 @@ fn compare_retention_strategies(
         if count <= 5 {
             println!("--- Tensor: {} ---", name);
             let info = importance_map.get(name);
-            println!("  Heuristic: importance={:.2}, sensitivity={:?}", info.importance, info.sensitivity);
+            println!(
+                "  Heuristic: importance={:.2}, sensitivity={:?}",
+                info.importance, info.sensitivity
+            );
             imp_result.print();
             uniform_result.print();
 
             let quality_diff = imp_result.cosine_sim - uniform_result.cosine_sim;
-            println!("  Quality difference: {:+.4} (positive = importance-guided better)", quality_diff);
+            println!(
+                "  Quality difference: {:+.4} (positive = importance-guided better)",
+                quality_diff
+            );
             println!();
         }
     }
@@ -312,10 +340,19 @@ fn compare_retention_strategies(
     let avg_uniform_ratio = total_uniform_ratio / count as f32;
 
     println!("=== Summary over {} tensors ===", count);
-    println!("  Importance-Guided: avg quality={:.4}, avg ratio={:.2}x", avg_imp_quality, avg_imp_ratio);
-    println!("  Uniform:           avg quality={:.4}, avg ratio={:.2}x", avg_uniform_quality, avg_uniform_ratio);
+    println!(
+        "  Importance-Guided: avg quality={:.4}, avg ratio={:.2}x",
+        avg_imp_quality, avg_imp_ratio
+    );
+    println!(
+        "  Uniform:           avg quality={:.4}, avg ratio={:.2}x",
+        avg_uniform_quality, avg_uniform_ratio
+    );
     println!();
-    println!("  Quality difference: {:+.4} (positive = importance-guided better)", avg_imp_quality - avg_uniform_quality);
+    println!(
+        "  Quality difference: {:+.4} (positive = importance-guided better)",
+        avg_imp_quality - avg_uniform_quality
+    );
 }
 
 // ============================================================================
@@ -325,8 +362,7 @@ fn compare_retention_strategies(
 fn main() {
     println!("=== Importance-Guided Compression Test ===\n");
 
-    let model_name = env::var("MODEL")
-        .unwrap_or_else(|_| "Qwen/Qwen2.5-0.5B-Instruct".to_string());
+    let model_name = env::var("MODEL").unwrap_or_else(|_| "Qwen/Qwen2.5-0.5B-Instruct".to_string());
     let importance_file = env::var("IMPORTANCE_FILE").ok();
     let max_tensors: usize = env::var("MAX_TENSORS")
         .ok()
@@ -457,19 +493,21 @@ fn run_synthetic_test(base_retention: f32) {
     let test_cases: Vec<(&str, Vec<f32>)> = vec![
         (
             "model.layers.0.mlp.gate_proj.weight",
-            (0..n).map(|i| (i as f32 * 0.01).sin()).collect()
+            (0..n).map(|i| (i as f32 * 0.01).sin()).collect(),
         ),
         (
             "model.layers.0.self_attn.q_proj.weight",
-            (0..n).map(|i| (i as f32 * 0.02).cos()).collect()
+            (0..n).map(|i| (i as f32 * 0.02).cos()).collect(),
         ),
         (
             "model.layers.0.self_attn.v_proj.weight",
-            (0..n).map(|i| (i as f32 * 0.015).sin() * 0.5).collect()
+            (0..n).map(|i| (i as f32 * 0.015).sin() * 0.5).collect(),
         ),
         (
             "model.embed_tokens.weight",
-            (0..n).map(|i| ((i as f32 * 1.618).sin() * 1000.0) % 1.0).collect()
+            (0..n)
+                .map(|i| ((i as f32 * 1.618).sin() * 1000.0) % 1.0)
+                .collect(),
         ),
     ];
 
@@ -483,10 +521,18 @@ fn run_synthetic_test(base_retention: f32) {
     // Show expected behavior
     println!("\n=== Expected Behavior ===");
     println!("Layer type sensitivities:");
-    for name in ["mlp.gate_proj", "self_attn.q_proj", "self_attn.v_proj", "embed_tokens"] {
+    for name in [
+        "mlp.gate_proj",
+        "self_attn.q_proj",
+        "self_attn.v_proj",
+        "embed_tokens",
+    ] {
         let full_name = format!("model.layers.0.{}.weight", name);
         let info = importance_map.get(&full_name);
-        println!("  {}: {:?} (importance={:.2})", name, info.sensitivity, info.importance);
+        println!(
+            "  {}: {:?} (importance={:.2})",
+            name, info.sensitivity, info.importance
+        );
     }
     println!();
     println!("Expected: High-importance layers (embed, v_proj) get better quality");

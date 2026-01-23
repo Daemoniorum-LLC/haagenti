@@ -46,8 +46,14 @@ fn parse_frame(label: &str, data: &[u8]) {
 
     // Magic
     let magic_ok = data[0] == 0x28 && data[1] == 0xB5 && data[2] == 0x2F && data[3] == 0xFD;
-    println!("  Magic: {:02x} {:02x} {:02x} {:02x} ({})", data[0], data[1], data[2], data[3],
-             if magic_ok { "OK" } else { "BAD" });
+    println!(
+        "  Magic: {:02x} {:02x} {:02x} {:02x} ({})",
+        data[0],
+        data[1],
+        data[2],
+        data[3],
+        if magic_ok { "OK" } else { "BAD" }
+    );
 
     // FHD
     let fhd = data[4];
@@ -61,7 +67,11 @@ fn parse_frame(label: &str, data: &[u8]) {
 
     println!("    FCS_flag: {}", fcs_flag);
     println!("    Single_Segment: {}", single_segment);
-    println!("    Unused_bit: {} {}", unused, if unused != 0 { "(SHOULD BE 0!)" } else { "" });
+    println!(
+        "    Unused_bit: {} {}",
+        unused,
+        if unused != 0 { "(SHOULD BE 0!)" } else { "" }
+    );
     println!("    Content_Checksum: {}", content_checksum);
     println!("    Dictionary_ID_flag: {}", dict_id_flag);
 
@@ -74,7 +84,10 @@ fn parse_frame(label: &str, data: &[u8]) {
         let mantissa = wd & 7;
         let window_base = 1u64 << (10 + exp);
         let window_size = window_base + (window_base >> 3) * mantissa as u64;
-        println!("  Window_Descriptor: 0x{:02x} (exp={}, mantissa={}, window={})", wd, exp, mantissa, window_size);
+        println!(
+            "  Window_Descriptor: 0x{:02x} (exp={}, mantissa={}, window={})",
+            wd, exp, mantissa, window_size
+        );
         pos += 1;
     } else {
         println!("  Window_Descriptor: (none - single segment)");
@@ -94,7 +107,13 @@ fn parse_frame(label: &str, data: &[u8]) {
 
     // Frame Content Size
     let fcs_size = match fcs_flag {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -104,10 +123,20 @@ fn parse_frame(label: &str, data: &[u8]) {
         print!("  Frame_Content_Size ({} bytes): ", fcs_size);
         let fcs = match fcs_size {
             1 => data[pos] as u64,
-            2 => u16::from_le_bytes([data[pos], data[pos+1]]) as u64 + 256,
-            4 => u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]) as u64,
-            8 => u64::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3],
-                                     data[pos+4], data[pos+5], data[pos+6], data[pos+7]]),
+            2 => u16::from_le_bytes([data[pos], data[pos + 1]]) as u64 + 256,
+            4 => {
+                u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as u64
+            }
+            8 => u64::from_le_bytes([
+                data[pos],
+                data[pos + 1],
+                data[pos + 2],
+                data[pos + 3],
+                data[pos + 4],
+                data[pos + 5],
+                data[pos + 6],
+                data[pos + 7],
+            ]),
             _ => 0,
         };
         println!("{} bytes", fcs);
@@ -115,13 +144,23 @@ fn parse_frame(label: &str, data: &[u8]) {
     }
 
     // Block header
-    let bh = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], 0]);
+    let bh = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], 0]);
     let last = bh & 1;
     let block_type = (bh >> 1) & 3;
     let block_size = bh >> 3;
-    println!("  Block header at 0x{:02x}: {:02x} {:02x} {:02x}", pos, data[pos], data[pos+1], data[pos+2]);
+    println!(
+        "  Block header at 0x{:02x}: {:02x} {:02x} {:02x}",
+        pos,
+        data[pos],
+        data[pos + 1],
+        data[pos + 2]
+    );
     println!("    Last_Block: {}", last);
-    println!("    Block_Type: {} ({})", block_type, ["Raw", "RLE", "Compressed", "Reserved"][block_type as usize]);
+    println!(
+        "    Block_Type: {} ({})",
+        block_type,
+        ["Raw", "RLE", "Compressed", "Reserved"][block_type as usize]
+    );
     println!("    Block_Size: {}", block_size);
     pos += 3;
 
@@ -131,7 +170,11 @@ fn parse_frame(label: &str, data: &[u8]) {
         let lit_type = lit_byte & 3;
         let size_format = (lit_byte >> 2) & 3;
         println!("  Literals header at 0x{:02x}: 0x{:02x}", pos, lit_byte);
-        println!("    Type: {} ({})", lit_type, ["Raw", "RLE", "Compressed", "Treeless"][lit_type as usize]);
+        println!(
+            "    Type: {} ({})",
+            lit_type,
+            ["Raw", "RLE", "Compressed", "Treeless"][lit_type as usize]
+        );
         println!("    Size_Format: {}", size_format);
     }
 }

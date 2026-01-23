@@ -1,6 +1,5 @@
 //! Hardware-aware optimization
 
-use crate::{OptError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -232,9 +231,11 @@ impl HardwareOptimizer {
         let kv_bytes_per_token = model_params_b * 0.1 * bytes_per_param; // Approximate
         let max_tokens = (remaining / kv_bytes_per_token * 1024.0 * 1024.0 * 1024.0) as usize;
 
-        let batch_size = (max_tokens / context_len).max(1).min(32);
+        let batch_size = (max_tokens / context_len).clamp(1, 32);
 
-        let flash_attention = self.profile.has_capability(&DeviceCapability::FlashAttention);
+        let flash_attention = self
+            .profile
+            .has_capability(&DeviceCapability::FlashAttention);
 
         RecommendedConfig {
             batch_size,
@@ -243,13 +244,15 @@ impl HardwareOptimizer {
             flash_attention,
             kv_cache_quant: self.profile.has_capability(&DeviceCapability::Int8),
             pipeline_layers: 0,
-            estimated_memory_gb: model_size_gb + (batch_size * context_len) as f32 * kv_bytes_per_token / (1024.0 * 1024.0 * 1024.0),
+            estimated_memory_gb: model_size_gb
+                + (batch_size * context_len) as f32 * kv_bytes_per_token
+                    / (1024.0 * 1024.0 * 1024.0),
             estimated_tps: self.profile.estimate_tps(model_params_b) * batch_size as f32,
         }
     }
 
     /// Optimal batch size for given memory budget
-    pub fn optimal_batch_size(&self, model_size_gb: f32, seq_len: usize) -> usize {
+    pub fn optimal_batch_size(&self, model_size_gb: f32, _seq_len: usize) -> usize {
         let available = self.profile.memory_gb() * self.settings.max_memory_ratio - model_size_gb;
         let per_batch_gb = 0.1 * model_size_gb; // Approximate activation memory per batch
 

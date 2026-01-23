@@ -7,13 +7,14 @@ use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
 
 /// Priority level for fragment loading
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Priority {
     /// Critical - needed immediately (blocking inference)
     Critical = 0,
     /// High - needed soon (next few steps)
     High = 1,
     /// Normal - standard priority
+    #[default]
     Normal = 2,
     /// Low - prefetch/background
     Low = 3,
@@ -36,12 +37,6 @@ impl Priority {
             3 => Priority::Low,
             _ => Priority::Idle,
         }
-    }
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Priority::Normal
     }
 }
 

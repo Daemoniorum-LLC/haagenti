@@ -2,8 +2,7 @@
 
 use crate::{
     bayesian::{BayesianConfig, BayesianOptimizer, Observation, Parameter, ParameterValue},
-    hardware::HardwareProfile,
-    profiler::{Profiler, ProfileResult},
+    profiler::Profiler,
     OptError, Result,
 };
 use serde::{Deserialize, Serialize};
@@ -177,10 +176,11 @@ impl AutoTuner {
     fn check_constraints(&self, _params: &HashMap<String, ParameterValue>, value: f32) -> bool {
         for (constraint, limit) in &self.config.constraints {
             // Simple constraint checking
-            if constraint == "max_latency_ms" && self.config.target_metric == "latency_ms" {
-                if value > *limit {
-                    return false;
-                }
+            if constraint == "max_latency_ms"
+                && self.config.target_metric == "latency_ms"
+                && value > *limit
+            {
+                return false;
             }
             if constraint == "max_memory_mb" {
                 // Would need memory measurement
@@ -221,12 +221,18 @@ impl AutoTuner {
             .filter(|t| t.valid)
             .min_by(|a, b| {
                 if self.config.minimize {
-                    a.value.partial_cmp(&b.value).unwrap_or(std::cmp::Ordering::Equal)
+                    a.value
+                        .partial_cmp(&b.value)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 } else {
-                    b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal)
+                    b.value
+                        .partial_cmp(&a.value)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 }
             })
-            .ok_or_else(|| OptError::NoImprovement { trials: self.history.len() })?;
+            .ok_or(OptError::NoImprovement {
+                trials: self.history.len(),
+            })?;
 
         let improvement = if let Some(baseline) = self.baseline {
             if self.config.minimize {
@@ -242,7 +248,8 @@ impl AutoTuner {
             best_params: best.params.clone(),
             best_value: best.value,
             trials: self.history.len(),
-            duration_secs: self.start_time
+            duration_secs: self
+                .start_time
                 .map(|s| s.elapsed().as_secs_f64())
                 .unwrap_or(0.0),
             improvement_percent: improvement,

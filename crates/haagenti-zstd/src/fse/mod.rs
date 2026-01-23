@@ -20,17 +20,20 @@
 //! - [RFC 8878 Section 4.1](https://datatracker.ietf.org/doc/html/rfc8878#section-4.1)
 //! - [FSE Educational Decoder](https://github.com/facebook/zstd/blob/dev/doc/educational_decoder.md)
 
-mod table;
 mod decoder;
 mod encoder;
+mod table;
 mod tans_encoder;
 
 use std::sync::OnceLock;
 
-pub use table::{FseTable, FseTableEntry, LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_DEFAULT_DISTRIBUTION, FSE_MAX_ACCURACY_LOG};
-pub use decoder::{FseDecoder, BitReader};
-pub use encoder::{FseEncoder, FseBitWriter, InterleavedFseEncoder};
-pub use tans_encoder::{TansEncoder, TansSymbolParams, InterleavedTansEncoder};
+pub use decoder::{BitReader, FseDecoder};
+pub use encoder::{FseBitWriter, FseEncoder, InterleavedFseEncoder};
+pub use table::{
+    FseTable, FseTableEntry, FSE_MAX_ACCURACY_LOG, LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
+    MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_DEFAULT_DISTRIBUTION,
+};
+pub use tans_encoder::{InterleavedTansEncoder, TansEncoder, TansSymbolParams};
 
 // =============================================================================
 // Static Cached Predefined FSE Tables
@@ -50,8 +53,7 @@ static CACHED_ML_TABLE: OnceLock<FseTable> = OnceLock::new();
 #[inline]
 pub fn cached_ll_table() -> &'static FseTable {
     CACHED_LL_TABLE.get_or_init(|| {
-        FseTable::from_hardcoded_ll()
-            .expect("LL predefined table construction should never fail")
+        FseTable::from_hardcoded_ll().expect("LL predefined table construction should never fail")
     })
 }
 
@@ -61,8 +63,7 @@ pub fn cached_ll_table() -> &'static FseTable {
 #[inline]
 pub fn cached_of_table() -> &'static FseTable {
     CACHED_OF_TABLE.get_or_init(|| {
-        FseTable::from_hardcoded_of()
-            .expect("OF predefined table construction should never fail")
+        FseTable::from_hardcoded_of().expect("OF predefined table construction should never fail")
     })
 }
 
@@ -72,8 +73,7 @@ pub fn cached_of_table() -> &'static FseTable {
 #[inline]
 pub fn cached_ml_table() -> &'static FseTable {
     CACHED_ML_TABLE.get_or_init(|| {
-        FseTable::from_hardcoded_ml()
-            .expect("ML predefined table construction should never fail")
+        FseTable::from_hardcoded_ml().expect("ML predefined table construction should never fail")
     })
 }
 
@@ -94,27 +94,26 @@ static CACHED_ML_ENCODER: OnceLock<TansEncoder> = OnceLock::new();
 /// Cloning is cheap (just Vec clones) compared to building from scratch.
 #[inline]
 pub fn cloned_ll_encoder() -> TansEncoder {
-    CACHED_LL_ENCODER.get_or_init(|| {
-        TansEncoder::from_decode_table(cached_ll_table())
-    }).clone()
+    CACHED_LL_ENCODER
+        .get_or_init(|| TansEncoder::from_decode_table(cached_ll_table()))
+        .clone()
 }
 
 /// Get a clone of the cached Offset tANS encoder.
 #[inline]
 pub fn cloned_of_encoder() -> TansEncoder {
-    CACHED_OF_ENCODER.get_or_init(|| {
-        TansEncoder::from_decode_table(cached_of_table())
-    }).clone()
+    CACHED_OF_ENCODER
+        .get_or_init(|| TansEncoder::from_decode_table(cached_of_table()))
+        .clone()
 }
 
 /// Get a clone of the cached Match Length tANS encoder.
 #[inline]
 pub fn cloned_ml_encoder() -> TansEncoder {
-    CACHED_ML_ENCODER.get_or_init(|| {
-        TansEncoder::from_decode_table(cached_ml_table())
-    }).clone()
+    CACHED_ML_ENCODER
+        .get_or_init(|| TansEncoder::from_decode_table(cached_ml_table()))
+        .clone()
 }
-
 
 /// Default accuracy log for literal length codes.
 pub const LITERAL_LENGTH_ACCURACY_LOG: u8 = 6;

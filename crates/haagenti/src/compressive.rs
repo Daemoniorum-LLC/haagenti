@@ -15,8 +15,8 @@
 //! - Coefficients: 200K × 2 = 400KB (was 800KB with f32)
 //! - Total: 525KB vs 2MB original f16 → **3.8x compression**
 
-use haagenti_core::{Error, Result};
 use crate::holotensor::{dct_2d, idct_2d, HoloFragment};
+use haagenti_core::{Error, Result};
 use half::f16;
 
 /// Magic bytes to identify V2 format with bitmap indices (f32 coefficients)
@@ -125,7 +125,12 @@ impl CompressiveSpectralEncoder {
     /// Coefficients are stored as f16 (2 bytes) instead of f32 (4 bytes), halving
     /// the coefficient storage overhead while maintaining sufficient precision for
     /// neural network weights.
-    pub fn encode_2d(&self, data: &[f32], width: usize, height: usize) -> Result<Vec<HoloFragment>> {
+    pub fn encode_2d(
+        &self,
+        data: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<HoloFragment>> {
         let n = width * height;
         if data.len() != n {
             return Err(Error::corrupted("data size mismatch"));
@@ -136,7 +141,9 @@ impl CompressiveSpectralEncoder {
         dct_2d(data, &mut dct_coeffs, width, height);
 
         // Sort coefficients by energy (importance) to find which to keep
-        let mut indexed: Vec<(usize, f32)> = dct_coeffs.iter().enumerate()
+        let mut indexed: Vec<(usize, f32)> = dct_coeffs
+            .iter()
+            .enumerate()
             .map(|(i, &c)| (i, c.abs()))
             .collect();
         indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -147,7 +154,7 @@ impl CompressiveSpectralEncoder {
         let detail_count = retain_count - essential_count;
 
         // Build bitmap: 1 bit per coefficient, bit=1 means retained
-        let bitmap_bytes = (n + 7) / 8;
+        let bitmap_bytes = n.div_ceil(8);
         let mut bitmap = vec![0u8; bitmap_bytes];
 
         // Mark retained positions in bitmap
@@ -157,7 +164,8 @@ impl CompressiveSpectralEncoder {
 
         // Collect coefficients in INDEX ORDER (ascending), not energy order
         // This matches the bitmap scan order for reconstruction
-        let mut retained_indices: Vec<usize> = indexed.iter()
+        let mut retained_indices: Vec<usize> = indexed
+            .iter()
             .take(retain_count)
             .map(|(idx, _)| *idx)
             .collect();
@@ -168,7 +176,7 @@ impl CompressiveSpectralEncoder {
         // Fragment 0: Header + bitmap + essential coefficients (f16)
         {
             let detail_per_frag = if self.num_fragments > 1 {
-                (detail_count + (self.num_fragments as usize - 1) - 1) / (self.num_fragments as usize - 1)
+                detail_count.div_ceil(self.num_fragments as usize - 1)
             } else {
                 detail_count
             };
@@ -197,7 +205,7 @@ impl CompressiveSpectralEncoder {
 
         // Fragments 1..N: Detail coefficients (distributed, f16)
         if self.num_fragments > 1 {
-            let detail_per_frag = (detail_count + (self.num_fragments as usize - 1) - 1) / (self.num_fragments as usize - 1);
+            let detail_per_frag = detail_count.div_ceil(self.num_fragments as usize - 1);
 
             for frag_idx in 1..self.num_fragments {
                 let mut frag_data = Vec::new();
@@ -233,14 +241,21 @@ impl CompressiveSpectralEncoder {
     ///
     /// This is useful when DCT is computed externally (e.g., on GPU).
     /// The `dct_coeffs` must already be in frequency domain.
-    pub fn encode_2d_from_dct(&self, dct_coeffs: &[f32], width: usize, height: usize) -> Result<Vec<HoloFragment>> {
+    pub fn encode_2d_from_dct(
+        &self,
+        dct_coeffs: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<HoloFragment>> {
         let n = width * height;
         if dct_coeffs.len() != n {
             return Err(Error::corrupted("DCT coefficients size mismatch"));
         }
 
         // Sort coefficients by energy (importance) to find which to keep
-        let mut indexed: Vec<(usize, f32)> = dct_coeffs.iter().enumerate()
+        let mut indexed: Vec<(usize, f32)> = dct_coeffs
+            .iter()
+            .enumerate()
             .map(|(i, &c)| (i, c.abs()))
             .collect();
         indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -251,7 +266,7 @@ impl CompressiveSpectralEncoder {
         let detail_count = retain_count - essential_count;
 
         // Build bitmap: 1 bit per coefficient, bit=1 means retained
-        let bitmap_bytes = (n + 7) / 8;
+        let bitmap_bytes = n.div_ceil(8);
         let mut bitmap = vec![0u8; bitmap_bytes];
 
         // Mark retained positions in bitmap
@@ -260,7 +275,8 @@ impl CompressiveSpectralEncoder {
         }
 
         // Collect coefficients in INDEX ORDER (ascending), not energy order
-        let mut retained_indices: Vec<usize> = indexed.iter()
+        let mut retained_indices: Vec<usize> = indexed
+            .iter()
             .take(retain_count)
             .map(|(idx, _)| *idx)
             .collect();
@@ -271,7 +287,7 @@ impl CompressiveSpectralEncoder {
         // Fragment 0: Header + bitmap + essential coefficients (f16)
         {
             let detail_per_frag = if self.num_fragments > 1 {
-                (detail_count + (self.num_fragments as usize - 1) - 1) / (self.num_fragments as usize - 1)
+                detail_count.div_ceil(self.num_fragments as usize - 1)
             } else {
                 detail_count
             };
@@ -300,7 +316,7 @@ impl CompressiveSpectralEncoder {
 
         // Fragments 1..N: Detail coefficients (distributed, f16)
         if self.num_fragments > 1 {
-            let detail_per_frag = (detail_count + (self.num_fragments as usize - 1) - 1) / (self.num_fragments as usize - 1);
+            let detail_per_frag = detail_count.div_ceil(self.num_fragments as usize - 1);
 
             for frag_idx in 1..self.num_fragments {
                 let mut frag_data = Vec::new();
@@ -358,7 +374,7 @@ impl CompressiveSpectralEncoder {
         let essential = (retained as f32 * self.essential_ratio) as usize;
 
         // Fragment 0: header (24 bytes) + bitmap (N/8 bytes) + essentials (2 bytes each, f16)
-        let bitmap_bytes = (input_elements + 7) / 8;
+        let bitmap_bytes = input_elements.div_ceil(8);
         let frag0_bytes = 24 + bitmap_bytes + essential * 2;
 
         // Detail fragments: header (8 bytes) + values (2 bytes each, f16)
@@ -379,7 +395,7 @@ impl CompressiveSpectralEncoder {
         let retained = (input_elements as f32 * self.retention_ratio) as usize;
         let essential = (retained as f32 * self.essential_ratio) as usize;
 
-        let bitmap_bytes = (input_elements + 7) / 8;
+        let bitmap_bytes = input_elements.div_ceil(8);
         let frag0_bytes = 24 + bitmap_bytes + essential * 2;
 
         let detail_count = retained - essential;
@@ -438,7 +454,9 @@ impl CompressiveSpectralDecoder {
     /// Auto-detects V1 (index array), V2 (bitmap+f32), or V3 (bitmap+f16) format via magic bytes.
     pub fn add_essentials(&mut self, fragment: &HoloFragment) -> Result<()> {
         if fragment.index != 0 {
-            return Err(Error::corrupted("fragment 0 must be added first for CompressiveSpectralDecoder"));
+            return Err(Error::corrupted(
+                "fragment 0 must be added first for CompressiveSpectralDecoder",
+            ));
         }
 
         let data = &fragment.data;
@@ -479,7 +497,10 @@ impl CompressiveSpectralDecoder {
                 return Err(Error::corrupted("truncated essential coefficients"));
             }
             self.coefficients[i] = f32::from_le_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
             ]);
             offset += 4;
         }
@@ -491,7 +512,10 @@ impl CompressiveSpectralDecoder {
                 return Err(Error::corrupted("truncated index map"));
             }
             let idx = u32::from_le_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
             ]) as usize;
             self.index_map.push(idx);
             offset += 4;
@@ -510,11 +534,13 @@ impl CompressiveSpectralDecoder {
         self.width = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
         self.height = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
         self.total_coeffs = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
-        self.essential_count = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
-        self.detail_per_frag = u32::from_le_bytes([data[20], data[21], data[22], data[23]]) as usize;
+        self.essential_count =
+            u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
+        self.detail_per_frag =
+            u32::from_le_bytes([data[20], data[21], data[22], data[23]]) as usize;
 
         let n = self.width * self.height;
-        let bitmap_bytes = (n + 7) / 8;
+        let bitmap_bytes = n.div_ceil(8);
 
         // Read bitmap and build index map
         let bitmap_start = 24;
@@ -553,7 +579,10 @@ impl CompressiveSpectralDecoder {
                 return Err(Error::corrupted("truncated essential coefficients"));
             }
             self.coefficients[i] = f32::from_le_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
             ]);
             offset += 4;
         }
@@ -571,11 +600,13 @@ impl CompressiveSpectralDecoder {
         self.width = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
         self.height = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
         self.total_coeffs = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
-        self.essential_count = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
-        self.detail_per_frag = u32::from_le_bytes([data[20], data[21], data[22], data[23]]) as usize;
+        self.essential_count =
+            u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
+        self.detail_per_frag =
+            u32::from_le_bytes([data[20], data[21], data[22], data[23]]) as usize;
 
         let n = self.width * self.height;
-        let bitmap_bytes = (n + 7) / 8;
+        let bitmap_bytes = n.div_ceil(8);
 
         // Read bitmap and build index map
         let bitmap_start = 24;
@@ -662,7 +693,10 @@ impl CompressiveSpectralDecoder {
                 } else {
                     // V1/V2: f32 coefficients
                     self.coefficients[coeff_idx] = f32::from_le_bytes([
-                        data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                        data[offset],
+                        data[offset + 1],
+                        data[offset + 2],
+                        data[offset + 3],
                     ]);
                 }
             }
@@ -689,7 +723,8 @@ impl CompressiveSpectralDecoder {
         let detail_frags = self.total_fragments - 1;
         let loaded = self.detail_fragments_loaded.min(detail_frags);
         let essential_quality = self.essential_count as f32 / self.total_coeffs as f32;
-        let detail_quality = (self.total_coeffs - self.essential_count) as f32 / self.total_coeffs as f32;
+        let detail_quality =
+            (self.total_coeffs - self.essential_count) as f32 / self.total_coeffs as f32;
         essential_quality + detail_quality * (loaded as f32 / detail_frags as f32)
     }
 
@@ -728,15 +763,14 @@ mod tests {
     use super::*;
 
     fn max_error(a: &[f32], b: &[f32]) -> f32 {
-        a.iter().zip(b.iter())
+        a.iter()
+            .zip(b.iter())
             .map(|(x, y)| (x - y).abs())
             .fold(0.0f32, f32::max)
     }
 
     fn mean_squared_error(a: &[f32], b: &[f32]) -> f32 {
-        let sum: f32 = a.iter().zip(b.iter())
-            .map(|(x, y)| (x - y).powi(2))
-            .sum();
+        let sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
         sum / a.len() as f32
     }
 
@@ -794,11 +828,21 @@ mod tests {
         let actual_ratio = input_bytes as f32 / total_output_bytes as f32;
         let expected_ratio = encoder.expected_ratio(input.len());
 
-        println!("Input: {} bytes, Output: {} bytes", input_bytes, total_output_bytes);
-        println!("Actual ratio: {:.2}x, Expected: {:.2}x", actual_ratio, expected_ratio);
+        println!(
+            "Input: {} bytes, Output: {} bytes",
+            input_bytes, total_output_bytes
+        );
+        println!(
+            "Actual ratio: {:.2}x, Expected: {:.2}x",
+            actual_ratio, expected_ratio
+        );
 
         // Should achieve significant compression
-        assert!(actual_ratio > 1.5, "Expected compression, got {}x", actual_ratio);
+        assert!(
+            actual_ratio > 1.5,
+            "Expected compression, got {}x",
+            actual_ratio
+        );
     }
 
     #[test]
@@ -832,15 +876,32 @@ mod tests {
 
         println!("Essentials only: MSE={:.6}", mse_essentials);
         println!("Half details: MSE={:.6}", mse_half);
-        println!("Full details: quality={:.2}, MSE={:.6}", quality_full, mse_full);
+        println!(
+            "Full details: quality={:.2}, MSE={:.6}",
+            quality_full, mse_full
+        );
 
         // MSE should decrease (improve) with more fragments
         // This is the actual quality metric that matters
-        assert!(mse_half <= mse_essentials, "Half details MSE {} should be <= essentials MSE {}", mse_half, mse_essentials);
-        assert!(mse_full <= mse_half, "Full MSE {} should be <= half MSE {}", mse_full, mse_half);
+        assert!(
+            mse_half <= mse_essentials,
+            "Half details MSE {} should be <= essentials MSE {}",
+            mse_half,
+            mse_essentials
+        );
+        assert!(
+            mse_full <= mse_half,
+            "Full MSE {} should be <= half MSE {}",
+            mse_full,
+            mse_half
+        );
 
         // Full quality should be 1.0 when all fragments loaded
-        assert!((quality_full - 1.0).abs() < 0.01, "Full quality should be ~1.0, got {}", quality_full);
+        assert!(
+            (quality_full - 1.0).abs() < 0.01,
+            "Full quality should be ~1.0, got {}",
+            quality_full
+        );
     }
 
     // =========================================================================
@@ -1156,7 +1217,11 @@ mod tests {
 
         // All zeros should reconstruct to all (nearly) zeros
         let max_err = max_error(&input, &output);
-        assert!(max_err < 1e-5, "Max error {} too high for all-zeros", max_err);
+        assert!(
+            max_err < 1e-5,
+            "Max error {} too high for all-zeros",
+            max_err
+        );
     }
 
     #[test]
@@ -1204,7 +1269,11 @@ mod tests {
         let input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
         let fragments = encoder.encode_2d(&input, 16, 16).unwrap();
 
-        assert_eq!(fragments.len(), 1, "Single fragment encoder should produce 1 fragment");
+        assert_eq!(
+            fragments.len(),
+            1,
+            "Single fragment encoder should produce 1 fragment"
+        );
 
         let mut decoder = CompressiveSpectralDecoder::new();
         decoder.add_essentials(&fragments[0]).unwrap();
@@ -1219,7 +1288,10 @@ mod tests {
         let input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
         let fragments = encoder.encode_2d(&input, 16, 16).unwrap();
 
-        assert!(fragments.len() <= 2, "Two fragment encoder should produce <=2 fragments");
+        assert!(
+            fragments.len() <= 2,
+            "Two fragment encoder should produce <=2 fragments"
+        );
 
         let mut decoder = CompressiveSpectralDecoder::new();
         decoder.add_essentials(&fragments[0]).unwrap();
@@ -1317,7 +1389,10 @@ mod tests {
         let mut decoder = CompressiveSpectralDecoder::new();
         // Should fail or return error when reconstructing without essentials
         let result = decoder.reconstruct();
-        assert!(result.is_err(), "Should error when reconstructing without essentials");
+        assert!(
+            result.is_err(),
+            "Should error when reconstructing without essentials"
+        );
     }
 
     #[test]
@@ -1350,10 +1425,15 @@ mod tests {
         assert_eq!(output2.len(), 256);
 
         // And different
-        let diff: f32 = output1.iter().zip(output2.iter())
+        let diff: f32 = output1
+            .iter()
+            .zip(output2.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
-        assert!(diff > 1.0, "Different inputs should produce different outputs");
+        assert!(
+            diff > 1.0,
+            "Different inputs should produce different outputs"
+        );
     }
 
     #[test]
@@ -1362,7 +1442,11 @@ mod tests {
         let ratio = encoder.expected_ratio(10000);
 
         // With 10% retention, expect roughly 5-10x compression
-        assert!(ratio > 3.0, "Expected ratio {} should be > 3.0 for 10% retention", ratio);
+        assert!(
+            ratio > 3.0,
+            "Expected ratio {} should be > 3.0 for 10% retention",
+            ratio
+        );
         assert!(ratio < 20.0, "Expected ratio {} should be < 20.0", ratio);
     }
 
@@ -1383,7 +1467,11 @@ mod tests {
         // Should handle large values
         let max_err = max_error(&input, &output);
         let relative_err = max_err / 1000.0;
-        assert!(relative_err < 0.1, "Relative error {} too high for large values", relative_err);
+        assert!(
+            relative_err < 0.1,
+            "Relative error {} too high for large values",
+            relative_err
+        );
     }
 
     #[test]
@@ -1418,7 +1506,10 @@ mod tests {
         // Try to add detail before essentials - should error
         if fragments.len() > 1 {
             let result = decoder.add_detail(&fragments[1]);
-            assert!(result.is_err(), "Should error when adding detail without essentials");
+            assert!(
+                result.is_err(),
+                "Should error when adding detail without essentials"
+            );
         }
     }
 
@@ -1428,7 +1519,10 @@ mod tests {
 
         // Try to reconstruct with no data added
         let result = decoder.reconstruct();
-        assert!(result.is_err(), "Should error when reconstructing with no data");
+        assert!(
+            result.is_err(),
+            "Should error when reconstructing with no data"
+        );
     }
 
     #[test]

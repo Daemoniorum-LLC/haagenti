@@ -1,7 +1,7 @@
 //! Embedding providers for semantic similarity
 
+use crate::Result;
 use arcanum_primitives::prelude::Blake3;
-use crate::{CacheError, Result};
 use serde::{Deserialize, Serialize};
 
 /// CLIP embedding (768 dimensions)
@@ -110,7 +110,10 @@ impl EmbeddingProvider for MockEmbeddingProvider {
     }
 
     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<ClipEmbedding>> {
-        Ok(texts.iter().map(|t| ClipEmbedding::new(self.hash_embed(t))).collect())
+        Ok(texts
+            .iter()
+            .map(|t| ClipEmbedding::new(self.hash_embed(t)))
+            .collect())
     }
 
     fn dimension(&self) -> usize {
@@ -169,9 +172,12 @@ impl<P: EmbeddingProvider> EmbeddingProvider for CachedEmbeddingProvider<P> {
 
         if !to_embed.is_empty() {
             let embeddings = self.inner.embed_batch(&to_embed).await?;
-            for (embed_idx, (original_idx, embedding)) in to_embed_indices.iter().copied().zip(embeddings).enumerate() {
+            for (embed_idx, (original_idx, embedding)) in
+                to_embed_indices.iter().copied().zip(embeddings).enumerate()
+            {
                 if self.cache.len() < self.max_cache_size {
-                    self.cache.insert(to_embed[embed_idx].to_string(), embedding.clone());
+                    self.cache
+                        .insert(to_embed[embed_idx].to_string(), embedding.clone());
                 }
                 results[original_idx] = Some(embedding);
             }

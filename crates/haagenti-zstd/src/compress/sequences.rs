@@ -22,7 +22,10 @@
 //! - Long matches preserved (not split unnecessarily)
 
 use crate::block::{Sequence, LITERAL_LENGTH_BASELINE};
-use crate::fse::{FseBitWriter, InterleavedTansEncoder, TansEncoder, cached_ll_table, cached_of_table, cached_ml_table};
+use crate::fse::{
+    cached_ll_table, cached_ml_table, cached_of_table, FseBitWriter, InterleavedTansEncoder,
+    TansEncoder,
+};
 use crate::CustomFseTables;
 use haagenti_core::Result;
 
@@ -44,18 +47,52 @@ use haagenti_core::Result;
 /// - Code 45+: Continue with progressively larger ranges
 const ML_ENCODE_TABLE: [(u8, u32, u32); 53] = [
     // Codes 0-31: match_length 3-34, no extra bits
-    (0, 3, 3), (0, 4, 4), (0, 5, 5), (0, 6, 6), (0, 7, 7), (0, 8, 8), (0, 9, 9), (0, 10, 10),
-    (0, 11, 11), (0, 12, 12), (0, 13, 13), (0, 14, 14), (0, 15, 15), (0, 16, 16), (0, 17, 17), (0, 18, 18),
-    (0, 19, 19), (0, 20, 20), (0, 21, 21), (0, 22, 22), (0, 23, 23), (0, 24, 24), (0, 25, 25), (0, 26, 26),
-    (0, 27, 27), (0, 28, 28), (0, 29, 29), (0, 30, 30), (0, 31, 31), (0, 32, 32), (0, 33, 33), (0, 34, 34),
+    (0, 3, 3),
+    (0, 4, 4),
+    (0, 5, 5),
+    (0, 6, 6),
+    (0, 7, 7),
+    (0, 8, 8),
+    (0, 9, 9),
+    (0, 10, 10),
+    (0, 11, 11),
+    (0, 12, 12),
+    (0, 13, 13),
+    (0, 14, 14),
+    (0, 15, 15),
+    (0, 16, 16),
+    (0, 17, 17),
+    (0, 18, 18),
+    (0, 19, 19),
+    (0, 20, 20),
+    (0, 21, 21),
+    (0, 22, 22),
+    (0, 23, 23),
+    (0, 24, 24),
+    (0, 25, 25),
+    (0, 26, 26),
+    (0, 27, 27),
+    (0, 28, 28),
+    (0, 29, 29),
+    (0, 30, 30),
+    (0, 31, 31),
+    (0, 32, 32),
+    (0, 33, 33),
+    (0, 34, 34),
     // Codes 32-35: 1 extra bit each
-    (1, 35, 36), (1, 37, 38), (1, 39, 40), (1, 41, 42),
+    (1, 35, 36),
+    (1, 37, 38),
+    (1, 39, 40),
+    (1, 41, 42),
     // Codes 36-37: 2 extra bits each
-    (2, 43, 46), (2, 47, 50),
+    (2, 43, 46),
+    (2, 47, 50),
     // Codes 38-39: 3 extra bits each
-    (3, 51, 58), (3, 59, 66),
+    (3, 51, 58),
+    (3, 59, 66),
     // Codes 40-41: 4 extra bits each
-    (4, 67, 82), (4, 83, 98),
+    (4, 67, 82),
+    (4, 83, 98),
     // Code 42: 5 extra bits (from zstd: baseline 99)
     (5, 99, 130),
     // Code 43: 7 extra bits (from zstd: baseline 131)
@@ -152,11 +189,22 @@ fn encode_literal_length(value: u32) -> (u8, u32, u8) {
 
     // For larger values, use the table but start from a good estimate
     // The codes follow a pattern where each code covers 2^extra_bits values
-    let log_estimate = if value < 64 { 4 } else if value < 256 { 6 } else if value < 1024 { 8 } else { 10 };
+    let log_estimate = if value < 64 {
+        4
+    } else if value < 256 {
+        6
+    } else if value < 1024 {
+        8
+    } else {
+        10
+    };
 
     // Search from the estimated position
-    for code in log_estimate..LITERAL_LENGTH_BASELINE.len() {
-        let (bits, baseline) = LITERAL_LENGTH_BASELINE[code];
+    for (code, &(bits, baseline)) in LITERAL_LENGTH_BASELINE
+        .iter()
+        .enumerate()
+        .skip(log_estimate)
+    {
         let max_value = if bits == 0 {
             baseline
         } else {
@@ -185,7 +233,7 @@ fn encode_literal_length(value: u32) -> (u8, u32, u8) {
 fn encode_match_length(value: u32) -> (u8, u32, u8) {
     // Fast path: values 3-34 map directly to codes 0-31 with no extra bits
     // This covers the vast majority of match lengths
-    if value >= 3 && value <= 34 {
+    if (3..=34).contains(&value) {
         return ((value - 3) as u8, 0, 0);
     }
 
@@ -217,8 +265,7 @@ fn encode_match_length(value: u32) -> (u8, u32, u8) {
 
     // For larger values (67+), search in ML_ENCODE_TABLE starting from code 40
     // This ensures we use the exact same baselines as the decoder
-    for code in 40..ML_ENCODE_TABLE.len() {
-        let (bits, baseline, max_value) = ML_ENCODE_TABLE[code];
+    for (code, &(bits, baseline, max_value)) in ML_ENCODE_TABLE.iter().enumerate().skip(40) {
         if value >= baseline && value <= max_value {
             return (code as u8, value - baseline, bits);
         }
@@ -404,17 +451,15 @@ pub fn encode_sequences_rle(
 ///
 /// Uses statically cached FSE tables to avoid rebuilding on every block.
 /// The tables are built once on first access and reused thereafter.
-pub fn encode_sequences_fse(
-    sequences: &[Sequence],
-    output: &mut Vec<u8>,
-) -> Result<()> {
+pub fn encode_sequences_fse(sequences: &[Sequence], output: &mut Vec<u8>) -> Result<()> {
     if sequences.is_empty() {
         output.push(0);
         return Ok(());
     }
 
     // Encode sequences to get codes and extra bits
-    let encoded: Vec<EncodedSequence> = sequences.iter()
+    let encoded: Vec<EncodedSequence> = sequences
+        .iter()
         .map(EncodedSequence::from_sequence)
         .collect();
 
@@ -526,13 +571,19 @@ pub fn encode_sequences_with_custom_tables(
     output.push(mode_byte);
 
     // Build tANS encoders from custom or predefined tables
-    let ll_table = custom_tables.ll_table.as_ref()
+    let ll_table = custom_tables
+        .ll_table
+        .as_ref()
         .map(|t| t.as_ref())
         .unwrap_or_else(|| cached_ll_table());
-    let of_table = custom_tables.of_table.as_ref()
+    let of_table = custom_tables
+        .of_table
+        .as_ref()
         .map(|t| t.as_ref())
         .unwrap_or_else(|| cached_of_table());
-    let ml_table = custom_tables.ml_table.as_ref()
+    let ml_table = custom_tables
+        .ml_table
+        .as_ref()
         .map(|t| t.as_ref())
         .unwrap_or_else(|| cached_ml_table());
 
@@ -604,16 +655,15 @@ fn build_fse_bitstream(encoded: &[EncodedSequence], tans: &mut InterleavedTansEn
     #[cfg(test)]
     if std::env::var("DEBUG_FSE_DETAIL").is_ok() {
         let (ll_s, of_s, ml_s) = tans.get_states();
-        eprintln!("FSE init with codes ({}, {}, {}): states = ({}, {}, {})",
-                  last_seq.ll_code, last_seq.of_code, last_seq.ml_code,
-                  ll_s, of_s, ml_s);
+        eprintln!(
+            "FSE init with codes ({}, {}, {}): states = ({}, {}, {})",
+            last_seq.ll_code, last_seq.of_code, last_seq.ml_code, ll_s, of_s, ml_s
+        );
     }
 
     // Step 2: Encode FSE bits in REVERSE order (seq N-2 down to 0)
     // We skip the last sequence because the decoder doesn't update states for it.
-    let mut fse_bits_per_seq: Vec<[(u32, u8); 3]> = Vec::with_capacity(last_idx);
-    // SAFETY: We will write to all indices [0..last_idx) in the loop below
-    unsafe { fse_bits_per_seq.set_len(last_idx); }
+    let mut fse_bits_per_seq: Vec<[(u32, u8); 3]> = vec![[(0, 0); 3]; last_idx];
 
     for i in (0..last_idx).rev() {
         let seq = &encoded[i];
@@ -675,13 +725,23 @@ fn build_fse_bitstream(encoded: &[EncodedSequence], tans: &mut InterleavedTansEn
     #[cfg(test)]
     if std::env::var("DEBUG_FSE").is_ok() {
         eprintln!("FSE encode: {} sequences", encoded.len());
-        eprintln!("  Last seq: ll_code={}, of_code={}, ml_code={}",
-                  last_seq.ll_code, last_seq.of_code, last_seq.ml_code);
-        eprintln!("  Last seq extras: ll={}({} bits), ml={}({} bits), of={}({} bits)",
-                  last_seq.ll_extra, last_seq.ll_bits,
-                  last_seq.ml_extra, last_seq.ml_bits,
-                  last_seq.of_extra, last_seq.of_bits);
-        eprintln!("  Final states: ll={}, of={}, ml={}", ll_state, of_state, ml_state);
+        eprintln!(
+            "  Last seq: ll_code={}, of_code={}, ml_code={}",
+            last_seq.ll_code, last_seq.of_code, last_seq.ml_code
+        );
+        eprintln!(
+            "  Last seq extras: ll={}({} bits), ml={}({} bits), of={}({} bits)",
+            last_seq.ll_extra,
+            last_seq.ll_bits,
+            last_seq.ml_extra,
+            last_seq.ml_bits,
+            last_seq.of_extra,
+            last_seq.of_bits
+        );
+        eprintln!(
+            "  Final states: ll={}, of={}, ml={}",
+            ll_state, of_state, ml_state
+        );
     }
 
     // Write states in ML, OF, LL order

@@ -1,6 +1,8 @@
 //! Codebook training for neural compression
 
-use crate::{Codebook, CodebookConfig, CodebookStats, LayerCodebook, LayerType, NeuralError, Result};
+use crate::{
+    Codebook, CodebookConfig, CodebookStats, LayerCodebook, LayerType, NeuralError, Result,
+};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for codebook training
@@ -52,7 +54,7 @@ impl CodebookTrainer {
         let dim = codebook_config.centroid_dim;
         let num_vectors = data.len() / dim;
 
-        if data.len() % dim != 0 {
+        if !data.len().is_multiple_of(dim) {
             return Err(NeuralError::TrainingError(format!(
                 "Data length {} not divisible by centroid dim {}",
                 data.len(),
@@ -63,8 +65,7 @@ impl CodebookTrainer {
         if num_vectors < codebook_config.num_centroids {
             return Err(NeuralError::TrainingError(format!(
                 "Need at least {} vectors, got {}",
-                codebook_config.num_centroids,
-                num_vectors
+                codebook_config.num_centroids, num_vectors
             )));
         }
 
@@ -91,8 +92,6 @@ impl CodebookTrainer {
         data: &[f32],
         seed: Option<u64>,
     ) -> Result<(Codebook, f32)> {
-        use rand::prelude::*;
-
         let dim = config.centroid_dim;
         let num_vectors = data.len() / dim;
 
@@ -114,7 +113,8 @@ impl CodebookTrainer {
             let assignments = self.assign_clusters(&centroids, data, dim);
 
             // Update step
-            let new_centroids = self.update_centroids(&assignments, data, config.num_centroids, dim);
+            let new_centroids =
+                self.update_centroids(&assignments, data, config.num_centroids, dim);
             centroids = new_centroids;
 
             // Compute MSE
@@ -146,13 +146,7 @@ impl CodebookTrainer {
     }
 
     /// K-means++ initialization
-    fn kmeans_pp_init(
-        &self,
-        k: usize,
-        data: &[f32],
-        dim: usize,
-        seed: Option<u64>,
-    ) -> Vec<f32> {
+    fn kmeans_pp_init(&self, k: usize, data: &[f32], dim: usize, seed: Option<u64>) -> Vec<f32> {
         use rand::prelude::*;
 
         let mut rng = match seed {
@@ -199,13 +193,7 @@ impl CodebookTrainer {
     }
 
     /// Random initialization
-    fn random_init(
-        &self,
-        k: usize,
-        data: &[f32],
-        dim: usize,
-        seed: Option<u64>,
-    ) -> Vec<f32> {
+    fn random_init(&self, k: usize, data: &[f32], dim: usize, seed: Option<u64>) -> Vec<f32> {
         use rand::prelude::*;
 
         let mut rng = match seed {
@@ -280,7 +268,13 @@ impl CodebookTrainer {
     }
 
     /// Compute MSE
-    fn compute_mse(&self, centroids: &[f32], assignments: &[usize], data: &[f32], dim: usize) -> f32 {
+    fn compute_mse(
+        &self,
+        centroids: &[f32],
+        assignments: &[usize],
+        data: &[f32],
+        dim: usize,
+    ) -> f32 {
         let total_dist: f32 = assignments
             .iter()
             .enumerate()
@@ -310,10 +304,7 @@ impl CodebookTrainer {
 
     /// Squared L2 distance
     fn squared_distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| (x - y).powi(2))
-            .sum()
+        a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
     }
 
     /// Train codebooks for all layer types
@@ -360,12 +351,9 @@ mod tests {
         // 4 clusters of 2D points
         let data: Vec<f32> = vec![
             // Cluster 0
-            0.0, 0.0, 0.1, 0.1, -0.1, 0.1,
-            // Cluster 1
-            1.0, 0.0, 1.1, 0.1, 0.9, -0.1,
-            // Cluster 2
-            0.0, 1.0, 0.1, 1.1, -0.1, 0.9,
-            // Cluster 3
+            0.0, 0.0, 0.1, 0.1, -0.1, 0.1, // Cluster 1
+            1.0, 0.0, 1.1, 0.1, 0.9, -0.1, // Cluster 2
+            0.0, 1.0, 0.1, 1.1, -0.1, 0.9, // Cluster 3
             1.0, 1.0, 1.1, 1.1, 0.9, 0.9,
         ];
 
@@ -379,9 +367,7 @@ mod tests {
     fn test_kmeans_pp() {
         let trainer = CodebookTrainer::new(TrainingConfig::default());
 
-        let data: Vec<f32> = (0..200)
-            .map(|i| (i as f32 / 10.0).sin())
-            .collect();
+        let data: Vec<f32> = (0..200).map(|i| (i as f32 / 10.0).sin()).collect();
 
         let centroids = trainer.kmeans_pp_init(10, &data, 2, Some(42));
         assert_eq!(centroids.len(), 20); // 10 centroids × 2 dimensions

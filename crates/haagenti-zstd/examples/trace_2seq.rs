@@ -1,7 +1,7 @@
 //! Trace 2-sequence cases
 
 use haagenti_zstd::compress::block::matches_to_sequences;
-use haagenti_zstd::compress::{MatchFinder, EncodedSequence};
+use haagenti_zstd::compress::{EncodedSequence, MatchFinder};
 
 fn trace(name: &str, data: &[u8]) {
     println!("\n=== {} ({} bytes) ===", name, data.len());
@@ -11,11 +11,17 @@ fn trace(name: &str, data: &[u8]) {
     let matches = mf.find_matches(data);
     println!("\nMatches:");
     for m in &matches {
-        println!("  pos={:2}, offset={:2}, len={:2}", m.position, m.offset, m.length);
+        println!(
+            "  pos={:2}, offset={:2}, len={:2}",
+            m.position, m.offset, m.length
+        );
     }
 
     let (literals, sequences) = matches_to_sequences(data, &matches);
-    println!("\nSequences ({}): (offset is encoded as offset_value)", sequences.len());
+    println!(
+        "\nSequences ({}): (offset is encoded as offset_value)",
+        sequences.len()
+    );
     for (i, seq) in sequences.iter().enumerate() {
         let enc = EncodedSequence::from_sequence(seq);
         println!("  Seq {}: LL={:2} (code={:2}), OF={:2} (code={:2}, extra={}, bits={}), ML={:2} (code={:2})",

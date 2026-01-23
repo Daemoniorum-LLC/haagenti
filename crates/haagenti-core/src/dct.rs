@@ -101,7 +101,7 @@ pub fn dct_1d(input: &[f32], output: &mut [f32]) {
 
     // Reorder input according to Makhoul algorithm
     let mut y: Vec<Complex<f32>> = vec![Complex::new(0.0, 0.0); n];
-    for k in 0..(n + 1) / 2 {
+    for k in 0..n.div_ceil(2) {
         if 2 * k < n {
             y[k] = Complex::new(input[2 * k], 0.0);
         }
@@ -134,12 +134,12 @@ pub fn dct_1d_direct(input: &[f32], output: &mut [f32]) {
     let n = input.len();
     let scale = (2.0 / n as f32).sqrt();
 
-    for k in 0..n {
+    for (k, out_k) in output.iter_mut().enumerate().take(n) {
         let mut sum = 0.0f32;
-        for i in 0..n {
-            sum += input[i] * (std::f32::consts::PI * k as f32 * (i as f32 + 0.5) / n as f32).cos();
+        for (i, &inp_i) in input.iter().enumerate() {
+            sum += inp_i * (std::f32::consts::PI * k as f32 * (i as f32 + 0.5) / n as f32).cos();
         }
-        output[k] = sum * scale;
+        *out_k = sum * scale;
     }
 
     output[0] /= std::f32::consts::SQRT_2;
@@ -202,7 +202,7 @@ pub fn idct_1d(input: &[f32], output: &mut [f32]) {
     y[0] = Complex::new(c[0], 0.0);
 
     // Nyquist (k=n/2 if n even): twiddle = exp(-j*pi/4), need special handling
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         let k = n / 2;
         // twiddle = exp(-j*pi*k/(2n)) = exp(-j*pi/4) for k=n/2
         // C[k] = Re(Y[k] * twiddle)
@@ -212,7 +212,11 @@ pub fn idct_1d(input: &[f32], output: &mut [f32]) {
     }
 
     // Other frequencies: solve 2x2 system
-    let limit = if n % 2 == 0 { n / 2 } else { (n + 1) / 2 };
+    let limit = if n.is_multiple_of(2) {
+        n / 2
+    } else {
+        n.div_ceil(2)
+    };
     for k in 1..limit {
         let angle_k = -std::f32::consts::PI * k as f32 / (2.0 * n as f32);
         let angle_nk = -std::f32::consts::PI * (n - k) as f32 / (2.0 * n as f32);
@@ -242,7 +246,7 @@ pub fn idct_1d(input: &[f32], output: &mut [f32]) {
     // Forward: y[k] = x[2k], y[n-1-k] = x[2k+1]
     // Inverse: x[2k] = y[k], x[2k+1] = y[n-1-k]
     let inv_n = 1.0 / n as f32;
-    for k in 0..(n + 1) / 2 {
+    for k in 0..n.div_ceil(2) {
         if 2 * k < n {
             output[2 * k] = y[k].re * inv_n;
         }
@@ -260,15 +264,15 @@ pub fn idct_1d_direct(input: &[f32], output: &mut [f32]) {
     let n = input.len();
     let scale = (2.0 / n as f32).sqrt();
 
-    for i in 0..n {
+    for (i, out_i) in output.iter_mut().enumerate().take(n) {
         // DC term with orthonormal scaling
         let mut sum = input[0] / std::f32::consts::SQRT_2;
 
-        for k in 1..n {
-            sum += input[k] * (std::f32::consts::PI * k as f32 * (i as f32 + 0.5) / n as f32).cos();
+        for (k, &inp_k) in input.iter().enumerate().skip(1) {
+            sum += inp_k * (std::f32::consts::PI * k as f32 * (i as f32 + 0.5) / n as f32).cos();
         }
 
-        output[i] = sum * scale;
+        *out_i = sum * scale;
     }
 }
 
@@ -346,13 +350,13 @@ pub fn dct_1d_f64(input: &[f64], output: &mut [f64]) {
     let scale = (2.0f64 / n as f64).sqrt();
     let scale_dc = (1.0f64 / n as f64).sqrt();
 
-    for k in 0..n {
+    for (k, out_k) in output.iter_mut().enumerate().take(n) {
         let mut sum = 0.0f64;
-        for i in 0..n {
+        for (i, &inp_i) in input.iter().enumerate() {
             let angle = std::f64::consts::PI * (2.0 * i as f64 + 1.0) * k as f64 / (2.0 * n as f64);
-            sum += input[i] * angle.cos();
+            sum += inp_i * angle.cos();
         }
-        output[k] = sum * if k == 0 { scale_dc } else { scale };
+        *out_k = sum * if k == 0 { scale_dc } else { scale };
     }
 }
 
@@ -368,13 +372,13 @@ pub fn idct_1d_f64(input: &[f64], output: &mut [f64]) {
     let scale = (2.0f64 / n as f64).sqrt();
     let scale_dc = (1.0f64 / n as f64).sqrt();
 
-    for i in 0..n {
+    for (i, out_i) in output.iter_mut().enumerate().take(n) {
         let mut sum = input[0] * scale_dc;
-        for k in 1..n {
+        for (k, &inp_k) in input.iter().enumerate().skip(1) {
             let angle = std::f64::consts::PI * (2.0 * i as f64 + 1.0) * k as f64 / (2.0 * n as f64);
-            sum += input[k] * angle.cos() * scale;
+            sum += inp_k * angle.cos() * scale;
         }
-        output[i] = sum;
+        *out_i = sum;
     }
 }
 
@@ -497,7 +501,11 @@ mod tests {
         dct_1d_direct(&input, &mut direct);
 
         // Force FFT path by using a larger input
-        let large_input: Vec<f32> = input.iter().chain(std::iter::repeat(&0.0).take(56)).copied().collect();
+        let large_input: Vec<f32> = input
+            .iter()
+            .chain(std::iter::repeat(&0.0).take(56))
+            .copied()
+            .collect();
         let mut large_dct = vec![0.0f32; 64];
         dct_1d(&large_input, &mut large_dct);
 

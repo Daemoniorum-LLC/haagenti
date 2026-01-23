@@ -21,7 +21,7 @@ pub use evolutionary::{EvolutionaryConfig, EvolutionaryMerger, Genome};
 pub use linear::{LinearConfig, LinearMerger};
 pub use slerp::{SlerpConfig, SlerpMerger};
 pub use ties::{TiesConfig, TiesMerger};
-pub use weights::{WeightDelta, WeightTensor, ModelWeights};
+pub use weights::{ModelWeights, WeightDelta, WeightTensor};
 
 /// Merge strategy
 #[derive(Debug, Clone)]

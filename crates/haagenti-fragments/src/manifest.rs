@@ -246,12 +246,7 @@ mod tests {
 
     #[test]
     fn test_manifest_builder() {
-        let mut builder = ManifestBuilder::new(
-            "sdxl-base",
-            "SDXL Base 1.0",
-            "main",
-            "safetensors",
-        );
+        let mut builder = ManifestBuilder::new("sdxl-base", "SDXL Base 1.0", "main", "safetensors");
 
         let frag_id = FragmentId::new([0; 16]);
 

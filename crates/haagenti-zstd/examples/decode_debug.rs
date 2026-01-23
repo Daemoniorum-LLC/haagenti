@@ -1,6 +1,6 @@
 //! Debug decode failures with more detail.
 
-use std::io::{Read, Cursor};
+use std::io::{Cursor, Read};
 
 fn main() {
     let input = b"abcdefghXabcdefghYabcd";
@@ -8,7 +8,11 @@ fn main() {
     let our_compressed = compressor.compress(input).unwrap();
 
     println!("Input: {:?}", std::str::from_utf8(input).unwrap());
-    println!("Compressed ({} bytes): {:02x?}", our_compressed.len(), our_compressed);
+    println!(
+        "Compressed ({} bytes): {:02x?}",
+        our_compressed.len(),
+        our_compressed
+    );
 
     // Try to decode step by step
     println!("\n=== Attempting decode with zstd-safe ===");
@@ -16,7 +20,11 @@ fn main() {
     // Use the lower-level zstd interface
     match decode_with_debug(&our_compressed, input.len()) {
         Ok(decoded) => {
-            println!("Decoded {} bytes: {:?}", decoded.len(), String::from_utf8_lossy(&decoded));
+            println!(
+                "Decoded {} bytes: {:?}",
+                decoded.len(),
+                String::from_utf8_lossy(&decoded)
+            );
             if decoded == input {
                 println!("SUCCESS: Output matches input!");
             } else {
@@ -56,8 +64,8 @@ fn main() {
 fn decode_with_debug(data: &[u8], expected_size: usize) -> Result<Vec<u8>, String> {
     use zstd::stream::read::Decoder;
 
-    let mut decoder = Decoder::new(Cursor::new(data))
-        .map_err(|e| format!("Failed to create decoder: {}", e))?;
+    let mut decoder =
+        Decoder::new(Cursor::new(data)).map_err(|e| format!("Failed to create decoder: {}", e))?;
 
     let mut output = Vec::with_capacity(expected_size);
     let mut buf = [0u8; 1024];
@@ -79,21 +87,27 @@ fn decode_with_debug(data: &[u8], expected_size: usize) -> Result<Vec<u8>, Strin
 
 fn analyze_fse_bitstream(frame: &[u8]) {
     // Skip to sequence section
-    if frame.len() < 7 { return; }
+    if frame.len() < 7 {
+        return;
+    }
 
     let fhd = frame[4];
     let single_segment = (fhd & 0x20) != 0;
     let mut pos = 5;
-    if !single_segment { pos += 1; }
+    if !single_segment {
+        pos += 1;
+    }
 
-    let bh = u32::from_le_bytes([frame[pos], frame[pos+1], frame[pos+2], 0]);
+    let bh = u32::from_le_bytes([frame[pos], frame[pos + 1], frame[pos + 2], 0]);
     let block_type = (bh >> 1) & 0x3;
     let block_size = (bh >> 3) as usize;
     pos += 3;
 
-    if block_type != 2 { return; }
+    if block_type != 2 {
+        return;
+    }
 
-    let block_data = &frame[pos..pos+block_size];
+    let block_data = &frame[pos..pos + block_size];
 
     // Parse literals
     let lit_type = block_data[0] & 0x03;
@@ -101,15 +115,22 @@ fn analyze_fse_bitstream(frame: &[u8]) {
         let size_format = (block_data[0] >> 2) & 0x3;
         match size_format {
             0 | 1 => ((block_data[0] >> 3) as usize, 1),
-            2 => (((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF, 2),
+            2 => (
+                ((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF,
+                2,
+            ),
             _ => (0, 1),
         }
-    } else { return; };
+    } else {
+        return;
+    };
 
     let seq_section = &block_data[lit_header_size + lit_size..];
     println!("Sequence section: {:02x?}", seq_section);
 
-    if seq_section.len() < 3 { return; }
+    if seq_section.len() < 3 {
+        return;
+    }
 
     let seq_count = seq_section[0] as usize;
     let mode = seq_section[1];
@@ -124,7 +145,10 @@ fn analyze_fse_bitstream(frame: &[u8]) {
         let sentinel_pos = 7 - last_byte.leading_zeros() as usize;
         let total_bits = (bitstream.len() - 1) * 8 + sentinel_pos;
 
-        println!("Last byte: 0x{:02x}, sentinel at bit {}", last_byte, sentinel_pos);
+        println!(
+            "Last byte: 0x{:02x}, sentinel at bit {}",
+            last_byte, sentinel_pos
+        );
         println!("Total data bits: {} (plus sentinel)", total_bits);
 
         // For predefined mode (0x00), calculate expected bit usage

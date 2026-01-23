@@ -5,7 +5,7 @@
 //! 2. Elects the sign based on majority vote
 //! 3. Merges by averaging parameters with the elected sign
 
-use crate::{MergeError, Result, WeightTensor, WeightDelta, ModelWeights};
+use crate::{MergeError, ModelWeights, Result, WeightDelta, WeightTensor};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -44,7 +44,10 @@ impl TiesConfig {
 
     /// Get trim ratio for a layer
     pub fn trim_for_layer(&self, layer: &str) -> f32 {
-        *self.layer_trim_ratios.get(layer).unwrap_or(&self.trim_ratio)
+        *self
+            .layer_trim_ratios
+            .get(layer)
+            .unwrap_or(&self.trim_ratio)
     }
 }
 
@@ -98,7 +101,7 @@ impl TiesMerger {
         let n = deltas[0].data.len();
         let mut signs = vec![0.0f32; n];
 
-        for i in 0..n {
+        for (i, sign) in signs.iter_mut().enumerate() {
             let mut pos_sum = 0.0;
             let mut neg_sum = 0.0;
 
@@ -111,11 +114,7 @@ impl TiesMerger {
                 }
             }
 
-            if pos_sum >= neg_sum {
-                signs[i] = 1.0;
-            } else {
-                signs[i] = -1.0;
-            }
+            *sign = if pos_sum >= neg_sum { 1.0 } else { -1.0 };
         }
 
         signs
@@ -200,17 +199,16 @@ impl TiesMerger {
         let mut result = ModelWeights::new("merged");
 
         for layer_name in base.layer_names() {
-            let base_tensor = base.get_layer(layer_name).ok_or_else(|| {
-                MergeError::MissingLayer(layer_name.to_string())
-            })?;
+            let base_tensor = base
+                .get_layer(layer_name)
+                .ok_or_else(|| MergeError::MissingLayer(layer_name.to_string()))?;
 
             // Compute deltas for each finetuned model
             let deltas: Vec<WeightDelta> = finetuned
                 .iter()
                 .filter_map(|model| {
                     model.get_layer(layer_name).map(|t| {
-                        WeightDelta::from_models(base_tensor, t, &model.name, "finetuned")
-                            .ok()
+                        WeightDelta::from_models(base_tensor, t, &model.name, "finetuned").ok()
                     })
                 })
                 .flatten()
@@ -238,17 +236,18 @@ mod tests {
         let config = TiesConfig::with_trim(0.5);
         let merger = TiesMerger::new(config);
 
-        let delta = WeightTensor::new(
-            "layer",
-            vec![6],
-            vec![0.1, 0.5, 0.2, 0.8, 0.3, 0.9],
-        )
-        .unwrap();
+        let delta =
+            WeightTensor::new("layer", vec![6], vec![0.1, 0.5, 0.2, 0.8, 0.3, 0.9]).unwrap();
 
         let trimmed = merger.trim(&delta, 0.5);
 
         // Bottom 50% should be zeroed
-        let non_zero: Vec<f32> = trimmed.data.iter().filter(|&&x| x != 0.0).cloned().collect();
+        let non_zero: Vec<f32> = trimmed
+            .data
+            .iter()
+            .filter(|&&x| x != 0.0)
+            .cloned()
+            .collect();
         assert!(non_zero.len() <= 3);
     }
 
@@ -263,9 +262,9 @@ mod tests {
 
         let signs = merger.elect_sign(&[d1, d2, d3]);
 
-        assert_eq!(signs[0], 1.0);  // All positive
-        assert_eq!(signs[1], 1.0);  // 2 positive, 1 negative
-        assert_eq!(signs[2], 1.0);  // 2 positive, 1 negative
+        assert_eq!(signs[0], 1.0); // All positive
+        assert_eq!(signs[1], 1.0); // 2 positive, 1 negative
+        assert_eq!(signs[2], 1.0); // 2 positive, 1 negative
     }
 
     #[test]

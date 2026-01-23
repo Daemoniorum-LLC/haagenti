@@ -1,8 +1,7 @@
 //! Head importance analysis for sparse attention
 
-use crate::{HeadCategory, CategoryMapping, Result, SparseError};
+use crate::{CategoryMapping, HeadCategory, Result, SparseError};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Importance score for a single attention head
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +83,10 @@ impl HeadAnalysis {
 
     /// Get heads by category
     pub fn heads_by_category(&self, category: HeadCategory) -> Vec<&HeadImportance> {
-        self.heads.iter().filter(|h| h.category == category).collect()
+        self.heads
+            .iter()
+            .filter(|h| h.category == category)
+            .collect()
     }
 
     /// Get layer-wise importance distribution
@@ -113,11 +115,7 @@ impl HeadAnalysis {
         layer_imp
             .iter()
             .map(|&imp| {
-                let ratio = if mean_imp > 0.0 {
-                    imp / mean_imp
-                } else {
-                    1.0
-                };
+                let ratio = if mean_imp > 0.0 { imp / mean_imp } else { 1.0 };
                 // Inverse relationship: more important = less sparse
                 (target_overall * (2.0 - ratio)).clamp(0.1, 0.9)
             })
@@ -142,7 +140,8 @@ struct ActivationSample {
     attention_weights: Vec<Vec<f32>>,
     /// Prompt category
     category: String,
-    /// Step number
+    /// Step number (stored for future step-aware analysis)
+    #[allow(dead_code)]
     step: u32,
 }
 
@@ -163,12 +162,7 @@ impl ImportanceAnalyzer {
     }
 
     /// Record an activation sample
-    pub fn record_sample(
-        &mut self,
-        attention_weights: Vec<Vec<f32>>,
-        category: String,
-        step: u32,
-    ) {
+    pub fn record_sample(&mut self, attention_weights: Vec<Vec<f32>>, category: String, step: u32) {
         self.activations.push(ActivationSample {
             attention_weights,
             category,
@@ -179,9 +173,7 @@ impl ImportanceAnalyzer {
     /// Analyze collected samples and produce head importance
     pub fn analyze(&self, model_id: &str) -> Result<HeadAnalysis> {
         if self.activations.is_empty() {
-            return Err(SparseError::AnalysisError(
-                "No samples collected".into(),
-            ));
+            return Err(SparseError::AnalysisError("No samples collected".into()));
         }
 
         let num_layers = self.activations[0].attention_weights.len();
@@ -205,7 +197,10 @@ impl ImportanceAnalyzer {
         // Calculate prune threshold (median importance)
         let mut importances: Vec<f32> = heads.iter().map(|h| h.importance).collect();
         importances.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let prune_threshold = importances.get(importances.len() / 2).copied().unwrap_or(0.5);
+        let prune_threshold = importances
+            .get(importances.len() / 2)
+            .copied()
+            .unwrap_or(0.5);
 
         let categories_analyzed: Vec<String> = self
             .activations
@@ -258,15 +253,12 @@ impl ImportanceAnalyzer {
 
                 // Compute mean (importance) and variance
                 let mean: f32 = values.iter().sum::<f32>() / values.len() as f32;
-                let variance: f32 = values
-                    .iter()
-                    .map(|v| (v - mean).powi(2))
-                    .sum::<f32>()
-                    / values.len() as f32;
+                let variance: f32 =
+                    values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / values.len() as f32;
 
                 // Activation rate (how often above threshold)
-                let activation_rate = values.iter().filter(|&&v| v > 0.1).count() as f32
-                    / values.len() as f32;
+                let activation_rate =
+                    values.iter().filter(|&&v| v > 0.1).count() as f32 / values.len() as f32;
 
                 // Infer category based on layer position and importance pattern
                 let category = Self::infer_head_category(layer, head, num_layers, num_heads, mean);

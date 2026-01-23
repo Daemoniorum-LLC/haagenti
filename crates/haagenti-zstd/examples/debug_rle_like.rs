@@ -1,7 +1,7 @@
 //! Debug the RLE-like pattern issue
 
-use haagenti_zstd::{ZstdCompressor, ZstdDecompressor};
 use haagenti_core::Compressor;
+use haagenti_zstd::{ZstdCompressor, ZstdDecompressor};
 
 fn main() {
     // The failing pattern
@@ -17,12 +17,18 @@ fn main() {
     let compressor = ZstdCompressor::new();
     let compressed = compressor.compress(&data).unwrap();
     println!("Compressed size: {} bytes", compressed.len());
-    println!("Compressed hex (first 64 bytes): {:02x?}", &compressed[..64.min(compressed.len())]);
+    println!(
+        "Compressed hex (first 64 bytes): {:02x?}",
+        &compressed[..64.min(compressed.len())]
+    );
 
     // Try reference decompression
     match zstd::decode_all(std::io::Cursor::new(&compressed)) {
         Ok(ref_decompressed) => {
-            println!("Reference decompression: OK, {} bytes", ref_decompressed.len());
+            println!(
+                "Reference decompression: OK, {} bytes",
+                ref_decompressed.len()
+            );
             if ref_decompressed == data {
                 println!("Data matches original!");
             } else {

@@ -152,27 +152,23 @@ impl NetworkConfig {
             .with_endpoint(
                 CdnEndpoint::new("https://huggingface.co")
                     .with_priority(0)
-                    .with_region("global")
+                    .with_region("global"),
             )
             .with_endpoint(
                 CdnEndpoint::new("https://cdn-lfs.huggingface.co")
                     .with_priority(1)
-                    .with_region("global")
+                    .with_region("global"),
             )
     }
 
     /// Configure for Civitai
     pub fn civitai() -> Self {
         Self::default()
-            .with_endpoint(
-                CdnEndpoint::new("https://civitai.com/api/download")
-                    .with_priority(0)
-            )
+            .with_endpoint(CdnEndpoint::new("https://civitai.com/api/download").with_priority(0))
     }
 
     /// Configure for custom CDN
     pub fn custom_cdn(base_url: impl Into<String>) -> Self {
-        Self::default()
-            .with_endpoint(CdnEndpoint::new(base_url))
+        Self::default().with_endpoint(CdnEndpoint::new(base_url))
     }
 }

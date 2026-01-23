@@ -1,7 +1,7 @@
 //! Fragment caching for WebGPU inference
 
-use crate::{Result, WebGpuError};
 use crate::buffer::{BufferPool, BufferUsage, GpuBuffer};
+use crate::{Result, WebGpuError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -184,7 +184,11 @@ impl FragmentCache {
         // Allocate new buffer
         let mut buffer = self.buffer_pool.allocate(
             size,
-            vec![BufferUsage::Storage, BufferUsage::CopySrc, BufferUsage::CopyDst],
+            vec![
+                BufferUsage::Storage,
+                BufferUsage::CopySrc,
+                BufferUsage::CopyDst,
+            ],
             key,
         )?;
 
@@ -218,9 +222,9 @@ impl FragmentCache {
 
     /// Check if key exists and is valid
     pub fn contains(&self, key: &str) -> bool {
-        self.entries.get(key).map_or(false, |e| {
-            !e.is_expired(Duration::from_secs(self.config.ttl_seconds))
-        })
+        self.entries
+            .get(key)
+            .is_some_and(|e| !e.is_expired(Duration::from_secs(self.config.ttl_seconds)))
     }
 
     /// Remove entry from cache
@@ -329,6 +333,7 @@ impl FragmentCache {
 }
 
 /// Pre-warmed cache for common model fragments
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct PrewarmedCache {
     /// Fragment cache
@@ -337,6 +342,7 @@ pub struct PrewarmedCache {
     prewarm_list: Vec<(String, u64, u32)>,
 }
 
+#[allow(dead_code)]
 impl PrewarmedCache {
     /// Create new pre-warmed cache
     pub fn new(config: CacheConfig) -> Self {
@@ -378,6 +384,7 @@ impl PrewarmedCache {
 }
 
 /// Layer-specific cache for transformer models
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct LayerCache {
     /// Per-layer caches
@@ -388,6 +395,7 @@ pub struct LayerCache {
     num_layers: usize,
 }
 
+#[allow(dead_code)]
 impl LayerCache {
     /// Create new layer cache
     pub fn new(num_layers: usize, config: CacheConfig) -> Self {

@@ -12,8 +12,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use haagenti_core::Compressor;
 use haagenti_zstd::ZstdCompressor;
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 // ============================================================================
 // Canterbury Corpus-Style Data Generators
@@ -221,10 +221,25 @@ fn generate_server_logs(size: usize) -> Vec<u8> {
     let mut result = Vec::with_capacity(size);
 
     let methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
-    let paths = ["/api/users", "/api/products", "/api/orders", "/health", "/metrics",
-                 "/api/v1/search", "/api/v1/items", "/static/js/app.js", "/static/css/style.css"];
+    let paths = [
+        "/api/users",
+        "/api/products",
+        "/api/orders",
+        "/health",
+        "/metrics",
+        "/api/v1/search",
+        "/api/v1/items",
+        "/static/js/app.js",
+        "/static/css/style.css",
+    ];
     let statuses = [200, 201, 204, 301, 302, 400, 401, 403, 404, 500];
-    let ips = ["192.168.1.100", "10.0.0.50", "172.16.0.25", "192.168.2.200", "10.1.1.1"];
+    let ips = [
+        "192.168.1.100",
+        "10.0.0.50",
+        "172.16.0.25",
+        "192.168.2.200",
+        "10.1.1.1",
+    ];
 
     while result.len() < size {
         let ip = ips[rng.gen_range(0..ips.len())];
@@ -328,23 +343,15 @@ fn bench_general_compression(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         // Haagenti
-        group.bench_with_input(
-            BenchmarkId::new("haagenti", *name),
-            data,
-            |b, data| {
-                let compressor = ZstdCompressor::new();
-                b.iter(|| compressor.compress(black_box(data)).unwrap())
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("haagenti", *name), data, |b, data| {
+            let compressor = ZstdCompressor::new();
+            b.iter(|| compressor.compress(black_box(data)).unwrap())
+        });
 
         // Reference zstd
-        group.bench_with_input(
-            BenchmarkId::new("zstd_ref", *name),
-            data,
-            |b, data| {
-                b.iter(|| zstd::encode_all(black_box(&data[..]), 3).unwrap())
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("zstd_ref", *name), data, |b, data| {
+            b.iter(|| zstd::encode_all(black_box(&data[..]), 3).unwrap())
+        });
     }
 
     group.finish();
@@ -376,9 +383,7 @@ fn bench_general_decompression(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("zstd_ref", *name),
             &ref_compressed,
-            |b, compressed| {
-                b.iter(|| zstd::decode_all(black_box(&compressed[..])).unwrap())
-            },
+            |b, compressed| b.iter(|| zstd::decode_all(black_box(&compressed[..])).unwrap()),
         );
     }
 
@@ -402,9 +407,14 @@ fn bench_compression_ratio(c: &mut Criterion) {
     ];
 
     println!("\n=== Compression Ratio Comparison (64KB) ===\n");
-    println!("{:15} | {:>10} | {:>18} | {:>18} | {:>10}",
-             "Data Type", "Original", "Haagenti", "Reference", "Delta");
-    println!("{:-<15}-+-{:-<10}-+-{:-<18}-+-{:-<18}-+-{:-<10}", "", "", "", "", "");
+    println!(
+        "{:15} | {:>10} | {:>18} | {:>18} | {:>10}",
+        "Data Type", "Original", "Haagenti", "Reference", "Delta"
+    );
+    println!(
+        "{:-<15}-+-{:-<10}-+-{:-<18}-+-{:-<18}-+-{:-<10}",
+        "", "", "", "", ""
+    );
 
     for (name, data) in &datasets {
         let compressor = ZstdCompressor::new();
@@ -444,11 +454,9 @@ fn bench_compression_ratio(c: &mut Criterion) {
 
         // Dummy benchmark just to include in the group
         group.throughput(Throughput::Bytes(1));
-        group.bench_with_input(
-            BenchmarkId::new("ratio_check", *name),
-            &data,
-            |b, _| b.iter(|| 1),
-        );
+        group.bench_with_input(BenchmarkId::new("ratio_check", *name), &data, |b, _| {
+            b.iter(|| 1)
+        });
     }
 
     println!();
@@ -480,9 +488,7 @@ fn bench_various_sizes(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("zstd_ref/prose", size),
             &data,
-            |b, data| {
-                b.iter(|| zstd::encode_all(black_box(&data[..]), 3).unwrap())
-            },
+            |b, data| b.iter(|| zstd::encode_all(black_box(&data[..]), 3).unwrap()),
         );
     }
 

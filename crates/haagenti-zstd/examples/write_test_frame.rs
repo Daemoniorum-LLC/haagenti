@@ -5,7 +5,11 @@ fn main() {
     let compressor = haagenti_zstd::compress::SpeculativeCompressor::new();
     let our_compressed = compressor.compress(input).unwrap();
 
-    println!("Input: {:?} ({} bytes)", std::str::from_utf8(input).unwrap(), input.len());
+    println!(
+        "Input: {:?} ({} bytes)",
+        std::str::from_utf8(input).unwrap(),
+        input.len()
+    );
     println!("Compressed: {} bytes", our_compressed.len());
 
     print!("Hex: ");
@@ -20,5 +24,8 @@ fn main() {
     // Also create a reference frame
     let ref_compressed = zstd::encode_all(&input[..], 1).unwrap();
     std::fs::write("/tmp/ref_frame.zst", &ref_compressed).unwrap();
-    println!("Reference written to /tmp/ref_frame.zst ({} bytes)", ref_compressed.len());
+    println!(
+        "Reference written to /tmp/ref_frame.zst ({} bytes)",
+        ref_compressed.len()
+    );
 }

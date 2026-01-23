@@ -26,7 +26,10 @@ fn test_fragment_structure() {
     let fragments = encoder.encode_2d(&data, width, height).unwrap();
 
     // Should produce at least one fragment (essentials)
-    assert!(!fragments.is_empty(), "Should produce at least one fragment");
+    assert!(
+        !fragments.is_empty(),
+        "Should produce at least one fragment"
+    );
 
     // First fragment should be index 0
     assert_eq!(fragments[0].index, 0, "First fragment should have index 0");
@@ -81,8 +84,16 @@ fn test_fragment_count_matches_retention() {
         low_total_size
     );
 
-    println!("30% retention: {} bytes in {} fragments", low_total_size, low_fragments.len());
-    println!("90% retention: {} bytes in {} fragments", high_total_size, high_fragments.len());
+    println!(
+        "30% retention: {} bytes in {} fragments",
+        low_total_size,
+        low_fragments.len()
+    );
+    println!(
+        "90% retention: {} bytes in {} fragments",
+        high_total_size,
+        high_fragments.len()
+    );
 }
 
 #[test]
@@ -209,12 +220,11 @@ fn test_deterministic_encoding() {
     );
 
     for (i, (f1, f2)) in fragments1.iter().zip(fragments2.iter()).enumerate() {
-        assert_eq!(
-            f1.data, f2.data,
-            "Fragment {} data mismatch",
-            i
-        );
+        assert_eq!(f1.data, f2.data, "Fragment {} data mismatch", i);
     }
 
-    println!("Encoding is deterministic: {} identical fragments", fragments1.len());
+    println!(
+        "Encoding is deterministic: {} identical fragments",
+        fragments1.len()
+    );
 }

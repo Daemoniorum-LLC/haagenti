@@ -27,12 +27,19 @@ fn main() {
     // Try our decoder
     match decompress_frame(&our_frame) {
         Ok(decoded) => {
-            println!("\nOur decoder result: {:?}", String::from_utf8_lossy(&decoded));
+            println!(
+                "\nOur decoder result: {:?}",
+                String::from_utf8_lossy(&decoded)
+            );
             if decoded == expected {
                 println!("OUR DECODER: OK");
             } else {
                 println!("OUR DECODER: MISMATCH");
-                println!("  Expected {} bytes, got {} bytes", expected.len(), decoded.len());
+                println!(
+                    "  Expected {} bytes, got {} bytes",
+                    expected.len(),
+                    decoded.len()
+                );
             }
         }
         Err(e) => {
@@ -43,7 +50,10 @@ fn main() {
     // Try reference decoder
     match zstd::decode_all(Cursor::new(&our_frame)) {
         Ok(decoded) => {
-            println!("\nReference decoder result: {:?}", String::from_utf8_lossy(&decoded));
+            println!(
+                "\nReference decoder result: {:?}",
+                String::from_utf8_lossy(&decoded)
+            );
             if decoded == expected {
                 println!("REFERENCE DECODER: OK");
             } else {
@@ -63,14 +73,16 @@ fn main() {
         0x48, // Window
         0xb1, 0x00, 0x00, // Block header: size=22, type=0 (raw), last=1
         // Raw data: "abcdefghXabcdefghYabcd"
-        0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x58,
-        0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x59,
-        0x61, 0x62, 0x63, 0x64,
+        0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x58, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+        0x67, 0x68, 0x59, 0x61, 0x62, 0x63, 0x64,
     ];
 
     match decompress_frame(&raw_frame) {
         Ok(decoded) => {
-            println!("Our decoder (raw block): {:?}", String::from_utf8_lossy(&decoded));
+            println!(
+                "Our decoder (raw block): {:?}",
+                String::from_utf8_lossy(&decoded)
+            );
             if decoded == expected {
                 println!("RAW BLOCK: OK");
             } else {
@@ -95,10 +107,14 @@ fn main() {
 
     let seq = Sequence::new(4, 2, 4);
     let enc = EncodedSequence::from_sequence(&seq);
-    println!("1 seq: ll_code={}, of_code={}, ml_code={}",
-             enc.ll_code, enc.of_code, enc.ml_code);
-    println!("       extras: ll={}({}b), of={}({}b), ml={}({}b)",
-             enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits);
+    println!(
+        "1 seq: ll_code={}, of_code={}, ml_code={}",
+        enc.ll_code, enc.of_code, enc.ml_code
+    );
+    println!(
+        "       extras: ll={}({}b), of={}({}b), ml={}({}b)",
+        enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits
+    );
 
     let mut tans = InterleavedTansEncoder::new_predefined();
     let (ll_log, of_log, ml_log) = tans.accuracy_logs();
@@ -111,9 +127,15 @@ fn main() {
     let mut bits = FseBitWriter::new();
 
     // For single sequence, just write extras then states
-    if enc.ll_bits > 0 { bits.write_bits(enc.ll_extra, enc.ll_bits); }
-    if enc.ml_bits > 0 { bits.write_bits(enc.ml_extra, enc.ml_bits); }
-    if enc.of_bits > 0 { bits.write_bits(enc.of_extra, enc.of_bits); }
+    if enc.ll_bits > 0 {
+        bits.write_bits(enc.ll_extra, enc.ll_bits);
+    }
+    if enc.ml_bits > 0 {
+        bits.write_bits(enc.ml_extra, enc.ml_bits);
+    }
+    if enc.of_bits > 0 {
+        bits.write_bits(enc.of_extra, enc.of_bits);
+    }
 
     bits.write_bits(ml_state, ml_log);
     bits.write_bits(of_state, of_log);
@@ -123,7 +145,10 @@ fn main() {
     println!("Bitstream: {:02x?}", bitstream);
 
     let frame_1seq = vec![
-        0x28, 0xb5, 0x2f, 0xfd, // Magic
+        0x28,
+        0xb5,
+        0x2f,
+        0xfd, // Magic
         0x00, // FHD
         0x48, // Window
         // Block header: type=2, last=1, size = 1 + 4 + 1 + 1 + bitstream.len()
@@ -131,7 +156,10 @@ fn main() {
         (((1 + 4 + 1 + 1 + bitstream.len() as u32) << 3 | 0x05) >> 8) as u8,
         (((1 + 4 + 1 + 1 + bitstream.len() as u32) << 3 | 0x05) >> 16) as u8,
         0x20, // Literal header: Raw, 4 bytes
-        0x61, 0x62, 0x63, 0x64, // Literals "abcd"
+        0x61,
+        0x62,
+        0x63,
+        0x64, // Literals "abcd"
         0x01, // Seq count
         0x00, // Mode (predefined)
     ];
@@ -145,7 +173,10 @@ fn main() {
 
     match zstd::decode_all(Cursor::new(&frame)) {
         Ok(decoded) => {
-            println!("Reference decoder (1 seq): {:?}", String::from_utf8_lossy(&decoded));
+            println!(
+                "Reference decoder (1 seq): {:?}",
+                String::from_utf8_lossy(&decoded)
+            );
             if decoded == expected_1seq {
                 println!("1-SEQ: OK!");
             } else {

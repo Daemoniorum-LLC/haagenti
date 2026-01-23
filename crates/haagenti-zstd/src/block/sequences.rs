@@ -17,13 +17,16 @@
 //! - Repeat: Reuse previous FSE table (not yet implemented)
 
 use crate::block::literals::LiteralsSection;
-use crate::fse::{FseTable, FseDecoder, BitReader};
+use crate::fse::{BitReader, FseDecoder, FseTable};
 use haagenti_core::{Error, Result};
 
+/// Result type for parse_table_for_mode: (optional (table, bytes_consumed), optional RLE symbol)
+type ParseTableResult = Result<(Option<(FseTable, usize)>, Option<u8>)>;
+
 /// Maximum symbol values for sequence codes (RFC 8878)
-const MAX_LL_SYMBOL: u8 = 35;  // Literal length codes 0-35
-const MAX_OF_SYMBOL: u8 = 31;  // Offset codes 0-31
-const MAX_ML_SYMBOL: u8 = 52;  // Match length codes 0-52
+const MAX_LL_SYMBOL: u8 = 35; // Literal length codes 0-35
+const MAX_OF_SYMBOL: u8 = 31; // Offset codes 0-31
+const MAX_ML_SYMBOL: u8 = 52; // Match length codes 0-52
 
 /// Tracks the three repeat offsets used for efficient offset encoding.
 ///
@@ -47,7 +50,7 @@ impl RepeatOffsets {
     /// - offset_value 3: Use repeat_offset_3 (special case when literal_length == 0)
     /// - offset_value > 3: New offset = value - 3
     fn resolve(&mut self, offset_value: u32, literal_length: u32) -> u32 {
-        let offset = if offset_value == 0 {
+        if offset_value == 0 {
             // Invalid per spec, but handle gracefully
             1
         } else if offset_value <= 3 {
@@ -106,9 +109,7 @@ impl RepeatOffsets {
             self.offsets[1] = self.offsets[0];
             self.offsets[0] = offset;
             offset
-        };
-
-        offset
+        }
     }
 }
 
@@ -232,20 +233,32 @@ impl SequencesSection {
 
         // Parse each FSE table based on its mode
         let (ll_table, ll_rle_sym) = Self::parse_table_for_mode(
-            ll_mode, &input[pos..], MAX_LL_SYMBOL, "Literal Length",
-            &PREDEFINED_LL_DISTRIBUTION, PREDEFINED_LL_ACCURACY_LOG,
+            ll_mode,
+            &input[pos..],
+            MAX_LL_SYMBOL,
+            "Literal Length",
+            &PREDEFINED_LL_DISTRIBUTION,
+            PREDEFINED_LL_ACCURACY_LOG,
         )?;
         pos += ll_table.as_ref().map_or(0, |(_, consumed)| *consumed);
 
         let (of_table, of_rle_sym) = Self::parse_table_for_mode(
-            of_mode, &input[pos..], MAX_OF_SYMBOL, "Offset",
-            &PREDEFINED_OF_DISTRIBUTION, PREDEFINED_OF_ACCURACY_LOG,
+            of_mode,
+            &input[pos..],
+            MAX_OF_SYMBOL,
+            "Offset",
+            &PREDEFINED_OF_DISTRIBUTION,
+            PREDEFINED_OF_ACCURACY_LOG,
         )?;
         pos += of_table.as_ref().map_or(0, |(_, consumed)| *consumed);
 
         let (ml_table, ml_rle_sym) = Self::parse_table_for_mode(
-            ml_mode, &input[pos..], MAX_ML_SYMBOL, "Match Length",
-            &PREDEFINED_ML_DISTRIBUTION, PREDEFINED_ML_ACCURACY_LOG,
+            ml_mode,
+            &input[pos..],
+            MAX_ML_SYMBOL,
+            "Match Length",
+            &PREDEFINED_ML_DISTRIBUTION,
+            PREDEFINED_ML_ACCURACY_LOG,
         )?;
         pos += ml_table.as_ref().map_or(0, |(_, consumed)| *consumed);
 
@@ -253,26 +266,41 @@ impl SequencesSection {
         let has_rle = ll_rle_sym.is_some() || of_rle_sym.is_some() || ml_rle_sym.is_some();
 
         // For mixed modes, we need the tables
-        let ll = ll_table.map(|(t, _)| t).or_else(|| {
-            FseTable::from_predefined(&PREDEFINED_LL_DISTRIBUTION, PREDEFINED_LL_ACCURACY_LOG).ok()
-        }).ok_or_else(|| Error::corrupted("Failed to build LL table"))?;
+        let ll = ll_table
+            .map(|(t, _)| t)
+            .or_else(|| {
+                FseTable::from_predefined(&PREDEFINED_LL_DISTRIBUTION, PREDEFINED_LL_ACCURACY_LOG)
+                    .ok()
+            })
+            .ok_or_else(|| Error::corrupted("Failed to build LL table"))?;
 
-        let of = of_table.map(|(t, _)| t).or_else(|| {
-            FseTable::from_predefined(&PREDEFINED_OF_DISTRIBUTION, PREDEFINED_OF_ACCURACY_LOG).ok()
-        }).ok_or_else(|| Error::corrupted("Failed to build OF table"))?;
+        let of = of_table
+            .map(|(t, _)| t)
+            .or_else(|| {
+                FseTable::from_predefined(&PREDEFINED_OF_DISTRIBUTION, PREDEFINED_OF_ACCURACY_LOG)
+                    .ok()
+            })
+            .ok_or_else(|| Error::corrupted("Failed to build OF table"))?;
 
-        let ml = ml_table.map(|(t, _)| t).or_else(|| {
-            FseTable::from_predefined(&PREDEFINED_ML_DISTRIBUTION, PREDEFINED_ML_ACCURACY_LOG).ok()
-        }).ok_or_else(|| Error::corrupted("Failed to build ML table"))?;
+        let ml = ml_table
+            .map(|(t, _)| t)
+            .or_else(|| {
+                FseTable::from_predefined(&PREDEFINED_ML_DISTRIBUTION, PREDEFINED_ML_ACCURACY_LOG)
+                    .ok()
+            })
+            .ok_or_else(|| Error::corrupted("Failed to build ML table"))?;
 
         // Handle mixed RLE/FSE modes
         if has_rle {
             return Self::decode_mixed_sequences(
                 &input[pos..],
                 num_sequences,
-                &ll, ll_rle_sym,
-                &of, of_rle_sym,
-                &ml, ml_rle_sym,
+                &ll,
+                ll_rle_sym,
+                &of,
+                of_rle_sym,
+                &ml,
+                ml_rle_sym,
             );
         }
 
@@ -334,7 +362,7 @@ impl SequencesSection {
             // Step 1: Peek symbols/values from current states
             let ll_code = ll_decoder.peek_symbol();
             let of_code = of_decoder.peek_symbol();
-            let ml_code = ml_decoder.peek_symbol();
+            let _ml_code = ml_decoder.peek_symbol();
 
             // Step 2: Read extra bits in LL, ML, OF order
             // This matches our encoder write order for internal consistency.
@@ -478,7 +506,7 @@ impl SequencesSection {
         name: &str,
         predefined_dist: &[i16],
         predefined_log: u8,
-    ) -> Result<(Option<(FseTable, usize)>, Option<u8>)> {
+    ) -> ParseTableResult {
         match mode {
             SymbolMode::Predefined => {
                 let table = FseTable::from_predefined(predefined_dist, predefined_log)?;
@@ -489,7 +517,13 @@ impl SequencesSection {
                     return Err(Error::corrupted(format!("{} RLE symbol missing", name)));
                 }
                 // RLE consumes 1 byte for the symbol, return in tuple for position tracking
-                Ok((Some((FseTable::from_predefined(predefined_dist, predefined_log)?, 1)), Some(data[0])))
+                Ok((
+                    Some((
+                        FseTable::from_predefined(predefined_dist, predefined_log)?,
+                        1,
+                    )),
+                    Some(data[0]),
+                ))
             }
             SymbolMode::Fse => {
                 let (table, consumed) = FseTable::parse(data, max_symbol)?;
@@ -497,9 +531,10 @@ impl SequencesSection {
             }
             SymbolMode::Repeat => {
                 // Repeat mode requires storing previous tables, not yet implemented
-                Err(Error::Unsupported(
-                    format!("{} Repeat mode not yet implemented", name).into(),
-                ))
+                Err(Error::Unsupported(format!(
+                    "{} Repeat mode not yet implemented",
+                    name
+                )))
             }
         }
     }
@@ -507,6 +542,7 @@ impl SequencesSection {
     /// Decode sequences with mixed FSE/RLE modes.
     ///
     /// Some symbols come from RLE (fixed), others from FSE tables.
+    #[allow(clippy::too_many_arguments)]
     fn decode_mixed_sequences(
         data: &[u8],
         num_sequences: usize,
@@ -660,32 +696,32 @@ impl SequencesSection {
 /// Predefined literal length distribution (accuracy log = 6).
 /// 36 symbols with normalized frequencies summing to 64.
 pub const PREDEFINED_LL_DISTRIBUTION: [i16; 36] = [
-    4, 3, 2, 2, 2, 2, 2, 2,    // Codes 0-7
-    2, 2, 2, 2, 2, 1, 1, 1,    // Codes 8-15
-    2, 2, 2, 2, 2, 2, 2, 2,    // Codes 16-23
-    2, 3, 2, 1, 1, 1, 1, 1,    // Codes 24-31
-    -1, -1, -1, -1,            // Codes 32-35 (less than 1)
+    4, 3, 2, 2, 2, 2, 2, 2, // Codes 0-7
+    2, 2, 2, 2, 2, 1, 1, 1, // Codes 8-15
+    2, 2, 2, 2, 2, 2, 2, 2, // Codes 16-23
+    2, 3, 2, 1, 1, 1, 1, 1, // Codes 24-31
+    -1, -1, -1, -1, // Codes 32-35 (less than 1)
 ];
 
 /// Predefined offset distribution (accuracy log = 5).
 /// 29 symbols with normalized frequencies summing to 32.
 pub const PREDEFINED_OF_DISTRIBUTION: [i16; 29] = [
-    1, 1, 1, 1, 1, 1, 2, 2,    // Codes 0-7
-    2, 1, 1, 1, 1, 1, 1, 1,    // Codes 8-15
-    1, 1, 1, 1, 1, 1, 1, 1,    // Codes 16-23
-    -1, -1, -1, -1, -1,        // Codes 24-28 (less than 1)
+    1, 1, 1, 1, 1, 1, 2, 2, // Codes 0-7
+    2, 1, 1, 1, 1, 1, 1, 1, // Codes 8-15
+    1, 1, 1, 1, 1, 1, 1, 1, // Codes 16-23
+    -1, -1, -1, -1, -1, // Codes 24-28 (less than 1)
 ];
 
 /// Predefined match length distribution (accuracy log = 6).
 /// 53 symbols with normalized frequencies summing to 64.
 pub const PREDEFINED_ML_DISTRIBUTION: [i16; 53] = [
-    1, 4, 3, 2, 2, 2, 2, 2,    // Codes 0-7
-    2, 1, 1, 1, 1, 1, 1, 1,    // Codes 8-15
-    1, 1, 1, 1, 1, 1, 1, 1,    // Codes 16-23
-    1, 1, 1, 1, 1, 1, 1, 1,    // Codes 24-31
-    1, 1, 1, 1, 1, 1, 1, 1,    // Codes 32-39
-    1, 1, 1, 1, 1, 1, -1, -1,  // Codes 40-47
-    -1, -1, -1, -1, -1,        // Codes 48-52 (less than 1)
+    1, 4, 3, 2, 2, 2, 2, 2, // Codes 0-7
+    2, 1, 1, 1, 1, 1, 1, 1, // Codes 8-15
+    1, 1, 1, 1, 1, 1, 1, 1, // Codes 16-23
+    1, 1, 1, 1, 1, 1, 1, 1, // Codes 24-31
+    1, 1, 1, 1, 1, 1, 1, 1, // Codes 32-39
+    1, 1, 1, 1, 1, 1, -1, -1, // Codes 40-47
+    -1, -1, -1, -1, -1, // Codes 48-52 (less than 1)
 ];
 
 /// Predefined accuracy log for literal lengths.
@@ -703,11 +739,42 @@ pub const PREDEFINED_ML_ACCURACY_LOG: u8 = 6;
 
 /// Literal length code to (extra bits, baseline) mapping.
 pub const LITERAL_LENGTH_BASELINE: [(u8, u32); 36] = [
-    (0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 7),
-    (0, 8), (0, 9), (0, 10), (0, 11), (0, 12), (0, 13), (0, 14), (0, 15),
-    (1, 16), (1, 18), (1, 20), (1, 22), (2, 24), (2, 28), (3, 32), (3, 40),
-    (4, 48), (6, 64), (7, 128), (8, 256), (9, 512), (10, 1024), (11, 2048), (12, 4096),
-    (13, 8192), (14, 16384), (15, 32768), (16, 65536),
+    (0, 0),
+    (0, 1),
+    (0, 2),
+    (0, 3),
+    (0, 4),
+    (0, 5),
+    (0, 6),
+    (0, 7),
+    (0, 8),
+    (0, 9),
+    (0, 10),
+    (0, 11),
+    (0, 12),
+    (0, 13),
+    (0, 14),
+    (0, 15),
+    (1, 16),
+    (1, 18),
+    (1, 20),
+    (1, 22),
+    (2, 24),
+    (2, 28),
+    (3, 32),
+    (3, 40),
+    (4, 48),
+    (6, 64),
+    (7, 128),
+    (8, 256),
+    (9, 512),
+    (10, 1024),
+    (11, 2048),
+    (12, 4096),
+    (13, 8192),
+    (14, 16384),
+    (15, 32768),
+    (16, 65536),
 ];
 
 /// Match length code to (extra bits, baseline) mapping using ZSTD's predefined values.
@@ -721,18 +788,52 @@ pub const LITERAL_LENGTH_BASELINE: [(u8, u32); 36] = [
 /// Each entry is (Number_of_Bits, Baseline) for match length codes 0-52.
 pub const MATCH_LENGTH_BASELINE: [(u8, u32); 53] = [
     // Codes 0-31: No extra bits, match_length = baseline (3-34)
-    (0, 3), (0, 4), (0, 5), (0, 6), (0, 7), (0, 8), (0, 9), (0, 10),
-    (0, 11), (0, 12), (0, 13), (0, 14), (0, 15), (0, 16), (0, 17), (0, 18),
-    (0, 19), (0, 20), (0, 21), (0, 22), (0, 23), (0, 24), (0, 25), (0, 26),
-    (0, 27), (0, 28), (0, 29), (0, 30), (0, 31), (0, 32), (0, 33), (0, 34),
+    (0, 3),
+    (0, 4),
+    (0, 5),
+    (0, 6),
+    (0, 7),
+    (0, 8),
+    (0, 9),
+    (0, 10),
+    (0, 11),
+    (0, 12),
+    (0, 13),
+    (0, 14),
+    (0, 15),
+    (0, 16),
+    (0, 17),
+    (0, 18),
+    (0, 19),
+    (0, 20),
+    (0, 21),
+    (0, 22),
+    (0, 23),
+    (0, 24),
+    (0, 25),
+    (0, 26),
+    (0, 27),
+    (0, 28),
+    (0, 29),
+    (0, 30),
+    (0, 31),
+    (0, 32),
+    (0, 33),
+    (0, 34),
     // Codes 32-35: 1 extra bit (matches RFC)
-    (1, 35), (1, 37), (1, 39), (1, 41),
+    (1, 35),
+    (1, 37),
+    (1, 39),
+    (1, 41),
     // Codes 36-37: 2 extra bits (matches RFC)
-    (2, 43), (2, 47),
+    (2, 43),
+    (2, 47),
     // Codes 38-39: 3 extra bits (matches RFC)
-    (3, 51), (3, 59),
+    (3, 51),
+    (3, 59),
     // Codes 40-41: 4 extra bits (matches RFC)
-    (4, 67), (4, 83),
+    (4, 67),
+    (4, 83),
     // Code 42: 5 extra bits (matches RFC)
     (5, 99),
     // Code 43: 7 extra bits (DIFFERS from RFC's 5 bits!)
@@ -927,7 +1028,7 @@ mod tests {
 
         // Code 0: values 1-2
         assert_eq!(decode_offset(0, 0), 1);
-        assert_eq!(decode_offset(0, 1), 2);  // Note: only 0 bits for code 0, so extra=1 exceeds range
+        assert_eq!(decode_offset(0, 1), 2); // Note: only 0 bits for code 0, so extra=1 exceeds range
 
         // Code 1: values 2-3
         assert_eq!(decode_offset(1, 0), 2);
@@ -982,12 +1083,14 @@ mod tests {
     #[test]
     fn test_predefined_ll_distribution_sum() {
         // Verify the distribution sums to 2^accuracy_log (accounting for -1 values)
-        let sum: i32 = PREDEFINED_LL_DISTRIBUTION.iter()
+        let sum: i32 = PREDEFINED_LL_DISTRIBUTION
+            .iter()
             .filter(|&&x| x > 0)
             .map(|&x| x as i32)
             .sum();
         // -1 values represent "less than 1" and need 1 slot each
-        let less_than_one = PREDEFINED_LL_DISTRIBUTION.iter()
+        let less_than_one = PREDEFINED_LL_DISTRIBUTION
+            .iter()
             .filter(|&&x| x == -1)
             .count();
 
@@ -997,11 +1100,13 @@ mod tests {
 
     #[test]
     fn test_predefined_of_distribution_sum() {
-        let sum: i32 = PREDEFINED_OF_DISTRIBUTION.iter()
+        let sum: i32 = PREDEFINED_OF_DISTRIBUTION
+            .iter()
             .filter(|&&x| x > 0)
             .map(|&x| x as i32)
             .sum();
-        let less_than_one = PREDEFINED_OF_DISTRIBUTION.iter()
+        let less_than_one = PREDEFINED_OF_DISTRIBUTION
+            .iter()
             .filter(|&&x| x == -1)
             .count();
 
@@ -1011,11 +1116,13 @@ mod tests {
 
     #[test]
     fn test_predefined_ml_distribution_sum() {
-        let sum: i32 = PREDEFINED_ML_DISTRIBUTION.iter()
+        let sum: i32 = PREDEFINED_ML_DISTRIBUTION
+            .iter()
             .filter(|&&x| x > 0)
             .map(|&x| x as i32)
             .sum();
-        let less_than_one = PREDEFINED_ML_DISTRIBUTION.iter()
+        let less_than_one = PREDEFINED_ML_DISTRIBUTION
+            .iter()
             .filter(|&&x| x == -1)
             .count();
 
@@ -1097,27 +1204,63 @@ mod tests {
         // Verify mode byte layout: LL[7:6], OF[5:4], ML[3:2], reserved[1:0]
         // All predefined: 0b00_00_00_00 = 0x00
         let mode_byte = 0x00u8;
-        assert_eq!(SymbolMode::from_field((mode_byte >> 6) & 0x03), SymbolMode::Predefined);
-        assert_eq!(SymbolMode::from_field((mode_byte >> 4) & 0x03), SymbolMode::Predefined);
-        assert_eq!(SymbolMode::from_field((mode_byte >> 2) & 0x03), SymbolMode::Predefined);
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 6) & 0x03),
+            SymbolMode::Predefined
+        );
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 4) & 0x03),
+            SymbolMode::Predefined
+        );
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 2) & 0x03),
+            SymbolMode::Predefined
+        );
 
         // All RLE: 0b01_01_01_00 = 0x54
         let mode_byte = 0x54u8;
-        assert_eq!(SymbolMode::from_field((mode_byte >> 6) & 0x03), SymbolMode::Rle);
-        assert_eq!(SymbolMode::from_field((mode_byte >> 4) & 0x03), SymbolMode::Rle);
-        assert_eq!(SymbolMode::from_field((mode_byte >> 2) & 0x03), SymbolMode::Rle);
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 6) & 0x03),
+            SymbolMode::Rle
+        );
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 4) & 0x03),
+            SymbolMode::Rle
+        );
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 2) & 0x03),
+            SymbolMode::Rle
+        );
 
         // All FSE compressed: 0b10_10_10_00 = 0xA8
         let mode_byte = 0xA8u8;
-        assert_eq!(SymbolMode::from_field((mode_byte >> 6) & 0x03), SymbolMode::Fse);
-        assert_eq!(SymbolMode::from_field((mode_byte >> 4) & 0x03), SymbolMode::Fse);
-        assert_eq!(SymbolMode::from_field((mode_byte >> 2) & 0x03), SymbolMode::Fse);
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 6) & 0x03),
+            SymbolMode::Fse
+        );
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 4) & 0x03),
+            SymbolMode::Fse
+        );
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 2) & 0x03),
+            SymbolMode::Fse
+        );
 
         // All repeat: 0b11_11_11_00 = 0xFC
         let mode_byte = 0xFCu8;
-        assert_eq!(SymbolMode::from_field((mode_byte >> 6) & 0x03), SymbolMode::Repeat);
-        assert_eq!(SymbolMode::from_field((mode_byte >> 4) & 0x03), SymbolMode::Repeat);
-        assert_eq!(SymbolMode::from_field((mode_byte >> 2) & 0x03), SymbolMode::Repeat);
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 6) & 0x03),
+            SymbolMode::Repeat
+        );
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 4) & 0x03),
+            SymbolMode::Repeat
+        );
+        assert_eq!(
+            SymbolMode::from_field((mode_byte >> 2) & 0x03),
+            SymbolMode::Repeat
+        );
     }
 
     #[test]

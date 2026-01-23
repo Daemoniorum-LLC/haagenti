@@ -49,8 +49,8 @@ impl QuantizedTensor {
     /// Create empty quantized tensor
     pub fn new(shape: Vec<usize>, group_size: usize) -> Self {
         let total_elements: usize = shape.iter().product();
-        let packed_size = (total_elements + 1) / 2;
-        let num_groups = (total_elements + group_size - 1) / group_size;
+        let packed_size = total_elements.div_ceil(2);
+        let num_groups = total_elements.div_ceil(group_size);
 
         Self {
             data: vec![0; packed_size],
@@ -88,7 +88,8 @@ impl QuantizedTensor {
             let start = group_idx * self.group_size;
             let end = (start + self.group_size).min(self.numel());
 
-            let zero_point = self.zero_points
+            let zero_point = self
+                .zero_points
                 .as_ref()
                 .map_or(0, |zp| zp[group_idx] as i32);
 
@@ -120,8 +121,9 @@ pub struct Int4Quantizer {
     calibration_stats: Option<CalibrationStats>,
 }
 
-/// Calibration statistics
+/// Calibration statistics (internal)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CalibrationStats {
     /// Min values per group
     mins: Vec<f32>,
@@ -149,7 +151,7 @@ impl Int4Quantizer {
         }
 
         let sample_len = samples[0].len();
-        let num_groups = (sample_len + self.config.group_size - 1) / self.config.group_size;
+        let num_groups = sample_len.div_ceil(self.config.group_size);
 
         let mut mins = vec![f32::MAX; num_groups];
         let mut maxs = vec![f32::MIN; num_groups];
@@ -219,7 +221,8 @@ impl Int4Quantizer {
             if i % 2 == 0 {
                 result.data[packed_idx] = (result.data[packed_idx] & 0xF0) | (uint4_val & 0x0F);
             } else {
-                result.data[packed_idx] = (result.data[packed_idx] & 0x0F) | ((uint4_val & 0x0F) << 4);
+                result.data[packed_idx] =
+                    (result.data[packed_idx] & 0x0F) | ((uint4_val & 0x0F) << 4);
             }
         }
 

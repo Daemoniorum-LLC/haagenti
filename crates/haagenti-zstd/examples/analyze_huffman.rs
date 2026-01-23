@@ -1,8 +1,8 @@
 //! Analyze Huffman encoding difference between our encoder and reference
 
 use haagenti_core::Compressor;
-use haagenti_zstd::ZstdCompressor;
 use haagenti_zstd::huffman::HuffmanEncoder;
+use haagenti_zstd::ZstdCompressor;
 
 fn entropy(data: &[u8]) -> f64 {
     let mut freq = [0u64; 256];
@@ -71,14 +71,15 @@ fn main() {
             println!("\n  Our Huffman breakdown:");
             println!("    Weight table: {} bytes", weight_table.len());
             println!("    Encoded stream: {} bytes", encoded_stream.len());
-            println!("    Total literals: {} bytes", weight_table.len() + encoded_stream.len());
+            println!(
+                "    Total literals: {} bytes",
+                weight_table.len() + encoded_stream.len()
+            );
             println!("    Max bits: {}", encoder.max_bits());
 
             // Show most frequent symbols
-            let mut sorted_freq: Vec<_> = freq.iter()
-                .enumerate()
-                .filter(|&(_, f)| *f > 0)
-                .collect();
+            let mut sorted_freq: Vec<_> =
+                freq.iter().enumerate().filter(|&(_, f)| *f > 0).collect();
             sorted_freq.sort_by_key(|&(_, f)| std::cmp::Reverse(*f));
 
             println!("\n  Top 10 symbols (with optimal code lengths):");
@@ -91,8 +92,10 @@ fn main() {
                 };
                 let freq_pct = count as f64 / data.len() as f64 * 100.0;
                 let optimal_bits = -((count as f64 / data.len() as f64).log2());
-                println!("      {}: freq={} ({:.1}%), optimal={:.1} bits",
-                         char_repr, count, freq_pct, optimal_bits);
+                println!(
+                    "      {}: freq={} ({:.1}%), optimal={:.1} bits",
+                    char_repr, count, freq_pct, optimal_bits
+                );
             }
         }
         println!();
@@ -111,7 +114,13 @@ fn main() {
     if ref_compressed.len() > pos {
         let fhd = ref_compressed[pos];
         let fcs_size = match (fhd >> 6) & 0x3 {
-            0 => if fhd & 0x20 != 0 { 1 } else { 0 },
+            0 => {
+                if fhd & 0x20 != 0 {
+                    1
+                } else {
+                    0
+                }
+            }
             1 => 2,
             2 => 4,
             3 => 8,

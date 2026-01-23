@@ -47,8 +47,10 @@ fn analyze_frame(data: &[u8]) {
     }
 
     // Magic
-    println!("Magic: {:02x} {:02x} {:02x} {:02x}",
-             data[0], data[1], data[2], data[3]);
+    println!(
+        "Magic: {:02x} {:02x} {:02x} {:02x}",
+        data[0], data[1], data[2], data[3]
+    );
 
     // Frame header descriptor
     let fhd = data[4];
@@ -56,8 +58,10 @@ fn analyze_frame(data: &[u8]) {
     let single_segment = (fhd >> 5) & 1;
     let checksum = (fhd >> 2) & 1;
     let dict_id_flag = fhd & 3;
-    println!("FHD: {:02x} (FCS_size={}, single_seg={}, checksum={}, dict_id_flag={})",
-             fhd, fcs_size, single_segment, checksum, dict_id_flag);
+    println!(
+        "FHD: {:02x} (FCS_size={}, single_seg={}, checksum={}, dict_id_flag={})",
+        fhd, fcs_size, single_segment, checksum, dict_id_flag
+    );
 
     let mut pos = 5;
 
@@ -67,7 +71,10 @@ fn analyze_frame(data: &[u8]) {
         let exp = wd >> 3;
         let mant = wd & 7;
         let window_size = (1 << (10 + exp)) * (1 + mant as usize / 8);
-        println!("Window_Desc: {:02x} (exp={}, mant={}, size={})", wd, exp, mant, window_size);
+        println!(
+            "Window_Desc: {:02x} (exp={}, mant={}, size={})",
+            wd, exp, mant, window_size
+        );
         pos += 1;
     }
 
@@ -86,9 +93,8 @@ fn analyze_frame(data: &[u8]) {
 
     // Block header
     if pos + 3 <= data.len() {
-        let bh = (data[pos] as u32)
-            | ((data[pos + 1] as u32) << 8)
-            | ((data[pos + 2] as u32) << 16);
+        let bh =
+            (data[pos] as u32) | ((data[pos + 1] as u32) << 8) | ((data[pos + 2] as u32) << 16);
         let last = bh & 1;
         let block_type = (bh >> 1) & 3;
         let block_size = bh >> 3;
@@ -99,8 +105,10 @@ fn analyze_frame(data: &[u8]) {
             3 => "Reserved",
             _ => "?",
         };
-        println!("Block: last={}, type={} ({}), size={}",
-                 last, block_type, type_name, block_size);
+        println!(
+            "Block: last={}, type={} ({}), size={}",
+            last, block_type, type_name, block_size
+        );
         pos += 3;
 
         // Block content
@@ -111,7 +119,11 @@ fn analyze_frame(data: &[u8]) {
 }
 
 fn analyze_compressed_block(block: &[u8]) {
-    println!("  Block content ({} bytes): {:02x?}", block.len(), &block[..block.len().min(40)]);
+    println!(
+        "  Block content ({} bytes): {:02x?}",
+        block.len(),
+        &block[..block.len().min(40)]
+    );
 
     if block.is_empty() {
         return;
@@ -139,8 +151,10 @@ fn analyze_compressed_block(block: &[u8]) {
         _ => (0, 1), // Compressed has different format
     };
 
-    println!("  Literals: type={} ({}), size_format={}, size={}",
-             lit_type, lit_type_name, size_format, lit_size);
+    println!(
+        "  Literals: type={} ({}), size_format={}, size={}",
+        lit_type, lit_type_name, size_format, lit_size
+    );
 
     if lit_type == 0 {
         // Raw literals

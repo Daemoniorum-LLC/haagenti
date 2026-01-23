@@ -73,13 +73,20 @@ impl MixedPrecisionWeight {
     pub fn compression_ratio(&self) -> f32 {
         let orig = self.original_bytes();
         let compressed = self.storage_bytes();
-        if compressed == 0 { 0.0 } else { orig as f32 / compressed as f32 }
+        if compressed == 0 {
+            0.0
+        } else {
+            orig as f32 / compressed as f32
+        }
     }
 
     /// Get fraction of coefficients stored as FP16.
     pub fn fp16_fraction(&self) -> f32 {
-        if self.total_coefficients == 0 { 0.0 }
-        else { self.fp16_count as f32 / self.total_coefficients as f32 }
+        if self.total_coefficients == 0 {
+            0.0
+        } else {
+            self.fp16_count as f32 / self.total_coefficients as f32
+        }
     }
 }
 
@@ -128,7 +135,12 @@ impl MixedPrecisionEncoder {
     }
 
     /// Encode a 2D tensor.
-    pub fn encode(&self, data: &[f32], width: usize, height: usize) -> Result<MixedPrecisionWeight> {
+    pub fn encode(
+        &self,
+        data: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<MixedPrecisionWeight> {
         let n = width * height;
         if data.len() != n {
             return Err(Error::corrupted("data size mismatch"));
@@ -143,12 +155,18 @@ impl MixedPrecisionEncoder {
 
         // Calculate how many coefficients to retain
         let total_retain = ((n as f32 * self.retention) as usize).max(1).min(n);
-        let fp16_count = ((total_retain as f32 * self.fp16_ratio) as usize).max(1).min(total_retain);
+        let fp16_count = ((total_retain as f32 * self.fp16_ratio) as usize)
+            .max(1)
+            .min(total_retain);
         let int4_count = total_retain - fp16_count;
 
         // Sort coefficients by magnitude to find the most important ones
         let mut indexed: Vec<(usize, f32)> = dct_coeffs.iter().cloned().enumerate().collect();
-        indexed.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap_or(std::cmp::Ordering::Equal));
+        indexed.sort_by(|a, b| {
+            b.1.abs()
+                .partial_cmp(&a.1.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Take top `total_retain` coefficients
         let retained: Vec<(usize, f32)> = indexed.into_iter().take(total_retain).collect();
@@ -196,8 +214,8 @@ impl MixedPrecisionEncoder {
         let fp16_bytes = fp16_count * 2;
 
         // INT4: scales + packed nibbles
-        let int4_blocks = (int4_count + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
-        let int4_bytes = int4_blocks * 2 + (int4_count + 1) / 2;
+        let int4_blocks = int4_count.div_ceil(Q4_BLOCK_SIZE);
+        let int4_bytes = int4_blocks * 2 + int4_count.div_ceil(2);
 
         // Index map: 4 bytes per coefficient
         let index_bytes = total_retain * 4;
@@ -299,9 +317,16 @@ fn dct_1d(input: &[f32]) -> Vec<f32> {
     for k in 0..n {
         let mut sum = 0.0f32;
         for i in 0..n {
-            sum += input[i] * (std::f32::consts::PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
+            sum +=
+                input[i] * (std::f32::consts::PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
         }
-        output[k] = sum * scale * if k == 0 { 1.0 / std::f32::consts::SQRT_2 } else { 1.0 };
+        output[k] = sum
+            * scale
+            * if k == 0 {
+                1.0 / std::f32::consts::SQRT_2
+            } else {
+                1.0
+            };
     }
 
     output
@@ -320,7 +345,12 @@ fn idct_1d(input: &[f32]) -> Vec<f32> {
     for i in 0..n {
         let mut sum = 0.0f32;
         for k in 0..n {
-            let coeff = input[k] * if k == 0 { 1.0 / std::f32::consts::SQRT_2 } else { 1.0 };
+            let coeff = input[k]
+                * if k == 0 {
+                    1.0 / std::f32::consts::SQRT_2
+                } else {
+                    1.0
+                };
             sum += coeff * (std::f32::consts::PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
         }
         output[i] = sum * scale;
@@ -420,8 +450,8 @@ fn quantize_int4(values: &[f32]) -> Vec<u8> {
         return vec![];
     }
 
-    let num_blocks = (values.len() + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
-    let mut output = Vec::with_capacity(num_blocks * 2 + (values.len() + 1) / 2);
+    let num_blocks = values.len().div_ceil(Q4_BLOCK_SIZE);
+    let mut output = Vec::with_capacity(num_blocks * 2 + values.len().div_ceil(2));
 
     // First pass: compute and store scales
     let mut scales = Vec::with_capacity(num_blocks);
@@ -461,7 +491,7 @@ fn dequantize_int4(data: &[u8], num_elements: usize) -> Vec<f32> {
         return vec![];
     }
 
-    let num_blocks = (num_elements + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
+    let num_blocks = num_elements.div_ceil(Q4_BLOCK_SIZE);
     let scales_bytes = num_blocks * 2;
 
     if data.len() < scales_bytes {
@@ -551,7 +581,10 @@ mod tests {
 
         assert!(compressed.total_coefficients > 0);
         assert!(compressed.fp16_count > 0);
-        assert_eq!(compressed.total_coefficients, compressed.fp16_count + compressed.int4_count);
+        assert_eq!(
+            compressed.total_coefficients,
+            compressed.fp16_count + compressed.int4_count
+        );
     }
 
     #[test]
@@ -632,7 +665,11 @@ mod tests {
 
         // Should achieve some compression
         let ratio = compressed.compression_ratio();
-        assert!(ratio > 1.0, "Expected compression ratio > 1.0, got {}", ratio);
+        assert!(
+            ratio > 1.0,
+            "Expected compression ratio > 1.0, got {}",
+            ratio
+        );
     }
 
     #[test]

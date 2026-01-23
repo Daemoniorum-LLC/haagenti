@@ -5,12 +5,12 @@
 
 use std::time::Instant;
 
-use haagenti_core::{Compressor, CompressionLevel};
+use haagenti_core::{CompressionLevel, Compressor};
 use haagenti_lz4::Lz4Compressor;
 use haagenti_zstd::ZstdCompressor;
 
 use rand::prelude::*;
-use rand_distr::{Normal, Distribution};
+use rand_distr::{Distribution, Normal};
 
 /// Weight distribution patterns found in real LLMs.
 #[derive(Debug, Clone, Copy)]
@@ -186,19 +186,52 @@ fn main() {
 
     // Test sizes (simulating different layer sizes)
     let sizes = [
-        ("Small (1MB)", 1024 * 1024 / 4),      // 1MB of FP32 = 256K weights
+        ("Small (1MB)", 1024 * 1024 / 4), // 1MB of FP32 = 256K weights
         ("Medium (16MB)", 16 * 1024 * 1024 / 4), // 16MB = 4M weights
-        ("Large (64MB)", 64 * 1024 * 1024 / 4),  // 64MB = 16M weights
+        ("Large (64MB)", 64 * 1024 * 1024 / 4), // 64MB = 16M weights
     ];
 
     // Weight patterns to test
     let patterns = [
-        ("Normal (σ=0.02)", WeightPattern::Normal { mean: 0.0, std: 0.02 }),
-        ("Normal (σ=0.1)", WeightPattern::Normal { mean: 0.0, std: 0.1 }),
-        ("Sparse 50%", WeightPattern::Sparse { sparsity: 0.5, std: 0.02 }),
-        ("Sparse 90%", WeightPattern::Sparse { sparsity: 0.9, std: 0.02 }),
-        ("Clustered 16", WeightPattern::Clustered { num_clusters: 16 }),
-        ("Uniform", WeightPattern::Uniform { min: -0.1, max: 0.1 }),
+        (
+            "Normal (σ=0.02)",
+            WeightPattern::Normal {
+                mean: 0.0,
+                std: 0.02,
+            },
+        ),
+        (
+            "Normal (σ=0.1)",
+            WeightPattern::Normal {
+                mean: 0.0,
+                std: 0.1,
+            },
+        ),
+        (
+            "Sparse 50%",
+            WeightPattern::Sparse {
+                sparsity: 0.5,
+                std: 0.02,
+            },
+        ),
+        (
+            "Sparse 90%",
+            WeightPattern::Sparse {
+                sparsity: 0.9,
+                std: 0.02,
+            },
+        ),
+        (
+            "Clustered 16",
+            WeightPattern::Clustered { num_clusters: 16 },
+        ),
+        (
+            "Uniform",
+            WeightPattern::Uniform {
+                min: -0.1,
+                max: 0.1,
+            },
+        ),
     ];
 
     // Compressors

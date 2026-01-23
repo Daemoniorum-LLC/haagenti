@@ -22,8 +22,8 @@ use std::io::Write as IoWrite;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use haagenti::svd_compression::{SvdEncoder, SvdDecoder, mse, cosine_similarity};
-use haagenti::compressive::{CompressiveSpectralEncoder, CompressiveSpectralDecoder};
+use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+use haagenti::svd_compression::{cosine_similarity, mse, SvdDecoder, SvdEncoder};
 
 /// Tensor metadata from safetensors.
 #[derive(Debug, Clone)]
@@ -167,21 +167,33 @@ fn find_model_in_cache(model_name: &str) -> Option<PathBuf> {
 
 /// Check if tensor is an attention projection weight.
 fn is_attention_weight(name: &str) -> bool {
-    name.contains("q_proj") || name.contains("k_proj") ||
-    name.contains("v_proj") || name.contains("o_proj") ||
-    name.contains(".wq.") || name.contains(".wk.") ||
-    name.contains(".wv.") || name.contains(".wo.") ||
-    name.contains("query") || name.contains("key") ||
-    name.contains("value") || name.contains("qkv")
+    name.contains("q_proj")
+        || name.contains("k_proj")
+        || name.contains("v_proj")
+        || name.contains("o_proj")
+        || name.contains(".wq.")
+        || name.contains(".wk.")
+        || name.contains(".wv.")
+        || name.contains(".wo.")
+        || name.contains("query")
+        || name.contains("key")
+        || name.contains("value")
+        || name.contains("qkv")
 }
 
 /// Check if tensor is an MLP/FFN weight.
 fn is_mlp_weight(name: &str) -> bool {
-    name.contains("mlp.") || name.contains("feed_forward") ||
-    name.contains("ffn") || name.contains(".fc1") || name.contains(".fc2") ||
-    name.contains("up_proj") || name.contains("down_proj") ||
-    name.contains("gate_proj") || name.contains("w1.") ||
-    name.contains("w2.") || name.contains("w3.")
+    name.contains("mlp.")
+        || name.contains("feed_forward")
+        || name.contains("ffn")
+        || name.contains(".fc1")
+        || name.contains(".fc2")
+        || name.contains("up_proj")
+        || name.contains("down_proj")
+        || name.contains("gate_proj")
+        || name.contains("w1.")
+        || name.contains("w2.")
+        || name.contains("w3.")
 }
 
 /// Compress with SVD and measure.
@@ -352,8 +364,11 @@ fn main() {
     attention_tensors.truncate(max_tensors);
     mlp_tensors.truncate(max_tensors);
 
-    println!("Found {} attention tensors, {} MLP tensors\n",
-             attention_tensors.len(), mlp_tensors.len());
+    println!(
+        "Found {} attention tensors, {} MLP tensors\n",
+        attention_tensors.len(),
+        mlp_tensors.len()
+    );
 
     // Process attention tensors
     println!("=== ATTENTION TENSORS ===\n");
@@ -496,50 +511,106 @@ fn main() {
     println!("\n=== SUMMARY ===\n");
 
     if !attn_results.is_empty() {
-        let attn_svd_wins_quality = attn_results.iter().filter(|r| r.svd_cosine > r.dct_cosine).count();
-        let attn_svd_wins_size = attn_results.iter().filter(|r| r.svd_compressed_bytes < r.dct_compressed_bytes).count();
-        let avg_attn_svd_cos: f32 = attn_results.iter().map(|r| r.svd_cosine).sum::<f32>() / attn_results.len() as f32;
-        let avg_attn_dct_cos: f32 = attn_results.iter().map(|r| r.dct_cosine).sum::<f32>() / attn_results.len() as f32;
-        let avg_attn_svd_mse: f32 = attn_results.iter().map(|r| r.svd_mse).sum::<f32>() / attn_results.len() as f32;
-        let avg_attn_dct_mse: f32 = attn_results.iter().map(|r| r.dct_mse).sum::<f32>() / attn_results.len() as f32;
+        let attn_svd_wins_quality = attn_results
+            .iter()
+            .filter(|r| r.svd_cosine > r.dct_cosine)
+            .count();
+        let attn_svd_wins_size = attn_results
+            .iter()
+            .filter(|r| r.svd_compressed_bytes < r.dct_compressed_bytes)
+            .count();
+        let avg_attn_svd_cos: f32 =
+            attn_results.iter().map(|r| r.svd_cosine).sum::<f32>() / attn_results.len() as f32;
+        let avg_attn_dct_cos: f32 =
+            attn_results.iter().map(|r| r.dct_cosine).sum::<f32>() / attn_results.len() as f32;
+        let avg_attn_svd_mse: f32 =
+            attn_results.iter().map(|r| r.svd_mse).sum::<f32>() / attn_results.len() as f32;
+        let avg_attn_dct_mse: f32 =
+            attn_results.iter().map(|r| r.dct_mse).sum::<f32>() / attn_results.len() as f32;
         let total_attn_svd_bytes: usize = attn_results.iter().map(|r| r.svd_compressed_bytes).sum();
         let total_attn_dct_bytes: usize = attn_results.iter().map(|r| r.dct_compressed_bytes).sum();
         let total_attn_original: usize = attn_results.iter().map(|r| r.original_bytes).sum();
 
         println!("ATTENTION TENSORS ({} total):", attn_results.len());
-        println!("  Quality wins:  SVD {} vs DCT {}", attn_svd_wins_quality, attn_results.len() - attn_svd_wins_quality);
-        println!("  Size wins:     SVD {} vs DCT {}", attn_svd_wins_size, attn_results.len() - attn_svd_wins_size);
-        println!("  Avg cosine:    SVD {:.6} vs DCT {:.6}", avg_attn_svd_cos, avg_attn_dct_cos);
-        println!("  Avg MSE:       SVD {:.6e} vs DCT {:.6e}", avg_attn_svd_mse, avg_attn_dct_mse);
-        println!("  Total bytes:   SVD {} vs DCT {} (original {})",
-                 total_attn_svd_bytes, total_attn_dct_bytes, total_attn_original);
-        println!("  Compression:   SVD {:.2}x vs DCT {:.2}x",
-                 total_attn_original as f32 / total_attn_svd_bytes as f32,
-                 total_attn_original as f32 / total_attn_dct_bytes as f32);
+        println!(
+            "  Quality wins:  SVD {} vs DCT {}",
+            attn_svd_wins_quality,
+            attn_results.len() - attn_svd_wins_quality
+        );
+        println!(
+            "  Size wins:     SVD {} vs DCT {}",
+            attn_svd_wins_size,
+            attn_results.len() - attn_svd_wins_size
+        );
+        println!(
+            "  Avg cosine:    SVD {:.6} vs DCT {:.6}",
+            avg_attn_svd_cos, avg_attn_dct_cos
+        );
+        println!(
+            "  Avg MSE:       SVD {:.6e} vs DCT {:.6e}",
+            avg_attn_svd_mse, avg_attn_dct_mse
+        );
+        println!(
+            "  Total bytes:   SVD {} vs DCT {} (original {})",
+            total_attn_svd_bytes, total_attn_dct_bytes, total_attn_original
+        );
+        println!(
+            "  Compression:   SVD {:.2}x vs DCT {:.2}x",
+            total_attn_original as f32 / total_attn_svd_bytes as f32,
+            total_attn_original as f32 / total_attn_dct_bytes as f32
+        );
         println!();
     }
 
     if !mlp_results.is_empty() {
-        let mlp_svd_wins_quality = mlp_results.iter().filter(|r| r.svd_cosine > r.dct_cosine).count();
-        let mlp_svd_wins_size = mlp_results.iter().filter(|r| r.svd_compressed_bytes < r.dct_compressed_bytes).count();
-        let avg_mlp_svd_cos: f32 = mlp_results.iter().map(|r| r.svd_cosine).sum::<f32>() / mlp_results.len() as f32;
-        let avg_mlp_dct_cos: f32 = mlp_results.iter().map(|r| r.dct_cosine).sum::<f32>() / mlp_results.len() as f32;
-        let avg_mlp_svd_mse: f32 = mlp_results.iter().map(|r| r.svd_mse).sum::<f32>() / mlp_results.len() as f32;
-        let avg_mlp_dct_mse: f32 = mlp_results.iter().map(|r| r.dct_mse).sum::<f32>() / mlp_results.len() as f32;
+        let mlp_svd_wins_quality = mlp_results
+            .iter()
+            .filter(|r| r.svd_cosine > r.dct_cosine)
+            .count();
+        let mlp_svd_wins_size = mlp_results
+            .iter()
+            .filter(|r| r.svd_compressed_bytes < r.dct_compressed_bytes)
+            .count();
+        let avg_mlp_svd_cos: f32 =
+            mlp_results.iter().map(|r| r.svd_cosine).sum::<f32>() / mlp_results.len() as f32;
+        let avg_mlp_dct_cos: f32 =
+            mlp_results.iter().map(|r| r.dct_cosine).sum::<f32>() / mlp_results.len() as f32;
+        let avg_mlp_svd_mse: f32 =
+            mlp_results.iter().map(|r| r.svd_mse).sum::<f32>() / mlp_results.len() as f32;
+        let avg_mlp_dct_mse: f32 =
+            mlp_results.iter().map(|r| r.dct_mse).sum::<f32>() / mlp_results.len() as f32;
         let total_mlp_svd_bytes: usize = mlp_results.iter().map(|r| r.svd_compressed_bytes).sum();
         let total_mlp_dct_bytes: usize = mlp_results.iter().map(|r| r.dct_compressed_bytes).sum();
         let total_mlp_original: usize = mlp_results.iter().map(|r| r.original_bytes).sum();
 
         println!("MLP/FFN TENSORS ({} total):", mlp_results.len());
-        println!("  Quality wins:  SVD {} vs DCT {}", mlp_svd_wins_quality, mlp_results.len() - mlp_svd_wins_quality);
-        println!("  Size wins:     SVD {} vs DCT {}", mlp_svd_wins_size, mlp_results.len() - mlp_svd_wins_size);
-        println!("  Avg cosine:    SVD {:.6} vs DCT {:.6}", avg_mlp_svd_cos, avg_mlp_dct_cos);
-        println!("  Avg MSE:       SVD {:.6e} vs DCT {:.6e}", avg_mlp_svd_mse, avg_mlp_dct_mse);
-        println!("  Total bytes:   SVD {} vs DCT {} (original {})",
-                 total_mlp_svd_bytes, total_mlp_dct_bytes, total_mlp_original);
-        println!("  Compression:   SVD {:.2}x vs DCT {:.2}x",
-                 total_mlp_original as f32 / total_mlp_svd_bytes as f32,
-                 total_mlp_original as f32 / total_mlp_dct_bytes as f32);
+        println!(
+            "  Quality wins:  SVD {} vs DCT {}",
+            mlp_svd_wins_quality,
+            mlp_results.len() - mlp_svd_wins_quality
+        );
+        println!(
+            "  Size wins:     SVD {} vs DCT {}",
+            mlp_svd_wins_size,
+            mlp_results.len() - mlp_svd_wins_size
+        );
+        println!(
+            "  Avg cosine:    SVD {:.6} vs DCT {:.6}",
+            avg_mlp_svd_cos, avg_mlp_dct_cos
+        );
+        println!(
+            "  Avg MSE:       SVD {:.6e} vs DCT {:.6e}",
+            avg_mlp_svd_mse, avg_mlp_dct_mse
+        );
+        println!(
+            "  Total bytes:   SVD {} vs DCT {} (original {})",
+            total_mlp_svd_bytes, total_mlp_dct_bytes, total_mlp_original
+        );
+        println!(
+            "  Compression:   SVD {:.2}x vs DCT {:.2}x",
+            total_mlp_original as f32 / total_mlp_svd_bytes as f32,
+            total_mlp_original as f32 / total_mlp_dct_bytes as f32
+        );
         println!();
     }
 
@@ -547,25 +618,37 @@ fn main() {
     println!("=== RECOMMENDATION ===\n");
 
     if !attn_results.is_empty() && !mlp_results.is_empty() {
-        let avg_attn_svd_cos: f32 = attn_results.iter().map(|r| r.svd_cosine).sum::<f32>() / attn_results.len() as f32;
-        let avg_attn_dct_cos: f32 = attn_results.iter().map(|r| r.dct_cosine).sum::<f32>() / attn_results.len() as f32;
-        let avg_mlp_svd_cos: f32 = mlp_results.iter().map(|r| r.svd_cosine).sum::<f32>() / mlp_results.len() as f32;
-        let avg_mlp_dct_cos: f32 = mlp_results.iter().map(|r| r.dct_cosine).sum::<f32>() / mlp_results.len() as f32;
+        let avg_attn_svd_cos: f32 =
+            attn_results.iter().map(|r| r.svd_cosine).sum::<f32>() / attn_results.len() as f32;
+        let avg_attn_dct_cos: f32 =
+            attn_results.iter().map(|r| r.dct_cosine).sum::<f32>() / attn_results.len() as f32;
+        let avg_mlp_svd_cos: f32 =
+            mlp_results.iter().map(|r| r.svd_cosine).sum::<f32>() / mlp_results.len() as f32;
+        let avg_mlp_dct_cos: f32 =
+            mlp_results.iter().map(|r| r.dct_cosine).sum::<f32>() / mlp_results.len() as f32;
 
         if avg_attn_svd_cos > avg_attn_dct_cos {
-            println!("Attention: SVD wins by {:.4} cosine similarity",
-                     avg_attn_svd_cos - avg_attn_dct_cos);
+            println!(
+                "Attention: SVD wins by {:.4} cosine similarity",
+                avg_attn_svd_cos - avg_attn_dct_cos
+            );
         } else {
-            println!("Attention: DCT wins by {:.4} cosine similarity",
-                     avg_attn_dct_cos - avg_attn_svd_cos);
+            println!(
+                "Attention: DCT wins by {:.4} cosine similarity",
+                avg_attn_dct_cos - avg_attn_svd_cos
+            );
         }
 
         if avg_mlp_svd_cos > avg_mlp_dct_cos {
-            println!("MLP/FFN:   SVD wins by {:.4} cosine similarity",
-                     avg_mlp_svd_cos - avg_mlp_dct_cos);
+            println!(
+                "MLP/FFN:   SVD wins by {:.4} cosine similarity",
+                avg_mlp_svd_cos - avg_mlp_dct_cos
+            );
         } else {
-            println!("MLP/FFN:   DCT wins by {:.4} cosine similarity",
-                     avg_mlp_dct_cos - avg_mlp_svd_cos);
+            println!(
+                "MLP/FFN:   DCT wins by {:.4} cosine similarity",
+                avg_mlp_dct_cos - avg_mlp_svd_cos
+            );
         }
 
         println!();

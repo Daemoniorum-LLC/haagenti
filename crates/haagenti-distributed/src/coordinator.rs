@@ -1,7 +1,7 @@
 //! Job coordination for distributed inference
 
 use crate::{
-    node::{Node, NodeRegistry, NodeStatus, ShardAssignment},
+    node::NodeRegistry,
     partition::{ModelPartition, PartitionStrategy},
     topology::Topology,
     DistributedError, Result,
@@ -9,7 +9,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 /// Coordinator configuration
@@ -111,7 +111,11 @@ pub enum ShardExecutionStatus {
 
 impl Job {
     /// Create new job
-    pub fn new(id: impl Into<String>, model_name: impl Into<String>, strategy: PartitionStrategy) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        model_name: impl Into<String>,
+        strategy: PartitionStrategy,
+    ) -> Self {
         Self {
             id: id.into(),
             model_name: model_name.into(),
@@ -238,7 +242,11 @@ impl Coordinator {
                 }
             }
 
-            if self.jobs.values().filter(|j| j.status == JobStatus::Running).count()
+            if self
+                .jobs
+                .values()
+                .filter(|j| j.status == JobStatus::Running)
+                .count()
                 >= self.config.max_concurrent_jobs
             {
                 break;
@@ -351,10 +359,9 @@ impl Coordinator {
             .iter()
             .all(|s| s.status == ShardExecutionStatus::Completed);
 
-        let any_failed = job
-            .shards
-            .iter()
-            .any(|s| s.status == ShardExecutionStatus::Failed && s.retries >= self.config.retry_count);
+        let any_failed = job.shards.iter().any(|s| {
+            s.status == ShardExecutionStatus::Failed && s.retries >= self.config.retry_count
+        });
 
         if all_completed {
             job.status = JobStatus::Completed;
@@ -379,8 +386,7 @@ impl Coordinator {
             .jobs
             .iter()
             .filter(|(_, job)| {
-                job.status == JobStatus::Running
-                    && job.shards.iter().any(|s| s.node_id == node_id)
+                job.status == JobStatus::Running && job.shards.iter().any(|s| s.node_id == node_id)
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -411,16 +417,15 @@ impl Coordinator {
             for shard in &mut job.shards {
                 if shard.node_id == failed_node_id
                     && shard.status != ShardExecutionStatus::Completed
+                    && shard.retries < self.config.retry_count
                 {
-                    if shard.retries < self.config.retry_count {
-                        // Find new node (round-robin for simplicity)
-                        let nodes = self.nodes.read().await;
-                        let workers = nodes.ready_workers();
-                        if let Some(new_worker) = workers.first() {
-                            shard.node_id = new_worker.id().to_string();
-                            shard.status = ShardExecutionStatus::Assigned;
-                            shard.retries += 1;
-                        }
+                    // Find new node (round-robin for simplicity)
+                    let nodes = self.nodes.read().await;
+                    let workers = nodes.ready_workers();
+                    if let Some(new_worker) = workers.first() {
+                        shard.node_id = new_worker.id().to_string();
+                        shard.status = ShardExecutionStatus::Assigned;
+                        shard.retries += 1;
                     }
                 }
             }
@@ -470,7 +475,11 @@ mod tests {
 
     #[test]
     fn test_job_creation() {
-        let job = Job::new("job-1", "llama-7b", PartitionStrategy::TensorParallel { world_size: 4 });
+        let job = Job::new(
+            "job-1",
+            "llama-7b",
+            PartitionStrategy::TensorParallel { world_size: 4 },
+        );
 
         assert_eq!(job.id, "job-1");
         assert_eq!(job.status, JobStatus::Queued);
@@ -479,7 +488,11 @@ mod tests {
 
     #[test]
     fn test_job_progress() {
-        let mut job = Job::new("job-1", "model", PartitionStrategy::TensorParallel { world_size: 2 });
+        let mut job = Job::new(
+            "job-1",
+            "model",
+            PartitionStrategy::TensorParallel { world_size: 2 },
+        );
 
         job.shards.push(ShardStatus {
             shard_id: "s1".into(),

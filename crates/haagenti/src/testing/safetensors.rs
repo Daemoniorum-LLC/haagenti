@@ -47,7 +47,9 @@ impl TensorInfo {
 /// # Errors
 ///
 /// Returns an error string if the header is invalid or malformed.
-pub fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, TensorInfo>), String> {
+pub fn parse_safetensors_header(
+    data: &[u8],
+) -> Result<(usize, HashMap<String, TensorInfo>), String> {
     if data.len() < 8 {
         return Err("File too small for safetensors header".to_string());
     }

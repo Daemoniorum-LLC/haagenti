@@ -3,13 +3,13 @@
 //! These tests establish baseline quality metrics and fail if quality degrades.
 //! Run with: cargo test --test integration_tests --features="lz4,zstd,testing"
 
-use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
 use haagenti::adaptive::AdaptiveSpectralEncoder;
-use haagenti::mixed_precision::{MixedPrecisionEncoder, MixedPrecisionDecoder};
-use haagenti::importance::{ImportanceGuidedEncoder, ImportanceGuidedDecoder, ImportanceMap};
-use rand::SeedableRng;
+use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+use haagenti::importance::{ImportanceGuidedDecoder, ImportanceGuidedEncoder, ImportanceMap};
+use haagenti::mixed_precision::{MixedPrecisionDecoder, MixedPrecisionEncoder};
 use rand::rngs::StdRng;
-use rand_distr::{Normal, Distribution};
+use rand::SeedableRng;
+use rand_distr::{Distribution, Normal};
 
 /// Generate deterministic LLM-like weight distribution
 fn generate_llm_weights(size: usize, seed: u64) -> Vec<f32> {
@@ -46,10 +46,12 @@ fn generate_attention_weights(rows: usize, cols: usize, seed: u64) -> Vec<f32> {
 /// Calculate MSE between original and reconstructed
 fn mse(original: &[f32], reconstructed: &[f32]) -> f32 {
     assert_eq!(original.len(), reconstructed.len());
-    original.iter()
+    original
+        .iter()
         .zip(reconstructed.iter())
         .map(|(a, b)| (a - b).powi(2))
-        .sum::<f32>() / original.len() as f32
+        .sum::<f32>()
+        / original.len() as f32
 }
 
 /// Calculate cosine similarity
@@ -75,7 +77,8 @@ struct QualityMetrics {
 impl QualityMetrics {
     fn new(original: &[f32], reconstructed: &[f32], compressed_size: usize) -> Self {
         let original_size = original.len() * 4; // F32 = 4 bytes
-        let max_error = original.iter()
+        let max_error = original
+            .iter()
             .zip(reconstructed.iter())
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f32, f32::max);
@@ -101,7 +104,7 @@ const COMPRESSIVE_70_MAX_MSE: f32 = 0.001;
 
 /// Adaptive encoder at 90% quality target should achieve:
 /// Note: Adaptive uses spectral energy to determine retention, so results may vary
-const ADAPTIVE_90_MIN_COSINE: f32 = 0.94;  // Adjusted based on observed performance
+const ADAPTIVE_90_MIN_COSINE: f32 = 0.94; // Adjusted based on observed performance
 const ADAPTIVE_90_MAX_MSE: f32 = 0.003;
 
 /// Mixed precision encoder should achieve:
@@ -146,12 +149,14 @@ fn test_compressive_spectral_quality_baseline() {
     assert!(
         metrics.cosine_sim >= COMPRESSIVE_70_MIN_COSINE,
         "Compressive cosine similarity {:.4} below threshold {:.4}",
-        metrics.cosine_sim, COMPRESSIVE_70_MIN_COSINE
+        metrics.cosine_sim,
+        COMPRESSIVE_70_MIN_COSINE
     );
     assert!(
         metrics.mse <= COMPRESSIVE_70_MAX_MSE,
         "Compressive MSE {:.6} above threshold {:.6}",
-        metrics.mse, COMPRESSIVE_70_MAX_MSE
+        metrics.mse,
+        COMPRESSIVE_70_MAX_MSE
     );
 }
 
@@ -186,12 +191,14 @@ fn test_adaptive_spectral_quality_baseline() {
     assert!(
         metrics.cosine_sim >= ADAPTIVE_90_MIN_COSINE,
         "Adaptive cosine similarity {:.4} below threshold {:.4}",
-        metrics.cosine_sim, ADAPTIVE_90_MIN_COSINE
+        metrics.cosine_sim,
+        ADAPTIVE_90_MIN_COSINE
     );
     assert!(
         metrics.mse <= ADAPTIVE_90_MAX_MSE,
         "Adaptive MSE {:.6} above threshold {:.6}",
-        metrics.mse, ADAPTIVE_90_MAX_MSE
+        metrics.mse,
+        ADAPTIVE_90_MAX_MSE
     );
 }
 
@@ -210,8 +217,10 @@ fn test_mixed_precision_quality_baseline() {
     let metrics = QualityMetrics::new(&data, &reconstructed, compressed_size);
 
     println!("Mixed Precision metrics:");
-    println!("  FP16 coeffs: {}, INT4 coeffs: {}",
-             compressed.fp16_count, compressed.int4_count);
+    println!(
+        "  FP16 coeffs: {}, INT4 coeffs: {}",
+        compressed.fp16_count, compressed.int4_count
+    );
     println!("  Cosine similarity: {:.6}", metrics.cosine_sim);
     println!("  MSE: {:.6}", metrics.mse);
     println!("  Max error: {:.6}", metrics.max_error);
@@ -220,12 +229,14 @@ fn test_mixed_precision_quality_baseline() {
     assert!(
         metrics.cosine_sim >= MIXED_PRECISION_MIN_COSINE,
         "Mixed precision cosine similarity {:.4} below threshold {:.4}",
-        metrics.cosine_sim, MIXED_PRECISION_MIN_COSINE
+        metrics.cosine_sim,
+        MIXED_PRECISION_MIN_COSINE
     );
     assert!(
         metrics.mse <= MIXED_PRECISION_MAX_MSE,
         "Mixed precision MSE {:.6} above threshold {:.6}",
-        metrics.mse, MIXED_PRECISION_MAX_MSE
+        metrics.mse,
+        MIXED_PRECISION_MAX_MSE
     );
 }
 
@@ -247,7 +258,10 @@ fn test_importance_guided_quality_baseline() {
     let metrics = QualityMetrics::new(&data, &reconstructed, compressed_size);
 
     println!("Importance-guided metrics (v_proj):");
-    println!("  Effective retention: {:.1}%", compressed.effective_retention * 100.0);
+    println!(
+        "  Effective retention: {:.1}%",
+        compressed.effective_retention * 100.0
+    );
     println!("  Cosine similarity: {:.6}", metrics.cosine_sim);
     println!("  MSE: {:.6}", metrics.mse);
     println!("  Max error: {:.6}", metrics.max_error);
@@ -256,12 +270,14 @@ fn test_importance_guided_quality_baseline() {
     assert!(
         metrics.cosine_sim >= IMPORTANCE_MIN_COSINE,
         "Importance-guided cosine similarity {:.4} below threshold {:.4}",
-        metrics.cosine_sim, IMPORTANCE_MIN_COSINE
+        metrics.cosine_sim,
+        IMPORTANCE_MIN_COSINE
     );
     assert!(
         metrics.mse <= IMPORTANCE_MAX_MSE,
         "Importance-guided MSE {:.6} above threshold {:.6}",
-        metrics.mse, IMPORTANCE_MAX_MSE
+        metrics.mse,
+        IMPORTANCE_MAX_MSE
     );
 }
 
@@ -286,12 +302,18 @@ fn test_quality_monotonicity() {
         let reconstructed = decoder.reconstruct().unwrap();
 
         let cosine = cosine_similarity(&data, &reconstructed);
-        println!("Retention {:.0}%: cosine = {:.6}", retention * 100.0, cosine);
+        println!(
+            "Retention {:.0}%: cosine = {:.6}",
+            retention * 100.0,
+            cosine
+        );
 
         assert!(
             cosine >= prev_cosine - 0.001, // Allow tiny tolerance for floating point
             "Quality decreased at {:.0}% retention: {:.4} < {:.4}",
-            retention * 100.0, cosine, prev_cosine
+            retention * 100.0,
+            cosine,
+            prev_cosine
         );
         prev_cosine = cosine;
     }
@@ -321,7 +343,12 @@ fn test_layer_type_quality_ranking() {
         let cosine = cosine_similarity(&data, &reconstructed);
         let retention = compressed.effective_retention;
 
-        println!("{}: retention={:.1}%, cosine={:.4}", label, retention * 100.0, cosine);
+        println!(
+            "{}: retention={:.1}%, cosine={:.4}",
+            label,
+            retention * 100.0,
+            cosine
+        );
         results.push((retention, cosine, label));
     }
 

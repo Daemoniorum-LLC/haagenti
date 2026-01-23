@@ -1,13 +1,13 @@
 //! Generation stream management
 
 use crate::{
-    PreviewConfig, PreviewData, PreviewFrame, PreviewQuality, PreviewScheduler, Result, ScheduleMode,
+    PreviewConfig, PreviewFrame, PreviewQuality, PreviewScheduler, Result, ScheduleMode,
     StreamError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 
 /// Configuration for generation stream
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,6 +265,7 @@ impl StreamHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::preview::{PreviewData, PreviewFrame, PreviewQuality};
 
     #[tokio::test]
     async fn test_stream_lifecycle() {

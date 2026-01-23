@@ -256,7 +256,9 @@ where
                         let decompressed = this
                             .decompressor
                             .decompress(&this.input_buffer)
-                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                            .map_err(|e| {
+                                io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+                            })?;
 
                         *this.output_buffer = decompressed;
                         *this.output_pos = 0;
@@ -364,8 +366,7 @@ mod tests {
         let mut output = Vec::new();
 
         {
-            let mut writer =
-                AsyncCompressWriter::with_buffer_size(&mut output, MockCompressor, 16);
+            let mut writer = AsyncCompressWriter::with_buffer_size(&mut output, MockCompressor, 16);
             writer.write_all(b"Hello").await.unwrap();
             writer.shutdown().await.unwrap();
         }

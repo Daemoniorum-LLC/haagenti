@@ -159,7 +159,8 @@ impl Codebook {
 
         for i in 0..self.config.num_centroids {
             let offset = i * self.config.centroid_dim;
-            let dist = self.squared_distance(vector, &self.centroids[offset..offset + vector.len()]);
+            let dist =
+                self.squared_distance(vector, &self.centroids[offset..offset + vector.len()]);
 
             if dist < best_dist {
                 best_dist = dist;
@@ -182,7 +183,8 @@ impl Codebook {
         let mut distances: Vec<(usize, f32)> = (0..self.config.num_centroids)
             .map(|i| {
                 let offset = i * self.config.centroid_dim;
-                let dist = self.squared_distance(vector, &self.centroids[offset..offset + vector.len()]);
+                let dist =
+                    self.squared_distance(vector, &self.centroids[offset..offset + vector.len()]);
                 (i, dist.sqrt())
             })
             .collect();
@@ -204,10 +206,7 @@ impl Codebook {
 
     /// Squared L2 distance between two vectors
     fn squared_distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| (x - y).powi(2))
-            .sum()
+        a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
     }
 
     /// Encode a batch of vectors to indices
@@ -242,7 +241,7 @@ impl Codebook {
                 vectors.extend_from_slice(centroid);
             } else {
                 // Fallback to zeros
-                vectors.extend(std::iter::repeat(0.0).take(dim));
+                vectors.extend(std::iter::repeat_n(0.0, dim));
             }
         }
 
@@ -256,8 +255,7 @@ impl Codebook {
 
     /// Deserialize from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes)
-            .map_err(|e| NeuralError::InvalidFormat(e.to_string()))
+        bincode::deserialize(bytes).map_err(|e| NeuralError::InvalidFormat(e.to_string()))
     }
 }
 
@@ -350,8 +348,7 @@ impl LayerCodebook {
 
     /// Deserialize from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes)
-            .map_err(|e| NeuralError::InvalidFormat(e.to_string()))
+        bincode::deserialize(bytes).map_err(|e| NeuralError::InvalidFormat(e.to_string()))
     }
 }
 

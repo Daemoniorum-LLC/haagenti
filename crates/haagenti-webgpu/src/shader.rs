@@ -35,7 +35,10 @@ impl WgslSource {
         // Look for @compute, @vertex, @fragment
         for line in code.lines() {
             let line = line.trim();
-            if line.starts_with("@compute") || line.starts_with("@vertex") || line.starts_with("@fragment") {
+            if line.starts_with("@compute")
+                || line.starts_with("@vertex")
+                || line.starts_with("@fragment")
+            {
                 // Next line should be fn name
                 if let Some(fn_start) = line.find("fn ") {
                     let rest = &line[fn_start + 3..];
@@ -102,6 +105,7 @@ impl ShaderModule {
 }
 
 /// Standard WGSL shader templates
+#[allow(dead_code)]
 pub mod templates {
     use super::WgslSource;
 
@@ -341,11 +345,13 @@ fn dequantize_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 }
 
 /// Shader library for common operations
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct ShaderLibrary {
     shaders: HashMap<String, ShaderModule>,
 }
 
+#[allow(dead_code)]
 impl ShaderLibrary {
     /// Create new library with standard shaders
     pub fn with_standard() -> Self {
@@ -386,12 +392,15 @@ mod tests {
 
     #[test]
     fn test_shader_validation() {
-        let valid = WgslSource::new("test", r#"
+        let valid = WgslSource::new(
+            "test",
+            r#"
 @compute @workgroup_size(256)
 fn main() {
     // Empty
 }
-"#);
+"#,
+        );
         assert!(valid.validate().is_ok());
 
         let invalid = WgslSource::new("test", "no entry point");

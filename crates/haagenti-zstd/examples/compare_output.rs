@@ -5,7 +5,11 @@ use haagenti_zstd::ZstdCompressor;
 
 fn main() {
     let input = b"ABCDABCDABCDABCD";
-    println!("Input: {:?} ({} bytes)", String::from_utf8_lossy(input), input.len());
+    println!(
+        "Input: {:?} ({} bytes)",
+        String::from_utf8_lossy(input),
+        input.len()
+    );
 
     // Our compression
     let compressor = ZstdCompressor::new();
@@ -64,7 +68,13 @@ fn parse_frame(label: &str, data: &[u8]) {
     }
     let fcs_flag = (fhd >> 6) & 3;
     let fcs_size = match fcs_flag {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -78,7 +88,10 @@ fn parse_frame(label: &str, data: &[u8]) {
     let block_size = (bh >> 3) as usize;
     pos += 3;
 
-    println!("  Block type: {} (0=Raw, 2=Compressed), size: {}", block_type, block_size);
+    println!(
+        "  Block type: {} (0=Raw, 2=Compressed), size: {}",
+        block_type, block_size
+    );
 
     if block_type == 0 {
         println!("  Raw block - data follows directly");
@@ -99,7 +112,10 @@ fn parse_frame(label: &str, data: &[u8]) {
         }
         _ => (3, 0),
     };
-    println!("  Literals size: {} (header {} bytes)", lit_size, header_size);
+    println!(
+        "  Literals size: {} (header {} bytes)",
+        lit_size, header_size
+    );
     pos += header_size + lit_size;
 
     // Sequence section
@@ -117,7 +133,8 @@ fn parse_frame(label: &str, data: &[u8]) {
         pos += 1;
 
         // Print remaining bytes as sequence data
-        let remaining = &data[pos..seq_start + (block_size - (seq_start - (seq_start - seq_count.max(1))))];
+        let remaining =
+            &data[pos..seq_start + (block_size - (seq_start - (seq_start - seq_count.max(1))))];
         print!("  Sequence data: ");
         for b in &data[pos..] {
             print!("{:02x} ", b);

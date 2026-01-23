@@ -2,17 +2,20 @@
 //! Trace the exact sequence values and their encoding.
 
 use haagenti_zstd::fse::{
-    FseTable, BitReader, FseDecoder,
-    LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG,
-    MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-    OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+    BitReader, FseDecoder, FseTable, LITERAL_LENGTH_ACCURACY_LOG,
+    LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
+    MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION,
 };
 
 fn main() {
     // The complex 2-sequence case that fails
     let input = b"abcdefghXabcdefghYabcd";
     println!("=== Deep Sequence Comparison ===");
-    println!("Input: {:?} ({} bytes)\n", std::str::from_utf8(input).unwrap(), input.len());
+    println!(
+        "Input: {:?} ({} bytes)\n",
+        std::str::from_utf8(input).unwrap(),
+        input.len()
+    );
 
     // Get reference compression
     let ref_compressed = zstd::encode_all(&input[..], 1).unwrap();
@@ -67,13 +70,22 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
     }
 
     // Skip magic (4 bytes)
-    println!("  Magic: {:02x} {:02x} {:02x} {:02x}", frame[0], frame[1], frame[2], frame[3]);
+    println!(
+        "  Magic: {:02x} {:02x} {:02x} {:02x}",
+        frame[0], frame[1], frame[2], frame[3]
+    );
 
     // Frame header descriptor
     let fhd = frame[4];
     let single_segment = (fhd & 0x20) != 0;
     let fcs_field_size = match fhd >> 6 {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -82,8 +94,10 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
     let has_checksum = (fhd & 0x04) != 0;
     let has_dict_id = fhd & 0x03;
 
-    println!("  FHD: 0x{:02x} (single_segment={}, fcs_size={}, checksum={}, dict_id_flag={})",
-             fhd, single_segment, fcs_field_size, has_checksum, has_dict_id);
+    println!(
+        "  FHD: 0x{:02x} (single_segment={}, fcs_size={}, checksum={}, dict_id_flag={})",
+        fhd, single_segment, fcs_field_size, has_checksum, has_dict_id
+    );
 
     let mut pos = 5;
 
@@ -119,13 +133,20 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
         return vec![];
     }
 
-    let bh = u32::from_le_bytes([frame[pos], frame[pos+1], frame[pos+2], 0]);
+    let bh = u32::from_le_bytes([frame[pos], frame[pos + 1], frame[pos + 2], 0]);
     let is_last = (bh & 1) != 0;
     let block_type = (bh >> 1) & 0x3;
     let block_size = (bh >> 3) as usize;
 
-    println!("  Block header: 0x{:02x}{:02x}{:02x} (last={}, type={}, size={})",
-             frame[pos], frame[pos+1], frame[pos+2], is_last, block_type, block_size);
+    println!(
+        "  Block header: 0x{:02x}{:02x}{:02x} (last={}, type={}, size={})",
+        frame[pos],
+        frame[pos + 1],
+        frame[pos + 2],
+        is_last,
+        block_type,
+        block_size
+    );
     pos += 3;
 
     if block_type != 2 {
@@ -138,12 +159,17 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
         return vec![];
     }
 
-    let block_data = &frame[pos..pos+block_size];
+    let block_data = &frame[pos..pos + block_size];
     println!("  Block data ({} bytes): {:02x?}", block_size, block_data);
 
     // Parse literals section
     let lit_type = block_data[0] & 0x03;
-    let lit_type_name = match lit_type { 0 => "Raw", 1 => "RLE", 2 => "Compressed", _ => "Treeless" };
+    let lit_type_name = match lit_type {
+        0 => "Raw",
+        1 => "RLE",
+        2 => "Compressed",
+        _ => "Treeless",
+    };
     println!("  Literals type: {} ({})", lit_type, lit_type_name);
 
     let (lit_size, lit_header_size) = if lit_type == 0 || lit_type == 1 {
@@ -159,7 +185,8 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
                 if block_data.len() < 2 {
                     (0, 1)
                 } else {
-                    let s = ((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF;
+                    let s =
+                        ((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF;
                     (s, 2)
                 }
             }
@@ -168,9 +195,10 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
                 if block_data.len() < 3 {
                     (0, 1)
                 } else {
-                    let s = ((block_data[0] as usize >> 4) |
-                            ((block_data[1] as usize) << 4) |
-                            ((block_data[2] as usize) << 12)) & 0xFFFFF;
+                    let s = ((block_data[0] as usize >> 4)
+                        | ((block_data[1] as usize) << 4)
+                        | ((block_data[2] as usize) << 12))
+                        & 0xFFFFF;
                     (s, 3)
                 }
             }
@@ -181,7 +209,10 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
         return vec![];
     };
 
-    println!("  Literals: {} bytes (header {} bytes)", lit_size, lit_header_size);
+    println!(
+        "  Literals: {} bytes (header {} bytes)",
+        lit_size, lit_header_size
+    );
 
     let seq_section_start = lit_header_size + lit_size;
     if seq_section_start >= block_data.len() {
@@ -190,7 +221,11 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
     }
 
     let seq_section = &block_data[seq_section_start..];
-    println!("  Sequence section starts at offset {}, {} bytes", seq_section_start, seq_section.len());
+    println!(
+        "  Sequence section starts at offset {}, {} bytes",
+        seq_section_start,
+        seq_section.len()
+    );
     println!("  Sequence section: {:02x?}", seq_section);
 
     // Parse sequence count
@@ -224,11 +259,22 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
     let of_mode = (mode >> 2) & 0x3;
     let ml_mode = (mode >> 4) & 0x3;
 
-    let mode_name = |m| match m { 0 => "Predefined", 1 => "RLE", 2 => "FSE", 3 => "Repeat", _ => "?" };
-    println!("    LL: {} ({}), OF: {} ({}), ML: {} ({})",
-             ll_mode, mode_name(ll_mode),
-             of_mode, mode_name(of_mode),
-             ml_mode, mode_name(ml_mode));
+    let mode_name = |m| match m {
+        0 => "Predefined",
+        1 => "RLE",
+        2 => "FSE",
+        3 => "Repeat",
+        _ => "?",
+    };
+    println!(
+        "    LL: {} ({}), OF: {} ({}), ML: {} ({})",
+        ll_mode,
+        mode_name(ll_mode),
+        of_mode,
+        mode_name(of_mode),
+        ml_mode,
+        mode_name(ml_mode)
+    );
 
     // Only handle predefined for now
     if ll_mode != 0 || of_mode != 0 || ml_mode != 0 {
@@ -237,7 +283,12 @@ fn parse_compressed_block(frame: &[u8]) -> Vec<DecodedSequence> {
     }
 
     let bitstream = &seq_section[seq_header_size + 1..];
-    println!("  FSE bitstream: {:02x?} ({} bytes, {} bits)", bitstream, bitstream.len(), bitstream.len() * 8);
+    println!(
+        "  FSE bitstream: {:02x?} ({} bytes, {} bits)",
+        bitstream,
+        bitstream.len(),
+        bitstream.len() * 8
+    );
 
     // Decode sequences using FSE
     decode_fse_sequences(bitstream, seq_count)
@@ -247,15 +298,15 @@ fn decode_fse_sequences(bitstream: &[u8], seq_count: usize) -> Vec<DecodedSequen
     let ll_table = FseTable::from_predefined(
         &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
         LITERAL_LENGTH_ACCURACY_LOG,
-    ).unwrap();
-    let of_table = FseTable::from_predefined(
-        &OFFSET_DEFAULT_DISTRIBUTION,
-        OFFSET_ACCURACY_LOG,
-    ).unwrap();
+    )
+    .unwrap();
+    let of_table =
+        FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
     let ml_table = FseTable::from_predefined(
         &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
         MATCH_LENGTH_ACCURACY_LOG,
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut ll_decoder = FseDecoder::new(&ll_table);
     let mut of_decoder = FseDecoder::new(&of_table);
@@ -283,8 +334,12 @@ fn decode_fse_sequences(bitstream: &[u8], seq_count: usize) -> Vec<DecodedSequen
         return vec![];
     }
 
-    println!("  Initial states: LL={}, OF={}, ML={}",
-             ll_decoder.state(), of_decoder.state(), ml_decoder.state());
+    println!(
+        "  Initial states: LL={}, OF={}, ML={}",
+        ll_decoder.state(),
+        of_decoder.state(),
+        ml_decoder.state()
+    );
     println!("  Bits after states: {}", bits.bits_remaining());
 
     // Switch to LSB mode for extras
@@ -311,18 +366,26 @@ fn decode_fse_sequences(bitstream: &[u8], seq_count: usize) -> Vec<DecodedSequen
 
         let ll_extra = if ll_extra_bits > 0 {
             bits.read_bits(ll_extra_bits as usize).unwrap_or(0)
-        } else { 0 };
+        } else {
+            0
+        };
 
         let ml_extra = if ml_extra_bits > 0 {
             bits.read_bits(ml_extra_bits as usize).unwrap_or(0)
-        } else { 0 };
+        } else {
+            0
+        };
 
         let of_extra = if of_code > 0 {
             bits.read_bits(of_code as usize).unwrap_or(0)
-        } else { 0 };
+        } else {
+            0
+        };
 
-        println!("    Extras: LL={}({} bits), ML={}({} bits), OF={}({} bits)",
-                 ll_extra, ll_extra_bits, ml_extra, ml_extra_bits, of_extra, of_code);
+        println!(
+            "    Extras: LL={}({} bits), ML={}({} bits), OF={}({} bits)",
+            ll_extra, ll_extra_bits, ml_extra, ml_extra_bits, of_extra, of_code
+        );
 
         // Compute values
         let ll_value = get_ll_baseline(ll_code) + ll_extra as u32;
@@ -333,7 +396,10 @@ fn decode_fse_sequences(bitstream: &[u8], seq_count: usize) -> Vec<DecodedSequen
             of_extra as u32
         };
 
-        println!("    Values: LL={}, OF={}, ML={}", ll_value, of_value, ml_value);
+        println!(
+            "    Values: LL={}, OF={}, ML={}",
+            ll_value, of_value, ml_value
+        );
         println!("    Bits remaining: {}", bits.bits_remaining());
 
         sequences.push(DecodedSequence {
@@ -351,8 +417,12 @@ fn decode_fse_sequences(bitstream: &[u8], seq_count: usize) -> Vec<DecodedSequen
             let _ = ll_decoder.decode_symbol(&mut bits);
             let _ = ml_decoder.decode_symbol(&mut bits);
             let _ = of_decoder.decode_symbol(&mut bits);
-            println!("    New states: LL={}, OF={}, ML={}",
-                     ll_decoder.state(), of_decoder.state(), ml_decoder.state());
+            println!(
+                "    New states: LL={}, OF={}, ML={}",
+                ll_decoder.state(),
+                of_decoder.state(),
+                ml_decoder.state()
+            );
             println!("    Bits remaining after update: {}", bits.bits_remaining());
         }
     }

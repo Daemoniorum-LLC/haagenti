@@ -23,7 +23,10 @@ pub fn hash4_scalar(data: &[u8], pos: usize) -> u32 {
 /// Requires at least 7 bytes of data starting at pos.
 #[inline]
 pub fn hash4x4(data: &[u8], pos: usize) -> [u32; 4] {
-    debug_assert!(pos + 7 <= data.len(), "Need 7 bytes for 4 overlapping 4-byte windows");
+    debug_assert!(
+        pos + 7 <= data.len(),
+        "Need 7 bytes for 4 overlapping 4-byte windows"
+    );
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -43,7 +46,10 @@ pub fn hash4x4(data: &[u8], pos: usize) -> [u32; 4] {
 /// Requires at least 11 bytes of data starting at pos.
 #[inline]
 pub fn hash4x8(data: &[u8], pos: usize) -> [u32; 8] {
-    debug_assert!(pos + 11 <= data.len(), "Need 11 bytes for 8 overlapping 4-byte windows");
+    debug_assert!(
+        pos + 11 <= data.len(),
+        "Need 11 bytes for 8 overlapping 4-byte windows"
+    );
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -144,8 +150,7 @@ unsafe fn hash4x8_avx2(data: &[u8], pos: usize) -> [u32; 8] {
 
         // Pack into AVX2 register (note: _mm256_set_epi32 is high-to-low order)
         let words = _mm256_set_epi32(
-            w7 as i32, w6 as i32, w5 as i32, w4 as i32,
-            w3 as i32, w2 as i32, w1 as i32, w0 as i32,
+            w7 as i32, w6 as i32, w5 as i32, w4 as i32, w3 as i32, w2 as i32, w1 as i32, w0 as i32,
         );
 
         // Multiply by HASH_PRIME
@@ -179,7 +184,10 @@ mod tests {
         assert_eq!(h1, h2, "Same input should produce same hash");
 
         let h3 = hash4_scalar(data, 1);
-        assert_ne!(h1, h3, "Different input should (usually) produce different hash");
+        assert_ne!(
+            h1, h3,
+            "Different input should (usually) produce different hash"
+        );
     }
 
     #[test]

@@ -119,7 +119,7 @@ libdeflater = "1.21"
 # ARCANUM CRYPTOGRAPHIC PRIMITIVES
 # ═══════════════════════════════════════════════════════════════════════════════
 # High-performance native crypto from Arcanum (BLAKE3, SHA-256, ChaCha20-Poly1305)
-arcanum-primitives = { path = "../arcanum/crates/arcanum-primitives", features = ["simd", "blake3", "sha2"] }
+arcanum-primitives = { version = "0.1.2", features = ["simd", "blake3", "sha2"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CHECKSUMS & HASHING

@@ -40,12 +40,12 @@ mod kernel;
 mod mask;
 mod predictor;
 
-pub use analysis::{HeadAnalysis, HeadImportance, ImportanceAnalyzer};
-pub use categories::{HeadCategory, PromptCategory, CategoryMapping};
-pub use error::{SparseError, Result};
-pub use kernel::{SparseKernel, KernelConfig};
+pub use analysis::{HeadAnalysis, HeadImportance, ImportanceAnalyzer, ImportanceStats};
+pub use categories::{CategoryMapping, HeadCategory, PromptCategory};
+pub use error::{Result, SparseError};
+pub use kernel::{KernelConfig, KernelStats, SparseKernel};
 pub use mask::{AttentionMask, MaskBuilder, MaskPattern};
-pub use predictor::{MaskPredictor, PredictorConfig, Prediction};
+pub use predictor::{MaskPredictor, Prediction, PredictorConfig};
 
 /// Default sparsity target (fraction of heads to skip)
 pub const DEFAULT_SPARSITY: f32 = 0.5;
@@ -58,7 +58,5 @@ pub const MAX_QUALITY_LOSS: f32 = 0.02;
 
 /// Prelude for common imports
 pub mod prelude {
-    pub use super::{
-        AttentionMask, HeadCategory, MaskPredictor, PromptCategory, Result,
-    };
+    pub use super::{AttentionMask, HeadCategory, MaskPredictor, PromptCategory, Result};
 }

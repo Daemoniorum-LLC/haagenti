@@ -1,6 +1,6 @@
 //! Streaming protocol for WebSocket/HTTP communication
 
-use crate::{PreviewFrame, PreviewQuality, StreamState};
+use crate::{PreviewFrame, PreviewQuality};
 use serde::{Deserialize, Serialize};
 
 /// Message type for streaming protocol
@@ -108,7 +108,13 @@ impl StreamMessage {
     }
 
     /// Create started message
-    pub fn started(sequence: u64, total_steps: u32, width: u32, height: u32, model_id: String) -> Self {
+    pub fn started(
+        sequence: u64,
+        total_steps: u32,
+        width: u32,
+        height: u32,
+        model_id: String,
+    ) -> Self {
         Self::new(
             MessageType::Started,
             sequence,
@@ -122,6 +128,7 @@ impl StreamMessage {
     }
 
     /// Create preview message
+    #[allow(clippy::too_many_arguments)]
     pub fn preview(
         sequence: u64,
         step: u32,
@@ -148,7 +155,12 @@ impl StreamMessage {
     }
 
     /// Create progress message
-    pub fn progress(sequence: u64, step: u32, total_steps: u32, estimated_remaining_ms: u64) -> Self {
+    pub fn progress(
+        sequence: u64,
+        step: u32,
+        total_steps: u32,
+        estimated_remaining_ms: u64,
+    ) -> Self {
         let progress_percent = if total_steps > 0 {
             step as f32 / total_steps as f32 * 100.0
         } else {
@@ -251,7 +263,13 @@ impl StreamProtocol {
     }
 
     /// Create started message
-    pub fn started(&mut self, total_steps: u32, width: u32, height: u32, model_id: &str) -> StreamMessage {
+    pub fn started(
+        &mut self,
+        total_steps: u32,
+        width: u32,
+        height: u32,
+        model_id: &str,
+    ) -> StreamMessage {
         StreamMessage::started(
             self.next_sequence(),
             total_steps,
@@ -276,8 +294,18 @@ impl StreamProtocol {
     }
 
     /// Create progress message
-    pub fn progress(&mut self, step: u32, total_steps: u32, estimated_remaining_ms: u64) -> StreamMessage {
-        StreamMessage::progress(self.next_sequence(), step, total_steps, estimated_remaining_ms)
+    pub fn progress(
+        &mut self,
+        step: u32,
+        total_steps: u32,
+        estimated_remaining_ms: u64,
+    ) -> StreamMessage {
+        StreamMessage::progress(
+            self.next_sequence(),
+            step,
+            total_steps,
+            estimated_remaining_ms,
+        )
     }
 
     /// Create completed message

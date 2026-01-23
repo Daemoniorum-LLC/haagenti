@@ -64,15 +64,11 @@ mod shard_reader;
 #[cfg(feature = "parallel")]
 pub mod turbo;
 
-pub use checkpoint::{
-    CompressionCheckpoint, CompressionConfig, ShardStatus, TensorStatus,
-};
+pub use checkpoint::{CompressionCheckpoint, CompressionConfig, ShardStatus, TensorStatus};
 pub use incremental_writer::{IncrementalHctWriter, TensorIndexEntry};
-pub use orchestrator::{
-    CompressionPipeline, CompressionReport, PipelineConfig, TensorResult,
-};
+pub use orchestrator::{CompressionPipeline, CompressionReport, PipelineConfig, TensorResult};
 pub use quality::{QualityReport, QualitySampler, QualitySummary};
 pub use shard_reader::{discover_shards, ShardReader, TensorEntry};
 
 #[cfg(feature = "parallel")]
-pub use turbo::{TurboPipeline, TurboConfig, TurboReport};
+pub use turbo::{TurboConfig, TurboPipeline, TurboReport};

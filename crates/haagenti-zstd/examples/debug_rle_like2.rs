@@ -21,7 +21,10 @@ fn main() {
     // Try reference decompression
     match zstd::decode_all(std::io::Cursor::new(&compressed)) {
         Ok(ref_decompressed) => {
-            println!("Reference decompression: OK, {} bytes", ref_decompressed.len());
+            println!(
+                "Reference decompression: OK, {} bytes",
+                ref_decompressed.len()
+            );
             if ref_decompressed == data {
                 println!("Data matches original!");
             } else {
@@ -30,8 +33,10 @@ fn main() {
                 let min_len = ref_decompressed.len().min(data.len());
                 for i in 0..min_len {
                     if ref_decompressed[i] != data[i] {
-                        println!("First diff at byte {}: got {}, expected {}",
-                                 i, ref_decompressed[i], data[i]);
+                        println!(
+                            "First diff at byte {}: got {}, expected {}",
+                            i, ref_decompressed[i], data[i]
+                        );
                         break;
                     }
                 }
@@ -47,7 +52,11 @@ fn main() {
     println!("\n--- Small test (slow path) ---");
     let mut ctx = CompressContext::new(CompressionLevel::Fast);
     let small_compressed = ctx.compress(&small_data).unwrap();
-    println!("Small input {} bytes -> {} bytes", small_data.len(), small_compressed.len());
+    println!(
+        "Small input {} bytes -> {} bytes",
+        small_data.len(),
+        small_compressed.len()
+    );
 
     match zstd::decode_all(std::io::Cursor::new(&small_compressed)) {
         Ok(decompressed) => {

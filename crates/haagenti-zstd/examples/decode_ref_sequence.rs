@@ -5,14 +5,14 @@ use haagenti_zstd::decompress::decompress_frame;
 fn main() {
     // Reference compressed frame for "ABCD" x 25
     let ref_frame: &[u8] = &[
-        0x28, 0xb5, 0x2f, 0xfd,  // Magic
-        0x00,                     // FHD
-        0x48,                     // Window descriptor
-        0x55, 0x00, 0x00,        // Block header (Last=1, Type=2, Size=10)
-        0x20,                     // Literals header (Raw, size=4)
-        0x41, 0x42, 0x43, 0x44,  // Literals "ABCD"
-        0x01, 0x00,              // Sequences (count=1, mode=0x00)
-        0xfd, 0xe4, 0x88,        // FSE bitstream
+        0x28, 0xb5, 0x2f, 0xfd, // Magic
+        0x00, // FHD
+        0x48, // Window descriptor
+        0x55, 0x00, 0x00, // Block header (Last=1, Type=2, Size=10)
+        0x20, // Literals header (Raw, size=4)
+        0x41, 0x42, 0x43, 0x44, // Literals "ABCD"
+        0x01, 0x00, // Sequences (count=1, mode=0x00)
+        0xfd, 0xe4, 0x88, // FSE bitstream
     ];
 
     println!("Reference frame: {:02x?}", ref_frame);

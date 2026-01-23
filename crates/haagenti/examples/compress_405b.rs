@@ -191,7 +191,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     if report.quality.sample_count > 0 {
-        println!("\nQuality Summary ({} samples):", report.quality.sample_count);
+        println!(
+            "\nQuality Summary ({} samples):",
+            report.quality.sample_count
+        );
         println!(
             "  Avg Cosine:        {:.4}",
             report.quality.avg_cosine_similarity

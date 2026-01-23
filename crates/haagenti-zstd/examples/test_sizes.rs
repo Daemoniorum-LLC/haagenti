@@ -10,13 +10,29 @@ fn test_pattern(name: &str, data: &[u8]) {
     match zstd::decode_all(std::io::Cursor::new(&compressed)) {
         Ok(dec) => {
             if dec == data {
-                println!("{}: PASS ({} -> {} bytes)", name, data.len(), compressed.len());
+                println!(
+                    "{}: PASS ({} -> {} bytes)",
+                    name,
+                    data.len(),
+                    compressed.len()
+                );
             } else {
-                println!("{}: MISMATCH ({} -> {} bytes)", name, data.len(), compressed.len());
+                println!(
+                    "{}: MISMATCH ({} -> {} bytes)",
+                    name,
+                    data.len(),
+                    compressed.len()
+                );
             }
         }
         Err(e) => {
-            println!("{}: FAIL ({} -> {} bytes): {}", name, data.len(), compressed.len(), e);
+            println!(
+                "{}: FAIL ({} -> {} bytes): {}",
+                name,
+                data.len(),
+                compressed.len(),
+                e
+            );
         }
     }
 }

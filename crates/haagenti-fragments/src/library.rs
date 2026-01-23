@@ -7,17 +7,16 @@
 //! - Model manifest management
 
 use crate::{
-    Fragment, FragmentError, FragmentId, FragmentSignature, ModelManifest, Result,
-    SignatureConfig, SimilarityIndex, SimilarityMatch, SimilarityThreshold,
+    Fragment, FragmentError, FragmentId, ModelManifest, Result, SignatureConfig, SimilarityIndex,
+    SimilarityMatch, SimilarityThreshold,
 };
 use dashmap::DashMap;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Library configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,7 +137,8 @@ impl FragmentLibrary {
         // Load manifests
         for manifest_id in &index.manifests {
             if let Ok(manifest) = self.load_manifest_from_disk(manifest_id).await {
-                self.manifests.insert(manifest_id.clone(), Arc::new(manifest));
+                self.manifests
+                    .insert(manifest_id.clone(), Arc::new(manifest));
             }
         }
 
@@ -203,7 +203,7 @@ impl FragmentLibrary {
     }
 
     /// Store a fragment (with deduplication)
-    pub async fn store_fragment(&self, mut fragment: Fragment) -> Result<StoreResult> {
+    pub async fn store_fragment(&self, fragment: Fragment) -> Result<StoreResult> {
         // Check for duplicates
         if let Some(existing) = self.similarity_index.find_duplicate(&fragment.data) {
             debug!(
@@ -239,10 +239,7 @@ impl FragmentLibrary {
         self.storage_used
             .fetch_add(size as u64, std::sync::atomic::Ordering::Relaxed);
 
-        Ok(StoreResult::Stored {
-            fragment_id,
-            size,
-        })
+        Ok(StoreResult::Stored { fragment_id, size })
     }
 
     /// Write fragment to disk
@@ -395,11 +392,7 @@ impl FragmentLibrary {
         };
 
         // Calculate dedup savings from manifests
-        let dedup_savings: u64 = self
-            .manifests
-            .iter()
-            .map(|e| e.value().dedup_savings)
-            .sum();
+        let dedup_savings: u64 = self.manifests.iter().map(|e| e.value().dedup_savings).sum();
 
         let avg_fragment_size = if total_fragments > 0 {
             storage_used as usize / total_fragments
@@ -456,7 +449,10 @@ impl FragmentLibrary {
         if removed > 0 {
             self.storage_used
                 .fetch_sub(bytes_freed, std::sync::atomic::Ordering::Relaxed);
-            info!("GC removed {} fragments, freed {} bytes", removed, bytes_freed);
+            info!(
+                "GC removed {} fragments, freed {} bytes",
+                removed, bytes_freed
+            );
         }
 
         Ok(GcResult {
@@ -470,7 +466,10 @@ impl FragmentLibrary {
 #[derive(Debug)]
 pub enum StoreResult {
     /// Fragment was stored as new
-    Stored { fragment_id: FragmentId, size: usize },
+    Stored {
+        fragment_id: FragmentId,
+        size: usize,
+    },
     /// Fragment was deduplicated against existing
     Deduplicated {
         fragment_id: FragmentId,

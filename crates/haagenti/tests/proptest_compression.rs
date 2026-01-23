@@ -10,17 +10,12 @@
 use proptest::prelude::*;
 
 use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
-use haagenti::holotensor::{dct_1d, idct_1d, dct_2d, idct_2d};
+use haagenti::holotensor::{dct_1d, dct_2d, idct_1d, idct_2d};
 use haagenti::testing::compute_quality;
 
 /// Strategy for generating tensor dimensions (powers of 2 for efficient DCT).
 fn tensor_size_strategy() -> impl Strategy<Value = usize> {
-    prop_oneof![
-        Just(8),
-        Just(16),
-        Just(32),
-        Just(64),
-    ]
+    prop_oneof![Just(8), Just(16), Just(32), Just(64),]
 }
 
 /// Strategy for generating small 1D arrays.
@@ -30,23 +25,12 @@ fn small_1d_array_strategy(size: usize) -> impl Strategy<Value = Vec<f32>> {
 
 /// Strategy for retention ratio.
 fn retention_strategy() -> impl Strategy<Value = f32> {
-    prop_oneof![
-        Just(0.10),
-        Just(0.30),
-        Just(0.50),
-        Just(0.70),
-        Just(0.90),
-    ]
+    prop_oneof![Just(0.10), Just(0.30), Just(0.50), Just(0.70), Just(0.90),]
 }
 
 /// Strategy for fragment count.
 fn fragment_count_strategy() -> impl Strategy<Value = u16> {
-    prop_oneof![
-        Just(1u16),
-        Just(2),
-        Just(4),
-        Just(8),
-    ]
+    prop_oneof![Just(1u16), Just(2), Just(4), Just(8),]
 }
 
 proptest! {
@@ -366,7 +350,7 @@ fn test_edge_case_constant() {
 // | 0.80      | 0.995                     |
 // | 0.90      | 0.998                     |
 
-use haagenti::hct_test_vectors::{reference_dct_2d, reference_idct_2d, cosine_similarity};
+use haagenti::hct_test_vectors::{cosine_similarity, reference_dct_2d, reference_idct_2d};
 
 /// Generate a realistic weight matrix (Gaussian-like distribution).
 fn generate_weight_matrix(rows: usize, cols: usize, seed: u64) -> Vec<f32> {

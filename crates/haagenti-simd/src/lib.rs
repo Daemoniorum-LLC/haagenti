@@ -24,15 +24,15 @@
 //! }
 //! ```
 
+mod hash;
+mod histogram;
 mod match_finder;
 mod memops;
-mod histogram;
-mod hash;
 
-pub use match_finder::{find_match_length, find_match_length_safe};
-pub use memops::{copy_match, fill_repeat};
-pub use histogram::{byte_histogram, byte_histogram_simd};
 pub use hash::{hash4_scalar, hash4x4, hash4x8};
+pub use histogram::{byte_histogram, byte_histogram_simd};
+pub use match_finder::{find_match_length, find_match_length_safe};
+pub use memops::{copy_match, copy_within_extend, fill_repeat};
 
 /// SIMD feature level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]

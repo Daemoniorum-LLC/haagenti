@@ -37,12 +37,8 @@
 //! ```
 
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
-use std::sync::{Arc, Mutex};
 
-use crate::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+use crate::compressive::CompressiveSpectralDecoder;
 use crate::holotensor::HoloFragment;
 use crate::{Error, Result};
 
@@ -209,7 +205,9 @@ impl StreamingTensorLoader {
     /// Returns an error if essentials haven't been loaded yet.
     pub fn reconstruct(&mut self) -> Result<Vec<f32>> {
         if !self.can_reconstruct() {
-            return Err(Error::corrupted("essentials not loaded, cannot reconstruct"));
+            return Err(Error::corrupted(
+                "essentials not loaded, cannot reconstruct",
+            ));
         }
 
         // Use cached reconstruction if available
@@ -296,7 +294,10 @@ impl StreamingModelLoader {
     /// Returns how many tensors can be reconstructed.
     #[must_use]
     pub fn ready_count(&self) -> usize {
-        self.loaders.values().filter(|l| l.can_reconstruct()).count()
+        self.loaders
+            .values()
+            .filter(|l| l.can_reconstruct())
+            .count()
     }
 
     /// Returns overall loading progress (0.0 to 1.0).
@@ -306,9 +307,7 @@ impl StreamingModelLoader {
             return 1.0;
         }
 
-        let total_quality: f32 = self.loaders.values()
-            .map(|l| l.decoder.quality())
-            .sum();
+        let total_quality: f32 = self.loaders.values().map(|l| l.decoder.quality()).sum();
 
         total_quality / self.loaders.len() as f32
     }
@@ -412,6 +411,7 @@ impl ProgressiveLoadConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compressive::CompressiveSpectralEncoder;
 
     #[test]
     fn test_load_priority_fraction() {
@@ -431,8 +431,7 @@ mod tests {
 
     #[test]
     fn test_streaming_tensor_loader_with_mean() {
-        let loader = StreamingTensorLoader::new("test", 64, 64)
-            .with_mean(0.5);
+        let loader = StreamingTensorLoader::new("test", 64, 64).with_mean(0.5);
         assert!((loader.mean_value - 0.5).abs() < 0.01);
     }
 
@@ -481,8 +480,7 @@ mod tests {
         let fragments = encoder.encode_2d(&data, 64, 64).unwrap();
 
         // Create streaming loader
-        let mut loader = StreamingTensorLoader::new("test", 64, 64)
-            .with_mean(mean);
+        let mut loader = StreamingTensorLoader::new("test", 64, 64).with_mean(mean);
 
         // Load essentials first
         for frag in &fragments {

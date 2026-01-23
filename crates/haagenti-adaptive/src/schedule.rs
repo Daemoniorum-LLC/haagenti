@@ -135,7 +135,7 @@ impl PrecisionSchedule {
                 precision = config.capabilities.best_supported(precision);
             }
 
-            let is_transition = prev_precision.map_or(false, |p| p != precision);
+            let is_transition = prev_precision.is_some_and(|p| p != precision);
 
             if is_transition {
                 if let Some(prev) = prev_precision {
@@ -168,8 +168,7 @@ impl PrecisionSchedule {
         }
 
         // Calculate averages
-        let avg_vram_ratio =
-            steps.iter().map(|s| s.vram_ratio).sum::<f32>() / steps.len() as f32;
+        let avg_vram_ratio = steps.iter().map(|s| s.vram_ratio).sum::<f32>() / steps.len() as f32;
         let avg_quality_factor =
             steps.iter().map(|s| s.quality_factor).sum::<f32>() / steps.len() as f32;
         let estimated_speedup = steps
@@ -237,7 +236,8 @@ impl PrecisionSchedule {
 
     /// Total time at each precision
     pub fn precision_distribution(&self) -> Vec<(Precision, usize, f32)> {
-        let mut counts: std::collections::HashMap<Precision, usize> = std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<Precision, usize> =
+            std::collections::HashMap::new();
 
         for step in &self.steps {
             *counts.entry(step.precision).or_insert(0) += 1;
@@ -335,7 +335,10 @@ mod tests {
             .min_quality(0.999); // Impossible with Performance preset
 
         let result = PrecisionSchedule::generate(config);
-        assert!(matches!(result, Err(AdaptiveError::QualityConstraint { .. })));
+        assert!(matches!(
+            result,
+            Err(AdaptiveError::QualityConstraint { .. })
+        ));
     }
 
     #[test]

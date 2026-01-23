@@ -89,7 +89,11 @@ impl GpuBuffer {
     pub fn storage(size: u64, label: impl Into<String>) -> Self {
         Self::new(
             size,
-            vec![BufferUsage::Storage, BufferUsage::CopySrc, BufferUsage::CopyDst],
+            vec![
+                BufferUsage::Storage,
+                BufferUsage::CopySrc,
+                BufferUsage::CopyDst,
+            ],
             label,
         )
     }
@@ -123,7 +127,10 @@ impl GpuBuffer {
 
     /// Combined usage flags for WebGPU
     pub fn combined_usage(&self) -> u32 {
-        self.usage.iter().map(|u| u.to_webgpu()).fold(0, |a, b| a | b)
+        self.usage
+            .iter()
+            .map(|u| u.to_webgpu())
+            .fold(0, |a, b| a | b)
     }
 
     /// Check if buffer is mapped
@@ -138,7 +145,7 @@ impl GpuBuffer {
 
     /// Align size to WebGPU requirements (256 bytes for storage)
     pub fn aligned_size(size: u64, alignment: u64) -> u64 {
-        (size + alignment - 1) / alignment * alignment
+        size.div_ceil(alignment) * alignment
     }
 }
 
@@ -268,6 +275,7 @@ impl BufferPool {
 }
 
 /// Memory layout for structured data
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryLayout {
     /// Total size in bytes
@@ -279,6 +287,7 @@ pub struct MemoryLayout {
 }
 
 /// Layout of a single field
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldLayout {
     /// Field name
@@ -289,6 +298,7 @@ pub struct FieldLayout {
     pub size: u64,
 }
 
+#[allow(dead_code)]
 impl MemoryLayout {
     /// Create layout for an array of f32
     pub fn f32_array(count: usize) -> Self {
@@ -339,10 +349,14 @@ mod tests {
         let mut pool = BufferPool::new(10 * 1024 * 1024); // 10MB
 
         // Allocate
-        let buffer1 = pool.allocate(1000, vec![BufferUsage::Storage], "buf1").unwrap();
+        let buffer1 = pool
+            .allocate(1000, vec![BufferUsage::Storage], "buf1")
+            .unwrap();
         assert!(buffer1.size >= 1000);
 
-        let buffer2 = pool.allocate(2000, vec![BufferUsage::Storage], "buf2").unwrap();
+        let buffer2 = pool
+            .allocate(2000, vec![BufferUsage::Storage], "buf2")
+            .unwrap();
         assert!(buffer2.size >= 2000);
 
         assert_eq!(pool.active_count(), 2);
@@ -353,7 +367,9 @@ mod tests {
         assert_eq!(pool.pooled_count(), 1);
 
         // Reallocate should reuse
-        let buffer3 = pool.allocate(500, vec![BufferUsage::Storage], "buf3").unwrap();
+        let buffer3 = pool
+            .allocate(500, vec![BufferUsage::Storage], "buf3")
+            .unwrap();
         assert_eq!(pool.pooled_count(), 0); // Buffer was reused
     }
 

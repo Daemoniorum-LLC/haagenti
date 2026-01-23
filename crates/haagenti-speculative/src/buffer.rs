@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 /// Configuration for speculation buffer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,8 +71,7 @@ pub struct BufferEntry {
 impl BufferEntry {
     /// Check if entry is still valid
     pub fn is_valid(&self, ttl_ms: u64) -> bool {
-        self.state == EntryState::Ready
-            && self.created_at.elapsed().as_millis() < ttl_ms as u128
+        self.state == EntryState::Ready && self.created_at.elapsed().as_millis() < ttl_ms as u128
     }
 
     /// Check if entry should be evicted
@@ -182,7 +181,7 @@ impl SpeculationBuffer {
         // Track by intent
         self.by_intent
             .entry(intent.predicted_prompt.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .extend(fragment_ids);
 
         debug!(
@@ -366,12 +365,12 @@ mod tests {
         let buffer = SpeculationBuffer::new(BufferConfig::default());
 
         let intent = make_intent("portrait of a woman", 0.9);
-        let fragment_ids = vec![
-            FragmentId::new([1; 16]),
-            FragmentId::new([2; 16]),
-        ];
+        let fragment_ids = vec![FragmentId::new([1; 16]), FragmentId::new([2; 16])];
 
-        buffer.speculate(&intent, fragment_ids.clone()).await.unwrap();
+        buffer
+            .speculate(&intent, fragment_ids.clone())
+            .await
+            .unwrap();
 
         assert_eq!(buffer.entries.len(), 2);
 

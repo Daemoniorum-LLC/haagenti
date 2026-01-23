@@ -3,8 +3,8 @@
 //! Run with: `cargo bench -p haagenti-lz4 --features hc`
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 use haagenti_lz4::block::{compress_block, decompress_block, max_compressed_size};
 use haagenti_lz4::Lz4Codec;
@@ -83,11 +83,7 @@ fn bench_standard_lz4_compress(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{}KB", size / 1024)),
             &data,
-            |b, data| {
-                b.iter(|| {
-                    compress_block(black_box(data), black_box(&mut output)).unwrap()
-                })
-            },
+            |b, data| b.iter(|| compress_block(black_box(data), black_box(&mut output)).unwrap()),
         );
     }
 
@@ -111,11 +107,8 @@ fn bench_standard_lz4_decompress(c: &mut Criterion) {
             &compressed,
             |b, compressed| {
                 b.iter(|| {
-                    decompress_block(
-                        black_box(compressed),
-                        black_box(&mut decompressed),
-                        size,
-                    ).unwrap()
+                    decompress_block(black_box(compressed), black_box(&mut decompressed), size)
+                        .unwrap()
                 })
             },
         );
@@ -139,9 +132,7 @@ fn bench_hc_compress(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("level_{}", level)),
             &data,
             |b, data| {
-                b.iter(|| {
-                    compress_hc(black_box(data), black_box(&mut output), level).unwrap()
-                })
+                b.iter(|| compress_hc(black_box(data), black_box(&mut output), level).unwrap())
             },
         );
     }
@@ -165,9 +156,7 @@ fn bench_hc_vs_standard_ratio(c: &mut Criterion) {
             BenchmarkId::new("standard", format!("{}KB", size / 1024)),
             &data,
             |b, data| {
-                b.iter(|| {
-                    compress_block(black_box(data), black_box(&mut std_output)).unwrap()
-                })
+                b.iter(|| compress_block(black_box(data), black_box(&mut std_output)).unwrap())
             },
         );
 
@@ -177,9 +166,7 @@ fn bench_hc_vs_standard_ratio(c: &mut Criterion) {
             BenchmarkId::new("hc_level9", format!("{}KB", size / 1024)),
             &data,
             |b, data| {
-                b.iter(|| {
-                    compress_hc(black_box(data), black_box(&mut hc_output), 9).unwrap()
-                })
+                b.iter(|| compress_hc(black_box(data), black_box(&mut hc_output), 9).unwrap())
             },
         );
     }
@@ -202,9 +189,7 @@ fn bench_hc_weights_data(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("level_{}", level)),
             &data,
             |b, data| {
-                b.iter(|| {
-                    compress_hc(black_box(data), black_box(&mut output), level).unwrap()
-                })
+                b.iter(|| compress_hc(black_box(data), black_box(&mut output), level).unwrap())
             },
         );
     }
@@ -224,22 +209,14 @@ fn bench_vs_lz4_flex(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::new("haagenti", "compress"),
         &data,
-        |b, data| {
-            b.iter(|| {
-                compress_block(black_box(data), black_box(&mut our_output)).unwrap()
-            })
-        },
+        |b, data| b.iter(|| compress_block(black_box(data), black_box(&mut our_output)).unwrap()),
     );
 
     // lz4_flex
     group.bench_with_input(
         BenchmarkId::new("lz4_flex", "compress"),
         &data,
-        |b, data| {
-            b.iter(|| {
-                lz4_flex::compress(black_box(data))
-            })
-        },
+        |b, data| b.iter(|| lz4_flex::compress(black_box(data))),
     );
 
     // Decompress comparison
@@ -259,11 +236,7 @@ fn bench_vs_lz4_flex(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::new("lz4_flex", "decompress"),
         &compressed,
-        |b, compressed| {
-            b.iter(|| {
-                lz4_flex::decompress(black_box(compressed), size).unwrap()
-            })
-        },
+        |b, compressed| b.iter(|| lz4_flex::decompress(black_box(compressed), size).unwrap()),
     );
 
     group.finish();
@@ -283,8 +256,11 @@ fn bench_codec_roundtrip(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let (compressed, original_size) = codec.compress_with_size(black_box(data)).unwrap();
-                    codec.decompress_sized(black_box(&compressed), original_size).unwrap()
+                    let (compressed, original_size) =
+                        codec.compress_with_size(black_box(data)).unwrap();
+                    codec
+                        .decompress_sized(black_box(&compressed), original_size)
+                        .unwrap()
                 })
             },
         );
@@ -307,11 +283,7 @@ fn bench_hc_compressor_api(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("level_{}", level)),
             &data,
-            |b, data| {
-                b.iter(|| {
-                    compressor.compress(black_box(data)).unwrap()
-                })
-            },
+            |b, data| b.iter(|| compressor.compress(black_box(data)).unwrap()),
         );
     }
 

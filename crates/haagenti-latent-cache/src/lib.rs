@@ -47,11 +47,11 @@ mod error;
 mod search;
 mod storage;
 
-pub use cache::{LatentCache, CacheConfig, CacheEntry, CacheStats};
-pub use divergence::{DivergencePredictor, DivergencePoint};
-pub use embedding::{EmbeddingProvider, ClipEmbedding};
+pub use cache::{CacheConfig, CacheEntry, CacheStats, LatentCache};
+pub use divergence::{DivergencePoint, DivergencePredictor};
+pub use embedding::{ClipEmbedding, EmbeddingProvider};
 pub use error::{CacheError, Result};
-pub use search::{SimilaritySearch, SearchResult, HnswConfig};
+pub use search::{HnswConfig, SearchResult, SimilaritySearch};
 pub use storage::{LatentStorage, StorageConfig, StoredLatent};
 
 /// Default similarity threshold for cache hits
@@ -63,7 +63,7 @@ pub const DEFAULT_CHECKPOINT_COUNT: usize = 4;
 /// Prelude for common imports
 pub mod prelude {
     pub use super::{
-        LatentCache, CacheConfig, DivergencePredictor, EmbeddingProvider,
-        SimilaritySearch, SearchResult, Result,
+        CacheConfig, DivergencePredictor, EmbeddingProvider, LatentCache, Result, SearchResult,
+        SimilaritySearch,
     };
 }

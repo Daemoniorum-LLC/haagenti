@@ -89,7 +89,8 @@ pub type CufftHandle = i32;
 
 #[link(name = "cufft")]
 unsafe extern "C" {
-    fn cufftPlan1d(plan: *mut CufftHandle, nx: i32, fft_type: CufftType, batch: i32) -> CufftResult;
+    fn cufftPlan1d(plan: *mut CufftHandle, nx: i32, fft_type: CufftType, batch: i32)
+        -> CufftResult;
     fn cufftPlan2d(plan: *mut CufftHandle, nx: i32, ny: i32, fft_type: CufftType) -> CufftResult;
     fn cufftPlanMany(
         plan: *mut CufftHandle,
@@ -168,14 +169,14 @@ impl CufftPlan {
         unsafe {
             cufftPlanMany(
                 &mut handle,
-                1,                    // rank
-                n_arr.as_ptr(),       // n
-                ptr::null(),          // inembed (null = default)
-                stride as i32,        // istride
-                dist as i32,          // idist
-                ptr::null(),          // onembed
-                stride as i32,        // ostride
-                dist as i32,          // odist
+                1,              // rank
+                n_arr.as_ptr(), // n
+                ptr::null(),    // inembed (null = default)
+                stride as i32,  // istride
+                dist as i32,    // idist
+                ptr::null(),    // onembed
+                stride as i32,  // ostride
+                dist as i32,    // odist
                 fft_type,
                 batch as i32,
             )
@@ -193,9 +194,7 @@ impl CufftPlan {
         // Get raw stream pointer from cudarc
         // Note: This requires accessing internal stream handle
         // For now, use default stream (null)
-        unsafe {
-            cufftSetStream(self.handle, ptr::null_mut()).to_result()
-        }
+        unsafe { cufftSetStream(self.handle, ptr::null_mut()).to_result() }
     }
 
     /// Get the plan handle.
@@ -384,7 +383,7 @@ impl FftDctContext {
             let scaled_coeff = input[k] / if k == 0 { scale_dc } else { scale } / 2.0;
 
             // Inverse twiddle: complex = coeff * (cos - i*sin) / 2
-            complex_in[k * 2] = scaled_coeff * cos_tw;     // real
+            complex_in[k * 2] = scaled_coeff * cos_tw; // real
             complex_in[k * 2 + 1] = -scaled_coeff * sin_tw; // imag
         }
 
@@ -421,12 +420,7 @@ impl FftDctContext {
     }
 
     /// Compute 2D DCT using separable 1D FFT-based transforms.
-    pub fn dct_2d_fft(
-        &mut self,
-        data: &[f32],
-        width: usize,
-        height: usize,
-    ) -> Result<Vec<f32>> {
+    pub fn dct_2d_fft(&mut self, data: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
         if data.len() != width * height {
             return Err(CudaError::InvalidData(format!(
                 "data length {} doesn't match {}x{}",
@@ -467,12 +461,7 @@ impl FftDctContext {
     }
 
     /// Compute 2D IDCT using separable 1D FFT-based transforms.
-    pub fn idct_2d_fft(
-        &mut self,
-        coeffs: &[f32],
-        width: usize,
-        height: usize,
-    ) -> Result<Vec<f32>> {
+    pub fn idct_2d_fft(&mut self, coeffs: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
         if coeffs.len() != width * height {
             return Err(CudaError::InvalidData(format!(
                 "coeffs length {} doesn't match {}x{}",

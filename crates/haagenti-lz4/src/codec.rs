@@ -120,7 +120,9 @@ mod tests {
         let input = b"";
 
         let compressed = codec.compress(input).unwrap();
-        let decompressed = codec.decompress_with_size(&compressed, input.len()).unwrap();
+        let decompressed = codec
+            .decompress_with_size(&compressed, input.len())
+            .unwrap();
 
         assert_eq!(decompressed.as_slice(), input);
     }

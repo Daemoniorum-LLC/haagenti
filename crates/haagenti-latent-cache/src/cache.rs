@@ -1,15 +1,14 @@
 //! Main latent cache implementation
 
-use arcanum_primitives::prelude::Blake3;
 use crate::{
-    CacheError, ClipEmbedding, DivergencePoint, DivergencePredictor,
-    EmbeddingProvider, HnswConfig, LatentStorage, Result, SearchResult,
-    SimilaritySearch, StorageConfig,
+    CacheError, DivergencePoint, DivergencePredictor, EmbeddingProvider, HnswConfig, LatentStorage,
+    Result, SimilaritySearch, StorageConfig,
 };
+use arcanum_primitives::prelude::Blake3;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::info;
 
 /// Configuration for the latent cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,7 +121,8 @@ impl<E: EmbeddingProvider> LatentCache<E> {
 
     /// Find a cached latent for a prompt
     pub async fn find(&self, prompt: &str) -> Result<Option<CacheEntry>> {
-        self.stats.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.stats
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Get embedding for the prompt
         let embedding = self.embedding_provider.embed(prompt).await?;
@@ -136,7 +136,8 @@ impl<E: EmbeddingProvider> LatentCache<E> {
             // Get entry from storage
             if let Some(entry) = self.storage.get_entry(&search_result.id).await {
                 // Predict divergence point
-                if let Some(divergence) = self.divergence_predictor.predict(search_result.similarity)
+                if let Some(divergence) =
+                    self.divergence_predictor.predict(search_result.similarity)
                 {
                     self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     self.steps_saved.fetch_add(
@@ -144,8 +145,7 @@ impl<E: EmbeddingProvider> LatentCache<E> {
                         std::sync::atomic::Ordering::Relaxed,
                     );
 
-                    let available_steps: Vec<u32> =
-                        entry.checkpoints.keys().copied().collect();
+                    let available_steps: Vec<u32> = entry.checkpoints.keys().copied().collect();
 
                     return Ok(Some(CacheEntry {
                         id: entry.id,
@@ -174,8 +174,7 @@ impl<E: EmbeddingProvider> LatentCache<E> {
 
         // Get and store embedding
         let embedding = self.embedding_provider.embed(prompt).await?;
-        self.similarity_search
-            .insert(entry_id.clone(), embedding);
+        self.similarity_search.insert(entry_id.clone(), embedding);
 
         // Store each latent checkpoint
         for (step, data, shape, dtype) in latents {
@@ -232,7 +231,8 @@ impl<E: EmbeddingProvider> LatentCache<E> {
 
         self.stats.store(0, std::sync::atomic::Ordering::Relaxed);
         self.hits.store(0, std::sync::atomic::Ordering::Relaxed);
-        self.steps_saved.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.steps_saved
+            .store(0, std::sync::atomic::Ordering::Relaxed);
 
         Ok(())
     }
@@ -273,8 +273,18 @@ mod tests {
 
         // Store some latents
         let latents = vec![
-            (5, Bytes::from(vec![1u8; 1024]), vec![1, 4, 64, 64], "float16".to_string()),
-            (10, Bytes::from(vec![2u8; 1024]), vec![1, 4, 64, 64], "float16".to_string()),
+            (
+                5,
+                Bytes::from(vec![1u8; 1024]),
+                vec![1, 4, 64, 64],
+                "float16".to_string(),
+            ),
+            (
+                10,
+                Bytes::from(vec![2u8; 1024]),
+                vec![1, 4, 64, 64],
+                "float16".to_string(),
+            ),
         ];
 
         cache

@@ -42,18 +42,32 @@ fn main() {
         let exp = (wd >> 3) as u32;
         let mantissa = (wd & 7) as u32;
         let window_size = (1u64 << (10 + exp)) * ((8 + mantissa) as u64) / 8;
-        println!("Window_Descriptor: 0x{:02x} (exp={}, mantissa={}, size={})",
-                 wd, exp, mantissa, window_size);
+        println!(
+            "Window_Descriptor: 0x{:02x} (exp={}, mantissa={}, size={})",
+            wd, exp, mantissa, window_size
+        );
         pos += 1;
     }
 
     // Dict ID (if present)
-    let dict_id_size = match dict_id_flag { 0 => 0, 1 => 1, 2 => 2, 3 => 4, _ => 0 };
+    let dict_id_size = match dict_id_flag {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 => 4,
+        _ => 0,
+    };
     pos += dict_id_size;
 
     // FCS (if present)
     let fcs_size = match fcs_flag {
-        0 => if single_segment == 1 { 1 } else { 0 },
+        0 => {
+            if single_segment == 1 {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -71,7 +85,7 @@ fn main() {
     println!("\nFrame header ends at position {}", pos);
 
     // Block header
-    let bh = u32::from_le_bytes([frame[pos], frame[pos+1], frame[pos+2], 0]);
+    let bh = u32::from_le_bytes([frame[pos], frame[pos + 1], frame[pos + 2], 0]);
     let is_last = bh & 1;
     let block_type = (bh >> 1) & 3;
     let block_size = (bh >> 3) as usize;
@@ -85,14 +99,21 @@ fn main() {
         // Compressed block
         let block_start = pos;
         let block = &frame[pos..pos + block_size];
-        println!("\nBlock data ({} bytes): {:02x?}", block.len(), &block[..20.min(block.len())]);
+        println!(
+            "\nBlock data ({} bytes): {:02x?}",
+            block.len(),
+            &block[..20.min(block.len())]
+        );
 
         // Literals header
         let lh0 = block[0];
         let lit_type = lh0 & 3;
         let size_format = (lh0 >> 2) & 3;
         println!("\nLiterals header byte 0: 0x{:02x}", lh0);
-        println!("  lit_type: {} (0=Raw, 1=RLE, 2=Compressed, 3=Treeless)", lit_type);
+        println!(
+            "  lit_type: {} (0=Raw, 1=RLE, 2=Compressed, 3=Treeless)",
+            lit_type
+        );
         println!("  size_format: {}", size_format);
 
         let (regen_size, comp_size, header_size) = match lit_type {
@@ -107,8 +128,14 @@ fn main() {
                     1 => {
                         let size = ((lh0 >> 4) as usize) | ((block[1] as usize) << 4);
                         println!("  Bytes [0,1]: [{:02x}, {:02x}]", lh0, block[1]);
-                        println!("  Size (12-bit): {} = (0x{:02x} >> 4) | (0x{:02x} << 4) = {} | {}",
-                                 size, lh0, block[1], (lh0 >> 4), (block[1] as usize) << 4);
+                        println!(
+                            "  Size (12-bit): {} = (0x{:02x} >> 4) | (0x{:02x} << 4) = {} | {}",
+                            size,
+                            lh0,
+                            block[1],
+                            (lh0 >> 4),
+                            (block[1] as usize) << 4
+                        );
                         (size, if lit_type == 1 { 1 } else { size }, 2)
                     }
                     2 | 3 => {
@@ -137,7 +164,10 @@ fn main() {
 
         let seq_section = &block[lit_section_size..];
         println!("\nSequences section: {} bytes", seq_section.len());
-        println!("  First bytes: {:02x?}", &seq_section[..10.min(seq_section.len())]);
+        println!(
+            "  First bytes: {:02x?}",
+            &seq_section[..10.min(seq_section.len())]
+        );
 
         if !seq_section.is_empty() {
             let num_seq = if seq_section[0] == 0 {
@@ -162,7 +192,11 @@ fn main() {
             if decompressed == data {
                 println!("SUCCESS: Reference decoded correctly!");
             } else {
-                println!("MISMATCH: Decoded {} bytes, expected {}", decompressed.len(), data.len());
+                println!(
+                    "MISMATCH: Decoded {} bytes, expected {}",
+                    decompressed.len(),
+                    data.len()
+                );
             }
         }
         Err(e) => {

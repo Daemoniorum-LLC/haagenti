@@ -5,7 +5,11 @@ use haagenti_zstd::compress::SpeculativeCompressor;
 fn main() {
     let input = b"abcdefghXabcdefghYabcd";
 
-    println!("Input: {:?} ({} bytes)", std::str::from_utf8(input).unwrap(), input.len());
+    println!(
+        "Input: {:?} ({} bytes)",
+        std::str::from_utf8(input).unwrap(),
+        input.len()
+    );
 
     // Compress with reference zstd
     let ref_compressed = zstd::encode_all(&input[..], 1).expect("reference zstd failed");
@@ -27,7 +31,10 @@ fn main() {
                 println!("Reference decoded our output: OK");
             } else {
                 println!("Reference decoded our output: WRONG DATA");
-                println!("  Got: {:?}", std::str::from_utf8(&decoded).unwrap_or("(invalid utf8)"));
+                println!(
+                    "  Got: {:?}",
+                    std::str::from_utf8(&decoded).unwrap_or("(invalid utf8)")
+                );
             }
         }
         Err(e) => {
@@ -70,7 +77,13 @@ fn analyze_frame(name: &str, data: &[u8]) {
     let single_segment = (fhd & 0x20) != 0;
     let content_checksum = (fhd & 0x04) != 0;
     let fcs_field_size = match (fhd >> 6) & 0x3 {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -82,7 +95,10 @@ fn analyze_frame(name: &str, data: &[u8]) {
 
     let mut pos = 5;
     if !single_segment {
-        println!("    Window_Descriptor: 0x{:02x}", data.get(pos).unwrap_or(&0));
+        println!(
+            "    Window_Descriptor: 0x{:02x}",
+            data.get(pos).unwrap_or(&0)
+        );
         pos += 1;
     }
 
@@ -97,7 +113,7 @@ fn analyze_frame(name: &str, data: &[u8]) {
         println!("  No block header");
         return;
     }
-    let bh = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], 0]);
+    let bh = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], 0]);
     let last_block = (bh & 1) != 0;
     let block_type = (bh >> 1) & 0x3;
     let block_size = (bh >> 3) as usize;
@@ -110,14 +126,20 @@ fn analyze_frame(name: &str, data: &[u8]) {
         _ => "Unknown",
     };
 
-    println!("  Block header at offset {}: last={}, type={} ({}), size={}",
-             pos, last_block, block_type, block_type_name, block_size);
+    println!(
+        "  Block header at offset {}: last={}, type={} ({}), size={}",
+        pos, last_block, block_type, block_type_name, block_size
+    );
     pos += 3;
 
     if block_type == 2 && pos < data.len() {
         // Compressed block - show literals and sequences
         let block_data = &data[pos..];
-        println!("  Compressed block data ({} bytes): {:02x?}", block_data.len(), block_data);
+        println!(
+            "  Compressed block data ({} bytes): {:02x?}",
+            block_data.len(),
+            block_data
+        );
 
         // Parse literals header
         if !block_data.is_empty() {
@@ -137,21 +159,33 @@ fn analyze_frame(name: &str, data: &[u8]) {
                 let (lit_size, header_bytes) = if (lit_header >> 2) & 0x3 == 0 {
                     ((lit_header >> 3) as usize, 1)
                 } else if (lit_header >> 2) & 0x3 == 1 {
-                    let size = ((lit_header as usize >> 4) | ((block_data.get(1).copied().unwrap_or(0) as usize) << 4)) & 0xFFF;
+                    let size = ((lit_header as usize >> 4)
+                        | ((block_data.get(1).copied().unwrap_or(0) as usize) << 4))
+                        & 0xFFF;
                     (size, 2)
                 } else {
                     (0, 1) // Simplified
                 };
-                println!("    Literals size: {} (header {} bytes)", lit_size, header_bytes);
+                println!(
+                    "    Literals size: {} (header {} bytes)",
+                    lit_size, header_bytes
+                );
 
                 let lit_end = header_bytes + lit_size;
                 if lit_end <= block_data.len() {
                     let literals = &block_data[header_bytes..lit_end];
-                    println!("    Literals: {:?}", std::str::from_utf8(literals).unwrap_or("(binary)"));
+                    println!(
+                        "    Literals: {:?}",
+                        std::str::from_utf8(literals).unwrap_or("(binary)")
+                    );
 
                     // Sequences section
                     let seq_section = &block_data[lit_end..];
-                    println!("    Sequences section ({} bytes): {:02x?}", seq_section.len(), seq_section);
+                    println!(
+                        "    Sequences section ({} bytes): {:02x?}",
+                        seq_section.len(),
+                        seq_section
+                    );
 
                     if !seq_section.is_empty() {
                         let seq_count = seq_section[0] as usize;
@@ -164,13 +198,29 @@ fn analyze_frame(name: &str, data: &[u8]) {
                             let of_mode = (mode_byte >> 2) & 0x3;
                             let ml_mode = (mode_byte >> 4) & 0x3;
                             let mode_names = ["Predefined", "RLE", "FSE Compressed", "Repeat"];
-                            println!("      LL mode: {} ({})", ll_mode, mode_names.get(ll_mode as usize).unwrap_or(&"?"));
-                            println!("      OF mode: {} ({})", of_mode, mode_names.get(of_mode as usize).unwrap_or(&"?"));
-                            println!("      ML mode: {} ({})", ml_mode, mode_names.get(ml_mode as usize).unwrap_or(&"?"));
+                            println!(
+                                "      LL mode: {} ({})",
+                                ll_mode,
+                                mode_names.get(ll_mode as usize).unwrap_or(&"?")
+                            );
+                            println!(
+                                "      OF mode: {} ({})",
+                                of_mode,
+                                mode_names.get(of_mode as usize).unwrap_or(&"?")
+                            );
+                            println!(
+                                "      ML mode: {} ({})",
+                                ml_mode,
+                                mode_names.get(ml_mode as usize).unwrap_or(&"?")
+                            );
 
                             let bitstream_start = if mode_byte == 0 { 2 } else { 2 }; // Simplified
                             let bitstream = &seq_section[bitstream_start..];
-                            println!("    FSE bitstream ({} bytes): {:02x?}", bitstream.len(), bitstream);
+                            println!(
+                                "    FSE bitstream ({} bytes): {:02x?}",
+                                bitstream.len(),
+                                bitstream
+                            );
                         }
                     }
                 }

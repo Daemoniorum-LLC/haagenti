@@ -8,8 +8,8 @@
 //! uses rayon for parallel compression of the 4 literal segments,
 //! providing up to 2-3x speedup for large literals.
 
-use super::Match;
 use super::sequences::{analyze_for_rle, encode_sequences_fse_with_encoded};
+use super::Match;
 use crate::block::Sequence;
 use crate::huffman::HuffmanEncoder;
 use haagenti_core::Result;
@@ -47,7 +47,8 @@ impl BlockEncoder {
 
     /// Add a match as a sequence.
     pub fn add_match(&mut self, literal_length: u32, offset: u32, match_length: u32) {
-        self.sequences.push(Sequence::new(literal_length, offset, match_length));
+        self.sequences
+            .push(Sequence::new(literal_length, offset, match_length));
     }
 
     /// Get the accumulated literals.
@@ -207,7 +208,11 @@ pub fn matches_to_sequences(input: &[u8], matches: &[Match]) -> (Vec<u8>, Vec<Se
             };
 
             // First sequence gets the literal length, subsequent ones get 0
-            let ll = if first_sequence { literal_length as u32 } else { 0 };
+            let ll = if first_sequence {
+                literal_length as u32
+            } else {
+                0
+            };
             first_sequence = false;
 
             // Convert actual offset to offset_value using repeat offset tracking
@@ -299,7 +304,11 @@ pub fn encode_literals_with_encoder(
 }
 
 /// Encode literals using Huffman compression.
-fn encode_huffman_literals(literals: &[u8], encoder: &HuffmanEncoder, output: &mut Vec<u8>) -> Result<()> {
+fn encode_huffman_literals(
+    literals: &[u8],
+    encoder: &HuffmanEncoder,
+    output: &mut Vec<u8>,
+) -> Result<()> {
     let regenerated_size = literals.len();
     let weights = encoder.serialize_weights();
 
@@ -388,10 +397,7 @@ fn encode_huffman_4stream(
     #[cfg(feature = "parallel")]
     let (compressed_0, compressed_1, compressed_2, compressed_3) = {
         // Use rayon to compress all 4 segments in parallel
-        let compressed: Vec<Vec<u8>> = segments
-            .par_iter()
-            .map(|seg| encoder.encode(seg))
-            .collect();
+        let compressed: Vec<Vec<u8>> = segments.par_iter().map(|seg| encoder.encode(seg)).collect();
 
         let mut iter = compressed.into_iter();
         (

@@ -82,7 +82,9 @@ impl HttpClient {
             builder = builder.gzip(true).brotli(true);
         }
 
-        let client = builder.build().map_err(|e| NetworkError::Configuration(e.to_string()))?;
+        let client = builder
+            .build()
+            .map_err(|e| NetworkError::Configuration(e.to_string()))?;
         let semaphore = Arc::new(Semaphore::new(endpoint.max_connections));
 
         Ok(Self {
@@ -95,9 +97,17 @@ impl HttpClient {
 
     /// Fetch a fragment by path
     pub async fn fetch(&self, path: &str) -> Result<Bytes> {
-        let _permit = self.semaphore.acquire().await.map_err(|_| NetworkError::Cancelled)?;
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| NetworkError::Cancelled)?;
 
-        let url = format!("{}/{}", self.endpoint.url.trim_end_matches('/'), path.trim_start_matches('/'));
+        let url = format!(
+            "{}/{}",
+            self.endpoint.url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
         debug!("Fetching: {}", url);
 
         self.fetch_with_retry(&url, None).await
@@ -111,9 +121,17 @@ impl HttpClient {
             ));
         }
 
-        let _permit = self.semaphore.acquire().await.map_err(|_| NetworkError::Cancelled)?;
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| NetworkError::Cancelled)?;
 
-        let url = format!("{}/{}", self.endpoint.url.trim_end_matches('/'), path.trim_start_matches('/'));
+        let url = format!(
+            "{}/{}",
+            self.endpoint.url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
         debug!("Fetching range {}-{}: {}", range.start, range.end, url);
 
         self.fetch_with_retry(&url, Some(range)).await
@@ -181,7 +199,11 @@ impl HttpClient {
     }
 
     /// Handle HTTP response
-    async fn handle_response(&self, response: Response, range: Option<RangeRequest>) -> Result<Bytes> {
+    async fn handle_response(
+        &self,
+        response: Response,
+        range: Option<RangeRequest>,
+    ) -> Result<Bytes> {
         let status = response.status();
 
         match status {
@@ -227,9 +249,17 @@ impl HttpClient {
 
     /// Get HEAD information (for cache validation)
     pub async fn head(&self, path: &str) -> Result<HeadInfo> {
-        let _permit = self.semaphore.acquire().await.map_err(|_| NetworkError::Cancelled)?;
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| NetworkError::Cancelled)?;
 
-        let url = format!("{}/{}", self.endpoint.url.trim_end_matches('/'), path.trim_start_matches('/'));
+        let url = format!(
+            "{}/{}",
+            self.endpoint.url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
 
         let mut request = self.client.head(&url);
         for (key, value) in &self.endpoint.headers {
@@ -288,7 +318,7 @@ mod rand {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .subsec_nanos();
-        T::from((nanos as f64 / u32::MAX as f64))
+        T::from(nanos as f64 / u32::MAX as f64)
     }
 }
 

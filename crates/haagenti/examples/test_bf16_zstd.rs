@@ -97,10 +97,17 @@ fn test_roundtrip(name: &str, num_bf16_values: usize, level: CompressionLevel) {
 
     // Verify
     if decompressed == original_data {
-        println!("OK ({} -> {} bytes, {:.2}x)", original_size, compressed_size, ratio);
+        println!(
+            "OK ({} -> {} bytes, {:.2}x)",
+            original_size, compressed_size, ratio
+        );
     } else {
         println!("DATA MISMATCH!");
-        println!("  Expected {} bytes, got {} bytes", original_data.len(), decompressed.len());
+        println!(
+            "  Expected {} bytes, got {} bytes",
+            original_data.len(),
+            decompressed.len()
+        );
         if decompressed.len() >= 16 && original_data.len() >= 16 {
             println!("  First 16 original: {:?}", &original_data[..16]);
             println!("  First 16 decompressed: {:?}", &decompressed[..16]);

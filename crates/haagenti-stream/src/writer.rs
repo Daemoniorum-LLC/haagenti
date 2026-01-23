@@ -85,7 +85,7 @@ impl<W: Write, C: Compressor> CompressWriter<W, C> {
         let compressed = self
             .compressor
             .compress(data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         self.inner.write_all(&compressed)?;
         self.buffer.clear();
@@ -97,10 +97,7 @@ impl<W: Write, C: Compressor> CompressWriter<W, C> {
 impl<W: Write, C: Compressor> Write for CompressWriter<W, C> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.finished {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "writer already finished",
-            ));
+            return Err(io::Error::other("writer already finished"));
         }
 
         // Write to buffer

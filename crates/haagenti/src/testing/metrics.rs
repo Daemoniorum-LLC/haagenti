@@ -128,10 +128,7 @@ pub fn psnr_from_mse(mse: f32, original: &[f32]) -> f32 {
         return f32::INFINITY;
     }
 
-    let max_val = original
-        .iter()
-        .map(|v| v.abs())
-        .fold(0.0f32, f32::max);
+    let max_val = original.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
 
     if max_val <= 0.0 {
         return 0.0;

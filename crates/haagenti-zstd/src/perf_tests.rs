@@ -15,21 +15,32 @@ use std::time::{Duration, Instant};
 /// Minimum acceptable throughput in MiB/s for compression
 /// Current baseline - conservative for CI environments
 /// Will increase as optimizations are implemented
-const MIN_COMPRESS_THROUGHPUT_1KB: f64 = 10.0;   // Target: 50.0
-const MIN_COMPRESS_THROUGHPUT_4KB: f64 = 15.0;   // Target: 150.0
-const MIN_COMPRESS_THROUGHPUT_16KB: f64 = 20.0;  // Target: 500.0
-const MIN_COMPRESS_THROUGHPUT_64KB: f64 = 15.0;  // Target: 600.0
+const MIN_COMPRESS_THROUGHPUT_1KB: f64 = 10.0; // Target: 50.0
+const MIN_COMPRESS_THROUGHPUT_4KB: f64 = 15.0; // Target: 150.0
+const MIN_COMPRESS_THROUGHPUT_16KB: f64 = 20.0; // Target: 500.0
+const MIN_COMPRESS_THROUGHPUT_64KB: f64 = 15.0; // Target: 600.0
 
 /// Minimum acceptable throughput in MiB/s for decompression
 /// Current baseline - will increase as optimizations are implemented
-const MIN_DECOMPRESS_THROUGHPUT_1KB: f64 = 30.0;   // Target: 200.0
-const MIN_DECOMPRESS_THROUGHPUT_16KB: f64 = 40.0;  // Target: 500.0
-const MIN_DECOMPRESS_THROUGHPUT_64KB: f64 = 50.0;  // Target: 600.0
+const MIN_DECOMPRESS_THROUGHPUT_1KB: f64 = 30.0; // Target: 200.0
+const MIN_DECOMPRESS_THROUGHPUT_16KB: f64 = 40.0; // Target: 500.0
+const MIN_DECOMPRESS_THROUGHPUT_64KB: f64 = 50.0; // Target: 600.0
 
 fn generate_text_data(size: usize) -> Vec<u8> {
     let words = [
-        "the ", "quick ", "brown ", "fox ", "jumps ", "over ", "lazy ", "dog ",
-        "compression ", "algorithm ", "performance ", "benchmark ", "testing ",
+        "the ",
+        "quick ",
+        "brown ",
+        "fox ",
+        "jumps ",
+        "over ",
+        "lazy ",
+        "dog ",
+        "compression ",
+        "algorithm ",
+        "performance ",
+        "benchmark ",
+        "testing ",
     ];
     let mut data = Vec::with_capacity(size);
     let mut i = 0;

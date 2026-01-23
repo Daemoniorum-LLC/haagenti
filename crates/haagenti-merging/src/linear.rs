@@ -1,6 +1,6 @@
 //! Linear weight averaging for model merging
 
-use crate::{MergeError, Result, ModelWeights, WeightTensor};
+use crate::{MergeError, ModelWeights, Result, WeightTensor};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -244,10 +244,9 @@ mod tests {
     #[test]
     fn test_layer_specific_weights() {
         let mut config = LinearConfig::equal(2);
-        config.layer_weights.insert(
-            "important_layer".into(),
-            vec![0.9, 0.1],
-        );
+        config
+            .layer_weights
+            .insert("important_layer".into(), vec![0.9, 0.1]);
 
         let weights = config.weights_for_layer("important_layer");
         assert_eq!(weights, vec![0.9, 0.1]);

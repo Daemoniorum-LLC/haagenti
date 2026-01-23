@@ -24,7 +24,7 @@
 
 use haagenti_core::{Error, Result};
 
-use crate::block::{write_last_literals, MIN_MATCH, MAX_MATCH};
+use crate::block::{write_last_literals, MAX_MATCH, MIN_MATCH};
 
 /// Hash table size (64KB = 2^16 entries).
 const HASH_TABLE_SIZE: usize = 1 << 16;
@@ -205,12 +205,8 @@ impl Lz4HcContext {
                 && data[chain_pos + 3] == data[pos + 3]
             {
                 // Count full match length
-                let len = MIN_MATCH + count_match(
-                    data,
-                    chain_pos + MIN_MATCH,
-                    pos + MIN_MATCH,
-                    match_limit,
-                );
+                let len = MIN_MATCH
+                    + count_match(data, chain_pos + MIN_MATCH, pos + MIN_MATCH, match_limit);
 
                 if len > best_len {
                     best_len = len;
@@ -256,7 +252,8 @@ fn write_sequence(
     let token = ((ll_token << 4) | ml_token) as u8;
 
     // Check output space
-    let needed = 1 + (literal_len / 255) + 1 + literal_len + 2 + ((match_len - MIN_MATCH) / 255) + 1;
+    let needed =
+        1 + (literal_len / 255) + 1 + literal_len + 2 + ((match_len - MIN_MATCH) / 255) + 1;
     if pos + needed > output.len() {
         return Err(Error::buffer_too_small(pos + needed, output.len()));
     }
@@ -278,7 +275,8 @@ fn write_sequence(
     }
 
     // Write literals
-    output[pos..pos + literal_len].copy_from_slice(&input[literal_start..literal_start + literal_len]);
+    output[pos..pos + literal_len]
+        .copy_from_slice(&input[literal_start..literal_start + literal_len]);
     pos += literal_len;
 
     // Write match offset
@@ -333,7 +331,8 @@ pub fn compress_hc(input: &[u8], output: &mut [u8], level: usize) -> Result<usiz
         if let Some((offset, match_len)) = match_result {
             // Lazy matching: check if next position has better match
             let use_current = if ctx.lazy_matching && input_pos + 1 < mf_limit {
-                if let Some((_, next_len)) = ctx.find_best_match(input, input_pos + 1, match_limit) {
+                if let Some((_, next_len)) = ctx.find_best_match(input, input_pos + 1, match_limit)
+                {
                     // Use current match if it's at least as good as (next + 1)
                     match_len >= next_len + 1
                 } else {
@@ -442,7 +441,8 @@ mod tests {
 
         // Verify with standard LZ4 decompressor
         let mut decompressed = vec![0u8; input.len()];
-        let len = crate::block::decompress_block(&compressed, &mut decompressed, input.len()).unwrap();
+        let len =
+            crate::block::decompress_block(&compressed, &mut decompressed, input.len()).unwrap();
 
         assert_eq!(len, input.len());
         assert_eq!(&decompressed[..], input);
@@ -459,7 +459,8 @@ mod tests {
 
         // Verify roundtrip
         let mut decompressed = vec![0u8; input.len()];
-        let len = crate::block::decompress_block(&compressed, &mut decompressed, input.len()).unwrap();
+        let len =
+            crate::block::decompress_block(&compressed, &mut decompressed, input.len()).unwrap();
 
         assert_eq!(len, input.len());
         assert_eq!(&decompressed[..], input);
@@ -478,7 +479,8 @@ mod tests {
 
         // Verify roundtrip
         let mut decompressed = vec![0u8; input.len()];
-        let len = crate::block::decompress_block(&compressed, &mut decompressed, input.len()).unwrap();
+        let len =
+            crate::block::decompress_block(&compressed, &mut decompressed, input.len()).unwrap();
 
         assert_eq!(len, input.len());
         assert_eq!(decompressed, input);
@@ -498,7 +500,8 @@ mod tests {
 
             // Verify all levels decompress correctly
             let mut decompressed = vec![0u8; input.len()];
-            let len = crate::block::decompress_block(&compressed, &mut decompressed, input.len()).unwrap();
+            let len = crate::block::decompress_block(&compressed, &mut decompressed, input.len())
+                .unwrap();
             assert_eq!(len, input.len());
             assert_eq!(decompressed, input, "Level {} failed roundtrip", level);
         }
@@ -507,7 +510,10 @@ mod tests {
         // (not strictly monotonic, but trend should be downward)
         let first_half_avg: f64 = sizes[0..4].iter().map(|(_, s)| *s as f64).sum::<f64>() / 4.0;
         let second_half_avg: f64 = sizes[5..9].iter().map(|(_, s)| *s as f64).sum::<f64>() / 4.0;
-        assert!(second_half_avg <= first_half_avg, "Higher levels should compress better");
+        assert!(
+            second_half_avg <= first_half_avg,
+            "Higher levels should compress better"
+        );
     }
 
     #[test]

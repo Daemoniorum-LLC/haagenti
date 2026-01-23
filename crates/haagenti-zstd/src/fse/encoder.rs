@@ -43,6 +43,7 @@ pub struct FseEncoder {
     /// Each symbol has up to max_states encoding entries.
     encode_table: Vec<FseEncodeEntry>,
     /// Number of states per symbol (table_size / num_symbols average)
+    #[allow(dead_code)]
     states_per_symbol: usize,
     /// Symbol count array: number of states for each symbol
     symbol_counts: [u16; 256],
@@ -55,6 +56,7 @@ pub struct FseEncoder {
     /// Accuracy log.
     accuracy_log: u8,
     /// Table size
+    #[allow(dead_code)]
     table_size: usize,
 }
 
@@ -97,14 +99,15 @@ impl FseEncoder {
                 encode_table[idx] = FseEncodeEntry {
                     num_bits: decode_entry.num_bits,
                     delta_find_state: state as i16,
-                    delta_nb_bits: (decode_entry.num_bits as u16) << 8 | (decode_entry.baseline & 0xFF),
+                    delta_nb_bits: (decode_entry.num_bits as u16) << 8
+                        | (decode_entry.baseline & 0xFF),
                 };
             }
         }
 
         Self {
             encode_table,
-            states_per_symbol: table_size / 256.max(1),
+            states_per_symbol: table_size / 256,
             symbol_counts,
             symbol_starts,
             symbol_next: [0u16; 256],
@@ -281,7 +284,7 @@ impl FseBitWriter {
     /// Get current size in bytes (approximate).
     #[inline]
     pub fn len(&self) -> usize {
-        self.buffer.len() + ((self.bits_in_accum as usize + 7) / 8)
+        self.buffer.len() + (self.bits_in_accum as usize).div_ceil(8)
     }
 
     /// Check if the writer is empty.
@@ -387,14 +390,15 @@ impl InterleavedFseEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fse::{FseTable, LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG};
+    use crate::fse::{FseTable, LITERAL_LENGTH_ACCURACY_LOG, LITERAL_LENGTH_DEFAULT_DISTRIBUTION};
 
     #[test]
     fn test_fse_encoder_creation() {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let encoder = FseEncoder::from_decode_table(&table);
         assert_eq!(encoder.accuracy_log(), LITERAL_LENGTH_ACCURACY_LOG);
@@ -405,7 +409,8 @@ mod tests {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut encoder = FseEncoder::from_decode_table(&table);
         encoder.init_state(0);
@@ -419,7 +424,8 @@ mod tests {
         let table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut encoder = FseEncoder::from_decode_table(&table);
         encoder.init_state(0);
@@ -488,22 +494,22 @@ mod tests {
     #[test]
     fn test_interleaved_encoder() {
         use crate::fse::{
-            MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-            OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+            MATCH_LENGTH_ACCURACY_LOG, MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+            OFFSET_DEFAULT_DISTRIBUTION,
         };
 
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
 
         let mut encoder = InterleavedFseEncoder::new(&ll_table, &of_table, &ml_table);
         encoder.init_states(0, 0, 0);

@@ -44,12 +44,16 @@ pub struct ZstdDictionary {
     /// Raw dictionary content (for match finding)
     content: Vec<u8>,
     /// Precomputed Huffman table for literals
+    #[allow(dead_code)]
     huffman_table: Option<Vec<u8>>,
     /// FSE table for offsets
+    #[allow(dead_code)]
     fse_offset_table: Option<Vec<u8>>,
     /// FSE table for match lengths
+    #[allow(dead_code)]
     fse_ml_table: Option<Vec<u8>>,
     /// FSE table for literals lengths
+    #[allow(dead_code)]
     fse_ll_table: Option<Vec<u8>>,
     /// Hash table for fast match finding in dictionary
     hash_table: HashMap<u32, Vec<usize>>,
@@ -328,7 +332,11 @@ impl ZstdDictionary {
             // Minimum match length of 4
             if match_len >= 4 {
                 let offset = self.content.len() - dict_pos;
-                if best_match.as_ref().map(|m| match_len > m.length).unwrap_or(true) {
+                if best_match
+                    .as_ref()
+                    .map(|m| match_len > m.length)
+                    .unwrap_or(true)
+                {
                     best_match = Some(DictMatch {
                         offset,
                         length: match_len,
@@ -560,8 +568,14 @@ mod tests {
 
         // Then: Dictionary has valid ID and reasonable size
         assert!(dict.id() != 0, "Dictionary should have non-zero ID");
-        assert!(dict.size() >= MIN_DICT_SIZE, "Dictionary should meet minimum size");
-        assert!(dict.size() <= 8 * 1024, "Dictionary should not exceed max size");
+        assert!(
+            dict.size() >= MIN_DICT_SIZE,
+            "Dictionary should meet minimum size"
+        );
+        assert!(
+            dict.size() <= 8 * 1024,
+            "Dictionary should not exceed max size"
+        );
 
         // Should contain common patterns
         let content = String::from_utf8_lossy(dict.content());
@@ -574,10 +588,7 @@ mod tests {
     #[test]
     fn test_dict_training_insufficient_samples() {
         // Given: Too few samples (less than MIN_SAMPLES)
-        let samples: Vec<&[u8]> = vec![
-            b"single sample",
-            b"another sample",
-        ];
+        let samples: Vec<&[u8]> = vec![b"single sample", b"another sample"];
 
         // When/Then: Training fails gracefully
         let result = ZstdDictionary::train(&samples, 4096);
@@ -627,12 +638,15 @@ mod tests {
         let dict_compressor = ZstdDictCompressor::new(dict);
 
         // Test data similar to training samples
-        let test_data = b"transformer.encoder.layer.15.attention.self.query.weight tensor data here";
+        let test_data =
+            b"transformer.encoder.layer.15.attention.self.query.weight tensor data here";
 
         // When: Compressing with and without dictionary
         let with_dict = dict_compressor.compress(test_data).unwrap();
-        let without_dict = crate::compress::CompressContext::new(haagenti_core::CompressionLevel::Default)
-            .compress(test_data).unwrap();
+        let without_dict =
+            crate::compress::CompressContext::new(haagenti_core::CompressionLevel::Default)
+                .compress(test_data)
+                .unwrap();
 
         // Then: Dictionary compression produces smaller output
         // Note: For small data, dictionary overhead may make it larger
@@ -659,14 +673,20 @@ mod tests {
         let compressor = ZstdDictCompressor::new(dict);
 
         // When: Compressing data
-        let compressed = compressor.compress(b"pattern.test.data with more content").unwrap();
+        let compressed = compressor
+            .compress(b"pattern.test.data with more content")
+            .unwrap();
 
         // Then: Frame header contains dictionary ID
         // Parse frame header manually
-        assert!(compressed.len() >= 8, "Compressed data should have frame header");
+        assert!(
+            compressed.len() >= 8,
+            "Compressed data should have frame header"
+        );
 
         // Check magic number
-        let magic = u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+        let magic =
+            u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
         assert_eq!(magic, crate::ZSTD_MAGIC, "Should have valid Zstd magic");
 
         // Frame descriptor byte indicates dict ID presence
@@ -676,7 +696,10 @@ mod tests {
         // If dict ID is present, it should match
         if dict_id_flag != 0 {
             // Dictionary ID is embedded
-            assert!(dict_id != 0, "Dictionary ID should be non-zero when embedded");
+            assert!(
+                dict_id != 0,
+                "Dictionary ID should be non-zero when embedded"
+            );
         }
     }
 
@@ -746,24 +769,26 @@ mod tests {
         let data = b"level.test.data with additional content to compress effectively";
 
         // When: Compressing at different levels
-        let fast = ZstdDictCompressor::with_level(
-            dict.clone(),
-            haagenti_core::CompressionLevel::Fast
-        ).compress(data).unwrap();
+        let fast =
+            ZstdDictCompressor::with_level(dict.clone(), haagenti_core::CompressionLevel::Fast)
+                .compress(data)
+                .unwrap();
 
-        let default = ZstdDictCompressor::with_level(
-            dict.clone(),
-            haagenti_core::CompressionLevel::Default
-        ).compress(data).unwrap();
+        let default =
+            ZstdDictCompressor::with_level(dict.clone(), haagenti_core::CompressionLevel::Default)
+                .compress(data)
+                .unwrap();
 
-        let best = ZstdDictCompressor::with_level(
-            dict,
-            haagenti_core::CompressionLevel::Best
-        ).compress(data).unwrap();
+        let best = ZstdDictCompressor::with_level(dict, haagenti_core::CompressionLevel::Best)
+            .compress(data)
+            .unwrap();
 
         // Then: All levels should produce valid output
         assert!(!fast.is_empty(), "Fast compression should produce output");
-        assert!(!default.is_empty(), "Default compression should produce output");
+        assert!(
+            !default.is_empty(),
+            "Default compression should produce output"
+        );
         assert!(!best.is_empty(), "Best compression should produce output");
     }
 }

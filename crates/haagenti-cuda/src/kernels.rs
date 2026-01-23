@@ -18,10 +18,12 @@ use crate::memory::GpuBuffer;
 use cudarc::driver::{sys, CudaDevice, CudaFunction, CudaStream, LaunchConfig};
 use std::sync::Arc;
 
-/// LZ4 block header size.
+/// LZ4 block header size (for future block-based parallel decompression).
+#[allow(dead_code)]
 const LZ4_BLOCK_HEADER_SIZE: usize = 4;
 
-/// Maximum LZ4 block size (4MB).
+/// Maximum LZ4 block size (4MB) (for future block-based parallel decompression).
+#[allow(dead_code)]
 const LZ4_MAX_BLOCK_SIZE: usize = 4 * 1024 * 1024;
 
 /// CUDA kernel source for LZ4 decompression.
@@ -185,14 +187,22 @@ DONE2:
 
 /// Get compute capability of a CUDA device.
 fn get_compute_capability(device: &Arc<CudaDevice>) -> Result<(usize, usize)> {
-    let major = device.attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)? as usize;
-    let minor = device.attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)? as usize;
+    let major = device
+        .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)?
+        as usize;
+    let minor = device
+        .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)?
+        as usize;
     Ok((major, minor))
 }
 
 /// LZ4 GPU decompressor.
 pub struct Lz4GpuDecompressor {
+    /// Device handle kept for ownership/lifetime (kernel uses internal references)
+    #[allow(dead_code)]
     device: Arc<CudaDevice>,
+    /// Kernel function (invoked via cudarc's launch mechanism)
+    #[allow(dead_code)]
     decompress_kernel: CudaFunction,
 }
 
@@ -206,7 +216,8 @@ impl Lz4GpuDecompressor {
             &["lz4_decompress_kernel", "compute_output_offsets"],
         )?;
 
-        let decompress_kernel = device.get_func("lz4_decompress", "lz4_decompress_kernel")
+        let decompress_kernel = device
+            .get_func("lz4_decompress", "lz4_decompress_kernel")
             .ok_or_else(|| CudaError::KernelLaunch("Failed to load LZ4 kernel".into()))?;
 
         Ok(Lz4GpuDecompressor {
@@ -235,7 +246,7 @@ impl Lz4GpuDecompressor {
 
         // Calculate launch config
         let block_size = 256;
-        let num_blocks = (compressed_size + block_size - 1) / block_size;
+        let num_blocks = compressed_size.div_ceil(block_size);
         let num_blocks = num_blocks.min(65535);
 
         let _config = LaunchConfig {
@@ -284,6 +295,8 @@ impl Lz4GpuDecompressor {
 
 /// Zstd GPU decompressor (placeholder for future implementation).
 pub struct ZstdGpuDecompressor {
+    /// Device handle kept for ownership/lifetime
+    #[allow(dead_code)]
     device: Arc<CudaDevice>,
 }
 
@@ -293,9 +306,7 @@ impl ZstdGpuDecompressor {
         // Check compute capability for Zstd (requires more complex kernels)
         let (major, minor) = get_compute_capability(&device)?;
         if major < 7 {
-            return Err(CudaError::InsufficientComputeCapability(
-                major, minor, 7, 0,
-            ));
+            return Err(CudaError::InsufficientComputeCapability(major, minor, 7, 0));
         }
 
         Ok(ZstdGpuDecompressor { device })
@@ -379,12 +390,8 @@ pub fn parse_lz4_frame(data: &[u8]) -> Result<Vec<BlockInfo>> {
     // Parse blocks
     let mut output_offset = 0;
     while pos + 4 <= data.len() {
-        let block_size = u32::from_le_bytes([
-            data[pos],
-            data[pos + 1],
-            data[pos + 2],
-            data[pos + 3],
-        ]) as usize;
+        let block_size =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
         if block_size == 0 {
@@ -395,7 +402,9 @@ pub fn parse_lz4_frame(data: &[u8]) -> Result<Vec<BlockInfo>> {
         let actual_size = block_size & 0x7FFFFFFF;
 
         if pos + actual_size > data.len() {
-            return Err(CudaError::InvalidData("Block extends past end of data".into()));
+            return Err(CudaError::InvalidData(
+                "Block extends past end of data".into(),
+            ));
         }
 
         let output_size = if is_uncompressed {

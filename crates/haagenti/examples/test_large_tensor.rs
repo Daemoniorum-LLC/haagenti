@@ -11,7 +11,7 @@ use std::env;
 use std::fs;
 use std::time::Instant;
 
-use haagenti::compressive::{CompressiveSpectralEncoder, CompressiveSpectralDecoder};
+use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
 
 #[derive(Debug)]
 struct TensorInfo {
@@ -103,8 +103,9 @@ fn mse(a: &[f32], b: &[f32]) -> f32 {
 }
 
 fn main() {
-    let tensor_file = env::var("TENSOR_FILE")
-        .unwrap_or_else(|_| "/tmp/llama405b-safetensors/model_layers_0_mlp_gate_proj_weight.safetensors".to_string());
+    let tensor_file = env::var("TENSOR_FILE").unwrap_or_else(|_| {
+        "/tmp/llama405b-safetensors/model_layers_0_mlp_gate_proj_weight.safetensors".to_string()
+    });
 
     let retention: f32 = env::var("RETENTION")
         .ok()
@@ -120,7 +121,11 @@ fn main() {
     let load_start = Instant::now();
     let data = fs::read(&tensor_file).expect("Failed to read tensor file");
     let load_time = load_start.elapsed();
-    println!("  Loaded {:.2} MB in {:.2}s\n", data.len() as f64 / 1024.0 / 1024.0, load_time.as_secs_f64());
+    println!(
+        "  Loaded {:.2} MB in {:.2}s\n",
+        data.len() as f64 / 1024.0 / 1024.0,
+        load_time.as_secs_f64()
+    );
 
     let (data_start, tensors) = parse_safetensors_header(&data).expect("Failed to parse header");
 
@@ -129,7 +134,11 @@ fn main() {
         println!("  Shape: {:?}", info.shape);
         println!("  Dtype: {}", info.dtype);
         let num_elements: usize = info.shape.iter().product();
-        println!("  Elements: {} ({:.2}M)", num_elements, num_elements as f64 / 1_000_000.0);
+        println!(
+            "  Elements: {} ({:.2}M)",
+            num_elements,
+            num_elements as f64 / 1_000_000.0
+        );
 
         // Convert to f32
         println!("\nConverting to f32...");
@@ -151,7 +160,10 @@ fn main() {
         let chunk_height = 1024.min(height);
         let num_chunks = (height + chunk_height - 1) / chunk_height;
 
-        println!("\nCompressing {} chunks of {}x{} each...", num_chunks, width, chunk_height);
+        println!(
+            "\nCompressing {} chunks of {}x{} each...",
+            num_chunks, width, chunk_height
+        );
 
         let encoder = CompressiveSpectralEncoder::new(8, retention);
 
@@ -169,7 +181,8 @@ fn main() {
             let chunk_values = &values[chunk_start..chunk_end];
 
             // Encode
-            let encoded = encoder.encode_2d(chunk_values, width, actual_chunk_height)
+            let encoded = encoder
+                .encode_2d(chunk_values, width, actual_chunk_height)
                 .expect("Encoding failed");
             total_encoded_size += encoded.iter().map(|f| f.data_size()).sum::<usize>();
 
@@ -179,9 +192,13 @@ fn main() {
             // Add fragment 0 (essentials) first
             for frag in &encoded {
                 if frag.index == 0 {
-                    chunk_decoder.add_essentials(frag).expect("Failed to add essentials");
+                    chunk_decoder
+                        .add_essentials(frag)
+                        .expect("Failed to add essentials");
                 } else {
-                    chunk_decoder.add_detail(frag).expect("Failed to add detail");
+                    chunk_decoder
+                        .add_detail(frag)
+                        .expect("Failed to add detail");
                 }
             }
 
@@ -213,13 +230,22 @@ fn main() {
 
         println!("\n=== Results ===\n");
         println!("Compression time: {:.2}s", compress_time.as_secs_f64());
-        println!("Throughput: {:.2} MB/s", (original_size as f64 / 1024.0 / 1024.0) / compress_time.as_secs_f64());
+        println!(
+            "Throughput: {:.2} MB/s",
+            (original_size as f64 / 1024.0 / 1024.0) / compress_time.as_secs_f64()
+        );
         println!("\nQuality:");
         println!("  Cosine similarity: {:.6}", cos_sim);
         println!("  MSE: {:.6}", mse_val);
         println!("\nSize:");
-        println!("  Original (f32): {:.2} MB", original_size as f64 / 1024.0 / 1024.0);
-        println!("  Encoded: {:.2} MB", total_encoded_size as f64 / 1024.0 / 1024.0);
+        println!(
+            "  Original (f32): {:.2} MB",
+            original_size as f64 / 1024.0 / 1024.0
+        );
+        println!(
+            "  Encoded: {:.2} MB",
+            total_encoded_size as f64 / 1024.0 / 1024.0
+        );
         println!("  Compression ratio: {:.2}x", compression_ratio);
     }
 }

@@ -1,6 +1,6 @@
 //! Cold start optimization for serverless functions
 
-use crate::{Result, ServerlessError};
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
@@ -78,8 +78,9 @@ pub struct ColdStartOptimizer {
     phases: Vec<WarmupPhase>,
 }
 
-/// Warmup phase
+/// Warmup phase (internal tracking)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct WarmupPhase {
     name: String,
     duration_ms: u64,
@@ -214,7 +215,7 @@ impl ColdStartOptimizer {
             // Simulate inference
             tokio::time::sleep(Duration::from_micros(100)).await;
         }
-        self.stats.warmup_iterations;
+        // Warmup iterations tracked in caller (warmup method)
         Ok(())
     }
 
@@ -253,8 +254,9 @@ pub struct WarmupScheduler {
     max_concurrent: usize,
 }
 
-/// Scheduled warmup entry
+/// Scheduled warmup entry (internal to WarmupScheduler)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ScheduledWarmup {
     /// Instance ID
     instance_id: String,
@@ -287,15 +289,19 @@ impl WarmupScheduler {
     }
 
     /// Get next instance to warm up
-    pub fn next(&mut self) -> Option<String> {
+    pub fn next_warmup(&mut self) -> Option<String> {
         if self.active_count >= self.max_concurrent {
             return None;
         }
 
-        self.schedule.pop().map(|s| {
-            self.active_count += 1;
-            s.instance_id
-        })
+        if self.schedule.is_empty() {
+            return None;
+        }
+
+        // Remove from front (highest priority after sorting)
+        let s = self.schedule.remove(0);
+        self.active_count += 1;
+        Some(s.instance_id)
     }
 
     /// Mark warmup complete
@@ -415,12 +421,12 @@ mod tests {
         scheduler.schedule("instance3", 3);
 
         // Highest priority first
-        assert_eq!(scheduler.next(), Some("instance3".to_string()));
-        assert_eq!(scheduler.next(), Some("instance2".to_string()));
-        assert_eq!(scheduler.next(), None); // At max concurrent
+        assert_eq!(scheduler.next_warmup(), Some("instance3".to_string()));
+        assert_eq!(scheduler.next_warmup(), Some("instance2".to_string()));
+        assert_eq!(scheduler.next_warmup(), None); // At max concurrent
 
         scheduler.complete("instance3");
-        assert_eq!(scheduler.next(), Some("instance1".to_string()));
+        assert_eq!(scheduler.next_warmup(), Some("instance1".to_string()));
     }
 
     #[test]

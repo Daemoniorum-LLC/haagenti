@@ -1,8 +1,20 @@
 //! LZ4 compressor implementation.
+//!
+//! This module provides both standard LZ4 compression and LZ4-HC (high compression)
+//! when the `hc` feature is enabled.
+//!
+//! ## Compression Level Mapping
+//!
+//! - `None`: No compression (passthrough)
+//! - `Fast`: Standard LZ4 (fastest)
+//! - `Default`: Standard LZ4
+//! - `Best`: LZ4-HC level 9 (if `hc` feature enabled, else standard LZ4)
+//! - `Ultra`: LZ4-HC level 9 (if `hc` feature enabled, else standard LZ4)
+//! - `Custom(1-3)`: Standard LZ4
+//! - `Custom(4-9)`: LZ4-HC at that level (if `hc` feature enabled)
 
 use haagenti_core::{
-    Algorithm, CompressionLevel, CompressionStats, Compressor, Result,
-    StreamingCompressor, Flush,
+    Algorithm, CompressionLevel, CompressionStats, Compressor, Flush, Result, StreamingCompressor,
 };
 
 use crate::block::{compress_block, max_compressed_size};
@@ -50,7 +62,7 @@ impl Compressor for Lz4Compressor {
         let max_size = max_compressed_size(input.len());
         let mut output = vec![0u8; max_size];
 
-        let compressed_len = compress_block(input, &mut output)?;
+        let compressed_len = self.compress_to(input, &mut output)?;
         output.truncate(compressed_len);
 
         let elapsed = start.elapsed();
@@ -67,6 +79,22 @@ impl Compressor for Lz4Compressor {
     }
 
     fn compress_to(&self, input: &[u8], output: &mut [u8]) -> Result<usize> {
+        // Determine if we should use HC
+        #[cfg(feature = "hc")]
+        {
+            let hc_level = match self.level {
+                CompressionLevel::Best => Some(9),
+                CompressionLevel::Ultra => Some(9),
+                CompressionLevel::Custom(l) if l >= 4 => Some(l.min(9) as usize),
+                _ => None,
+            };
+
+            if let Some(level) = hc_level {
+                return crate::hc::compress_hc(input, output, level);
+            }
+        }
+
+        // Fall back to standard LZ4
         compress_block(input, output)
     }
 

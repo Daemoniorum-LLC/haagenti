@@ -152,8 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{:─<55}", "");
 
         // Compare top coefficients by magnitude
-        let mut indexed_gpu: Vec<(usize, f32)> =
-            gpu_dct.iter().copied().enumerate().collect();
+        let mut indexed_gpu: Vec<(usize, f32)> = gpu_dct.iter().copied().enumerate().collect();
         indexed_gpu.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
 
         let mut indexed_ref: Vec<(usize, f32)> =

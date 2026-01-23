@@ -80,14 +80,22 @@ fn process_remaining(mut h64: u64, data: &[u8]) -> u64 {
     // Process 8-byte chunks
     while i + 8 <= data.len() {
         let k1 = round64(0, read64_le(&data[i..]));
-        h64 = h64.bitxor(k1).rotate_left(27).wrapping_mul(PRIME64_1).wrapping_add(PRIME64_4);
+        h64 = h64
+            .bitxor(k1)
+            .rotate_left(27)
+            .wrapping_mul(PRIME64_1)
+            .wrapping_add(PRIME64_4);
         i += 8;
     }
 
     // Process 4-byte chunk
     if i + 4 <= data.len() {
         let k1 = (read32_le(&data[i..]) as u64).wrapping_mul(PRIME64_1);
-        h64 = h64.bitxor(k1).rotate_left(23).wrapping_mul(PRIME64_2).wrapping_add(PRIME64_3);
+        h64 = h64
+            .bitxor(k1)
+            .rotate_left(23)
+            .wrapping_mul(PRIME64_2)
+            .wrapping_add(PRIME64_3);
         i += 4;
     }
 

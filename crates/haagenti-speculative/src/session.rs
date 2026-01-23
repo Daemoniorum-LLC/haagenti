@@ -101,7 +101,7 @@ impl SessionHistory {
         }
 
         // Update patterns periodically
-        if self.history.len() % 10 == 0 {
+        if self.history.len().is_multiple_of(10) {
             self.analyze_patterns();
         }
     }
@@ -119,7 +119,14 @@ impl SessionHistory {
 
         // Analyze styles
         let mut style_counts: HashMap<String, u32> = HashMap::new();
-        let style_keywords = ["anime", "realistic", "photorealistic", "artistic", "cartoon", "3d"];
+        let style_keywords = [
+            "anime",
+            "realistic",
+            "photorealistic",
+            "artistic",
+            "cartoon",
+            "3d",
+        ];
 
         for entry in &self.history {
             let lower = entry.prompt.to_lowercase();
@@ -173,7 +180,8 @@ impl SessionHistory {
             / total.max(1.0);
 
         // Sort patterns by confidence
-        self.patterns.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        self.patterns
+            .sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
     }
 
     /// Get predicted next prompt type
@@ -381,7 +389,13 @@ mod tests {
 
         // Should predict style pattern
         let prediction = history.predict_next();
-        assert!(prediction.is_some() || history.patterns_of_type(PatternType::Style).is_empty().not());
+        assert!(
+            prediction.is_some()
+                || history
+                    .patterns_of_type(PatternType::Style)
+                    .is_empty()
+                    .not()
+        );
     }
 
     #[test]

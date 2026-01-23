@@ -1,6 +1,5 @@
 //! Runtime profiling and bottleneck detection
 
-use crate::{OptError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -206,14 +205,15 @@ impl Profiler {
                     name: name.clone(),
                     bottleneck_type: BottleneckType::DominantOperation,
                     severity: Severity::High,
-                    suggestion: format!("Optimize {} - takes {:.1}% of time", name, stats.percentage),
+                    suggestion: format!(
+                        "Optimize {} - takes {:.1}% of time",
+                        name, stats.percentage
+                    ),
                 });
             }
         }
 
-        bottlenecks.sort_by(|a, b| {
-            b.severity.as_int().cmp(&a.severity.as_int())
-        });
+        bottlenecks.sort_by(|a, b| b.severity.as_int().cmp(&a.severity.as_int()));
 
         bottlenecks
     }

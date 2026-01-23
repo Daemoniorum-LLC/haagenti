@@ -60,7 +60,8 @@ impl FragmentUsage {
     /// Update quality contribution
     pub fn update_contribution(&mut self, contribution: f32) {
         let alpha = 0.1;
-        self.quality_contribution = self.quality_contribution * (1.0 - alpha) + contribution * alpha;
+        self.quality_contribution =
+            self.quality_contribution * (1.0 - alpha) + contribution * alpha;
         self.updated_at = now();
     }
 
@@ -162,10 +163,7 @@ impl UsageHistory {
 
     /// Record a fragment load
     pub fn record_load(&self, fragment_id: FragmentId) {
-        self.usage
-            .entry(fragment_id)
-            .or_insert_with(FragmentUsage::new)
-            .record_load();
+        self.usage.entry(fragment_id).or_default().record_load();
 
         self.total_operations.fetch_add(1, Ordering::Relaxed);
     }
@@ -174,7 +172,7 @@ impl UsageHistory {
     pub fn record_use(&self, fragment_id: FragmentId, quality: f32, step: u32) {
         self.usage
             .entry(fragment_id)
-            .or_insert_with(FragmentUsage::new)
+            .or_default()
             .record_use(quality, step);
     }
 
@@ -188,9 +186,9 @@ impl UsageHistory {
     ) {
         self.model_usage
             .entry(model_id.to_string())
-            .or_insert_with(DashMap::new)
+            .or_default()
             .entry(fragment_id)
-            .or_insert_with(FragmentUsage::new)
+            .or_default()
             .record_use(quality, step);
     }
 
@@ -279,14 +277,21 @@ impl UsageHistory {
         };
 
         let saved = SavedHistory {
-            usage: self.usage.iter().map(|e| (*e.key(), e.value().clone())).collect(),
+            usage: self
+                .usage
+                .iter()
+                .map(|e| (*e.key(), e.value().clone()))
+                .collect(),
             model_usage: self
                 .model_usage
                 .iter()
                 .map(|e| {
                     (
                         e.key().clone(),
-                        e.value().iter().map(|e2| (*e2.key(), e2.value().clone())).collect(),
+                        e.value()
+                            .iter()
+                            .map(|e2| (*e2.key(), e2.value().clone()))
+                            .collect(),
                     )
                 })
                 .collect(),

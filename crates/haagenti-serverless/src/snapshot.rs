@@ -1,7 +1,7 @@
 //! GPU memory snapshot and restore for fast recovery
 
-use arcanum_primitives::prelude::Blake3;
 use crate::{Result, ServerlessError};
+use arcanum_primitives::prelude::Blake3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -218,9 +218,9 @@ impl SnapshotManager {
         self.stats.bytes_saved += snapshot.total_size;
 
         let elapsed = start.elapsed().as_millis() as f64;
-        self.stats.avg_save_ms =
-            (self.stats.avg_save_ms * (self.stats.created - 1) as f64 + elapsed)
-                / self.stats.created as f64;
+        self.stats.avg_save_ms = (self.stats.avg_save_ms * (self.stats.created - 1) as f64
+            + elapsed)
+            / self.stats.created as f64;
 
         Ok(snapshot)
     }
@@ -260,9 +260,9 @@ impl SnapshotManager {
         self.stats.bytes_restored += snapshot.total_size;
 
         let elapsed = start.elapsed().as_millis() as f64;
-        self.stats.avg_restore_ms =
-            (self.stats.avg_restore_ms * (self.stats.restored - 1) as f64 + elapsed)
-                / self.stats.restored as f64;
+        self.stats.avg_restore_ms = (self.stats.avg_restore_ms * (self.stats.restored - 1) as f64
+            + elapsed)
+            / self.stats.restored as f64;
 
         Ok(buffers)
     }

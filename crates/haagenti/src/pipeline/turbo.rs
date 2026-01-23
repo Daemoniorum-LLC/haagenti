@@ -169,9 +169,8 @@ impl TurboPipeline {
     /// Creates a new turbo pipeline.
     pub fn new(config: TurboConfig) -> Result<Self> {
         // Ensure output directory exists
-        std::fs::create_dir_all(&config.output_dir).map_err(|e| {
-            Error::io(format!("failed to create output directory: {}", e))
-        })?;
+        std::fs::create_dir_all(&config.output_dir)
+            .map_err(|e| Error::io(format!("failed to create output directory: {}", e)))?;
 
         Ok(Self {
             config,
@@ -217,7 +216,10 @@ impl TurboPipeline {
         }
 
         let total_tensors = all_tensors.len();
-        eprintln!("Processing {} tensors with {} workers", total_tensors, self.config.num_workers);
+        eprintln!(
+            "Processing {} tensors with {} workers",
+            total_tensors, self.config.num_workers
+        );
 
         // Setup progress bar
         let pb = ProgressBar::new(total_tensors as u64);
@@ -327,7 +329,9 @@ impl TurboPipeline {
         let data_f32 = reader.tensor_f32(name)?;
         let original_size = data_f32.len() * 4;
 
-        state.input_bytes.fetch_add(original_size as u64, Ordering::Relaxed);
+        state
+            .input_bytes
+            .fetch_add(original_size as u64, Ordering::Relaxed);
 
         // Determine 2D dimensions
         let (width, height) = if shape.len() == 2 {
@@ -386,12 +390,13 @@ impl TurboPipeline {
         }
 
         // Apply zstd compression using reference implementation for compatibility
-        let final_data = zstd::encode_all(&compressed_data[..], 1).map_err(|e| {
-            Error::corrupted(format!("zstd compression failed: {}", e))
-        })?;
+        let final_data = zstd::encode_all(&compressed_data[..], 1)
+            .map_err(|e| Error::corrupted(format!("zstd compression failed: {}", e)))?;
 
         let compressed_size = final_data.len();
-        state.output_bytes.fetch_add(compressed_size as u64, Ordering::Relaxed);
+        state
+            .output_bytes
+            .fetch_add(compressed_size as u64, Ordering::Relaxed);
 
         // Add to output buffer
         {
@@ -422,7 +427,8 @@ impl TurboPipeline {
         let buffer = state.output_buffer.lock().unwrap();
 
         // Simple safetensors-like format
-        let mut metadata: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+        let mut metadata: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
         let mut data_offset = 0u64;
         let mut all_data = Vec::new();
 
@@ -438,28 +444,23 @@ impl TurboPipeline {
             data_offset += data.len() as u64;
         }
 
-        let header_json = serde_json::to_vec(&metadata).map_err(|e| {
-            Error::corrupted(format!("failed to serialize header: {}", e))
-        })?;
+        let header_json = serde_json::to_vec(&metadata)
+            .map_err(|e| Error::corrupted(format!("failed to serialize header: {}", e)))?;
 
-        let mut file = std::fs::File::create(output_path).map_err(|e| {
-            Error::io(format!("failed to create output file: {}", e))
-        })?;
+        let mut file = std::fs::File::create(output_path)
+            .map_err(|e| Error::io(format!("failed to create output file: {}", e)))?;
 
         // Write header length (8 bytes, little-endian)
-        file.write_all(&(header_json.len() as u64).to_le_bytes()).map_err(|e| {
-            Error::io(format!("failed to write header length: {}", e))
-        })?;
+        file.write_all(&(header_json.len() as u64).to_le_bytes())
+            .map_err(|e| Error::io(format!("failed to write header length: {}", e)))?;
 
         // Write header
-        file.write_all(&header_json).map_err(|e| {
-            Error::io(format!("failed to write header: {}", e))
-        })?;
+        file.write_all(&header_json)
+            .map_err(|e| Error::io(format!("failed to write header: {}", e)))?;
 
         // Write data
-        file.write_all(&all_data).map_err(|e| {
-            Error::io(format!("failed to write data: {}", e))
-        })?;
+        file.write_all(&all_data)
+            .map_err(|e| Error::io(format!("failed to write data: {}", e)))?;
 
         Ok(())
     }

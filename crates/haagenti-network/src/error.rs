@@ -10,10 +10,7 @@ pub type Result<T> = std::result::Result<T, NetworkError>;
 pub enum NetworkError {
     /// HTTP request failed
     #[error("HTTP error: {status} - {message}")]
-    Http {
-        status: u16,
-        message: String,
-    },
+    Http { status: u16, message: String },
 
     /// Network connection failed
     #[error("Connection failed: {0}")]
@@ -49,9 +46,7 @@ pub enum NetworkError {
 
     /// Rate limited
     #[error("Rate limited, retry after {retry_after_ms}ms")]
-    RateLimited {
-        retry_after_ms: u64,
-    },
+    RateLimited { retry_after_ms: u64 },
 
     /// CDN configuration error
     #[error("CDN configuration error: {0}")]

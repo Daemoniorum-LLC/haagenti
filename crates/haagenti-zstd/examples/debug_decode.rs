@@ -5,7 +5,11 @@ use haagenti_zstd::{ZstdCompressor, ZstdDecompressor};
 
 fn main() {
     let input = b"ABCDABCDABCDABCD";
-    println!("Input: {:?} ({} bytes)", String::from_utf8_lossy(input), input.len());
+    println!(
+        "Input: {:?} ({} bytes)",
+        String::from_utf8_lossy(input),
+        input.len()
+    );
 
     let compressor = ZstdCompressor::new();
     let compressed = compressor.compress(input).unwrap();
@@ -30,7 +34,13 @@ fn main() {
     }
     let fcs_flag = (fhd >> 6) & 3;
     let fcs_size = match fcs_flag {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -56,7 +66,11 @@ fn main() {
 
     println!("Sequence section starts at pos {}", pos);
     let seq_section = &compressed[pos..];
-    println!("Sequence section ({} bytes): {:02x?}", seq_section.len(), seq_section);
+    println!(
+        "Sequence section ({} bytes): {:02x?}",
+        seq_section.len(),
+        seq_section
+    );
 
     // Parse count
     let count = seq_section[0] as usize;

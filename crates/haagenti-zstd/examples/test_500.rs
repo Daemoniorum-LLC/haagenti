@@ -12,19 +12,30 @@ fn main() {
     // Extract FSE bitstream from reference
     let fse_bytes = &ref_compressed[16..];
     println!("\nFSE bitstream: {:02x?}", fse_bytes);
-    
-    // Decode with reference 
+
+    // Decode with reference
     let ref_decoded = zstd::decode_all(&ref_compressed[..]).unwrap();
-    println!("\nReference decodes reference: {} bytes, match={}", ref_decoded.len(), ref_decoded == input);
+    println!(
+        "\nReference decodes reference: {} bytes, match={}",
+        ref_decoded.len(),
+        ref_decoded == input
+    );
 
     // Decode with our implementation
     match haagenti_zstd::decompress::decompress_frame(&ref_compressed) {
         Ok(our_decoded) => {
-            println!("Our decoder decodes reference: {} bytes, match={}", our_decoded.len(), our_decoded == input);
+            println!(
+                "Our decoder decodes reference: {} bytes, match={}",
+                our_decoded.len(),
+                our_decoded == input
+            );
             if our_decoded != input {
                 println!("Mismatch! First 20 bytes:");
                 println!("  Expected: {:?}", &input[..20]);
-                println!("  Got:      {:?}", &our_decoded[..20.min(our_decoded.len())]);
+                println!(
+                    "  Got:      {:?}",
+                    &our_decoded[..20.min(our_decoded.len())]
+                );
             }
         }
         Err(e) => println!("Our decoder fails: {:?}", e),
@@ -38,7 +49,11 @@ fn main() {
 
     // Cross decode
     match zstd::decode_all(&our_compressed[..]) {
-        Ok(d) => println!("Reference decodes ours: {} bytes, match={}", d.len(), d == input),
+        Ok(d) => println!(
+            "Reference decodes ours: {} bytes, match={}",
+            d.len(),
+            d == input
+        ),
         Err(e) => println!("Reference fails on ours: {}", e),
     }
 }

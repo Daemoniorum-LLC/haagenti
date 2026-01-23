@@ -25,9 +25,8 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 
-use tonic::transport::{Certificate, Identity, ServerTlsConfig, ClientTlsConfig};
+use tonic::transport::{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
 
 /// TLS configuration errors
 #[derive(Debug, thiserror::Error)]
@@ -296,13 +295,13 @@ impl TlsConfigBuilder {
 
     /// Build the TLS configuration.
     pub fn build(self) -> TlsResult<TlsConfig> {
-        let cert_path = self.cert_path.ok_or_else(|| {
-            TlsError::Configuration("Certificate path is required".to_string())
-        })?;
+        let cert_path = self
+            .cert_path
+            .ok_or_else(|| TlsError::Configuration("Certificate path is required".to_string()))?;
 
-        let key_path = self.key_path.ok_or_else(|| {
-            TlsError::Configuration("Key path is required".to_string())
-        })?;
+        let key_path = self
+            .key_path
+            .ok_or_else(|| TlsError::Configuration("Key path is required".to_string()))?;
 
         let mut config = TlsConfig::from_pem(&cert_path, &key_path)?;
 
@@ -327,7 +326,9 @@ mod tests {
     use tempfile::TempDir;
 
     // Generate self-signed test certificates for testing
-    fn generate_test_certs(dir: &TempDir) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    fn generate_test_certs(
+        dir: &TempDir,
+    ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
         // Minimal self-signed cert for testing (not cryptographically valid)
         let cert_pem = b"-----BEGIN CERTIFICATE-----
 MIIBkTCB+wIJAKHBfpMgAAUwMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCWxvY2Fs
@@ -402,7 +403,11 @@ AHAAAAAwCgYIKoZIzj0EAwIDSAAwRQIhALuSkyAAAAAAAAAAAAAAAAAAAAA=
 
         // Write invalid (non-PEM) data
         fs::write(&cert_path, b"not a pem file").unwrap();
-        fs::write(&key_path, b"-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----").unwrap();
+        fs::write(
+            &key_path,
+            b"-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----",
+        )
+        .unwrap();
 
         let result = TlsConfig::from_pem(&cert_path, &key_path);
         assert!(result.is_err());
@@ -426,9 +431,7 @@ AHAAAAAwCgYIKoZIzj0EAwIDSAAwRQIhALuSkyAAAAAAAAAAAAAAAAAAAAA=
 
     #[test]
     fn test_tls_builder_missing_cert() {
-        let result = TlsConfigBuilder::new()
-            .key("/path/to/key.pem")
-            .build();
+        let result = TlsConfigBuilder::new().key("/path/to/key.pem").build();
 
         assert!(result.is_err());
     }

@@ -1,7 +1,7 @@
 //! Debug sequence encoding issue
 
 use haagenti_core::CompressionLevel;
-use haagenti_zstd::compress::{CompressContext, Match, block};
+use haagenti_zstd::compress::{block, CompressContext, Match};
 
 fn main() {
     // Simple failing pattern: X*100 Y*100
@@ -22,8 +22,10 @@ fn main() {
 
     println!("\nMatches found: {}", matches.len());
     for (i, m) in matches.iter().enumerate() {
-        println!("  Match {}: pos={}, offset={}, len={}",
-                 i, m.position, m.offset, m.length);
+        println!(
+            "  Match {}: pos={}, offset={}, len={}",
+            i, m.position, m.offset, m.length
+        );
         // Verify the match
         let src_start = m.position - m.offset;
         let src_data = &data[src_start..src_start + m.length.min(10)];
@@ -37,8 +39,10 @@ fn main() {
     println!("\nLiterals: {} bytes", literals.len());
     println!("Sequences: {}", sequences.len());
     for (i, seq) in sequences.iter().enumerate() {
-        println!("  Seq {}: ll={}, offset={}, ml={}",
-                 i, seq.literal_length, seq.offset, seq.match_length);
+        println!(
+            "  Seq {}: ll={}, offset={}, ml={}",
+            i, seq.literal_length, seq.offset, seq.match_length
+        );
     }
 
     // Compress

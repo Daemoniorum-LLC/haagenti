@@ -274,7 +274,9 @@ impl<'a> BitReader<'a> {
     /// at the beginning (read from bit 0 going up).
     pub fn switch_to_lsb_mode(&mut self) -> Result<()> {
         if !self.reversed {
-            return Err(Error::corrupted("switch_to_lsb_mode requires reversed mode"));
+            return Err(Error::corrupted(
+                "switch_to_lsb_mode requires reversed mode",
+            ));
         }
 
         // Load the remaining bits into the FSE container
@@ -385,7 +387,9 @@ impl<'a> BitReader<'a> {
     /// Read bits in forward mode (LSB first, low to high bytes).
     fn read_bits_forward(&mut self, n: usize) -> Result<u32> {
         if !self.has_bits(n) {
-            return Err(Error::unexpected_eof(self.byte_pos * 8 + self.bit_pos as usize));
+            return Err(Error::unexpected_eof(
+                self.byte_pos * 8 + self.bit_pos as usize,
+            ));
         }
 
         let mut result = 0u32;
@@ -483,7 +487,8 @@ impl<'a> BitReader<'a> {
     /// Get the number of bits remaining.
     pub fn bits_remaining(&self) -> usize {
         if self.fse_mode {
-            self.fse_total_bits.saturating_sub(self.fse_stream_bits_consumed)
+            self.fse_total_bits
+                .saturating_sub(self.fse_stream_bits_consumed)
         } else if self.reversed {
             self.rev_total_bits
         } else if self.byte_pos >= self.data.len() {

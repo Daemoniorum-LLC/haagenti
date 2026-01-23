@@ -47,23 +47,21 @@ pub mod pipeline;
 pub mod stream;
 pub mod zstd_gpu;
 
-pub use error::{CudaError, Result};
-pub use kernels::{Lz4GpuDecompressor, ZstdGpuDecompressor};
-pub use memory::{GpuBuffer, MemoryPool, PinnedBuffer};
-pub use native_kernels::{NativeKernels, KernelStats};
-pub use neural_gpu::{
-    LayerCodebook, NctFile, NeuralDecoder, NeuralGpuDecoder, NeuralGpuPipeline,
-    QuantizedTensor, TensorData,
-};
-pub use pipeline::{DecompressionPipeline, PipelineConfig};
-pub use stream::{AsyncDecompressor, StreamingDecoder};
-pub use zstd_gpu::{
-    FseGpuDecoder, FseTable, Sequence, ZstdGpuDecoder, ZstdGpuPipeline,
-};
 #[cfg(feature = "cufft")]
 pub use cufft_ffi::{CufftPlan, CufftType, FftDctContext};
 pub use dct_gpu::{BatchDctConfig, DctMode, GpuDctContext};
 pub use decompress::{decompress_cpu, DecompressConfig, DecompressStats, GpuDecompressor};
+pub use error::{CudaError, Result};
+pub use kernels::{Lz4GpuDecompressor, ZstdGpuDecompressor};
+pub use memory::{GpuBuffer, MemoryPool, PinnedBuffer};
+pub use native_kernels::{KernelStats, NativeKernels};
+pub use neural_gpu::{
+    LayerCodebook, NctFile, NeuralDecoder, NeuralGpuDecoder, NeuralGpuPipeline, QuantizedTensor,
+    TensorData,
+};
+pub use pipeline::{DecompressionPipeline, PipelineConfig};
+pub use stream::{AsyncDecompressor, StreamingDecoder};
+pub use zstd_gpu::{FseGpuDecoder, FseTable, Sequence, ZstdGpuDecoder, ZstdGpuPipeline};
 
 use cudarc::driver::{sys, CudaDevice, CudaStream};
 use std::sync::Arc;
@@ -167,11 +165,7 @@ impl GpuContext {
     /// Decompress LZ4 data directly to GPU.
     ///
     /// Returns a GPU buffer containing the decompressed data.
-    pub fn decompress_lz4(
-        &self,
-        compressed: &[u8],
-        decompressed_size: usize,
-    ) -> Result<GpuBuffer> {
+    pub fn decompress_lz4(&self, compressed: &[u8], decompressed_size: usize) -> Result<GpuBuffer> {
         // Allocate output buffer from pool
         let output = self.pool.allocate(decompressed_size)?;
 
@@ -226,11 +220,7 @@ impl GpuContext {
 
     /// Create a streaming decompression pipeline.
     pub fn create_pipeline(&self, config: PipelineConfig) -> Result<DecompressionPipeline> {
-        DecompressionPipeline::new(
-            self.device.clone(),
-            self.pool.clone(),
-            config,
-        )
+        DecompressionPipeline::new(self.device.clone(), self.pool.clone(), config)
     }
 }
 

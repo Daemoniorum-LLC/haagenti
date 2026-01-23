@@ -1,9 +1,6 @@
 //! Mask prediction from prompt embeddings
 
-use crate::{
-    AttentionMask, CategoryMapping, HeadCategory, MaskBuilder, PromptCategory, Result,
-    SparseError,
-};
+use crate::{AttentionMask, CategoryMapping, HeadCategory, MaskBuilder, PromptCategory};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -234,11 +231,24 @@ impl MaskPredictor {
         if dim > 0 {
             // Use different embedding regions for different categories
             let face_signal: f32 = embedding.iter().take(dim / 8).sum::<f32>().abs();
-            let body_signal: f32 = embedding.iter().skip(dim / 8).take(dim / 8).sum::<f32>().abs();
-            let bg_signal: f32 = embedding.iter().skip(dim / 4).take(dim / 4).sum::<f32>().abs();
+            let body_signal: f32 = embedding
+                .iter()
+                .skip(dim / 8)
+                .take(dim / 8)
+                .sum::<f32>()
+                .abs();
+            let bg_signal: f32 = embedding
+                .iter()
+                .skip(dim / 4)
+                .take(dim / 4)
+                .sum::<f32>()
+                .abs();
             let style_signal: f32 = embedding.iter().skip(dim / 2).sum::<f32>().abs();
 
-            let max = face_signal.max(body_signal).max(bg_signal).max(style_signal);
+            let max = face_signal
+                .max(body_signal)
+                .max(bg_signal)
+                .max(style_signal);
             if max > 0.0 {
                 weights.insert(HeadCategory::Face, face_signal / max);
                 weights.insert(HeadCategory::Body, body_signal / max);

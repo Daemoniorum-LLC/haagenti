@@ -68,7 +68,8 @@ impl LayerProfile {
         }
 
         let progress = step as f32 / total_steps as f32;
-        let base = self.early_step_quality + (self.final_step_quality - self.early_step_quality) * progress;
+        let base = self.early_step_quality
+            + (self.final_step_quality - self.early_step_quality) * progress;
 
         base.max(self.sensitivity.min_quality())
     }
@@ -96,93 +97,120 @@ impl QualityPredictor {
         let mut default_profiles = HashMap::new();
 
         // Attention Q/K can tolerate lower quality at high noise steps
-        default_profiles.insert(FragmentType::AttentionQuery, LayerProfile {
-            pattern: "*.to_q*".into(),
-            sensitivity: QualitySensitivity::Medium,
-            step_adaptive: true,
-            early_step_quality: 0.5,
-            final_step_quality: 0.9,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::AttentionQuery,
+            LayerProfile {
+                pattern: "*.to_q*".into(),
+                sensitivity: QualitySensitivity::Medium,
+                step_adaptive: true,
+                early_step_quality: 0.5,
+                final_step_quality: 0.9,
+                learned_adjustment: 0.0,
+            },
+        );
 
-        default_profiles.insert(FragmentType::AttentionKey, LayerProfile {
-            pattern: "*.to_k*".into(),
-            sensitivity: QualitySensitivity::Medium,
-            step_adaptive: true,
-            early_step_quality: 0.5,
-            final_step_quality: 0.9,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::AttentionKey,
+            LayerProfile {
+                pattern: "*.to_k*".into(),
+                sensitivity: QualitySensitivity::Medium,
+                step_adaptive: true,
+                early_step_quality: 0.5,
+                final_step_quality: 0.9,
+                learned_adjustment: 0.0,
+            },
+        );
 
         // V projections are more sensitive
-        default_profiles.insert(FragmentType::AttentionValue, LayerProfile {
-            pattern: "*.to_v*".into(),
-            sensitivity: QualitySensitivity::High,
-            step_adaptive: true,
-            early_step_quality: 0.7,
-            final_step_quality: 0.95,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::AttentionValue,
+            LayerProfile {
+                pattern: "*.to_v*".into(),
+                sensitivity: QualitySensitivity::High,
+                step_adaptive: true,
+                early_step_quality: 0.7,
+                final_step_quality: 0.95,
+                learned_adjustment: 0.0,
+            },
+        );
 
         // Output projections need high quality
-        default_profiles.insert(FragmentType::AttentionOutput, LayerProfile {
-            pattern: "*.to_out*".into(),
-            sensitivity: QualitySensitivity::High,
-            step_adaptive: false,
-            early_step_quality: 0.9,
-            final_step_quality: 0.95,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::AttentionOutput,
+            LayerProfile {
+                pattern: "*.to_out*".into(),
+                sensitivity: QualitySensitivity::High,
+                step_adaptive: false,
+                early_step_quality: 0.9,
+                final_step_quality: 0.95,
+                learned_adjustment: 0.0,
+            },
+        );
 
         // FFN can use lower quality
-        default_profiles.insert(FragmentType::FeedForward, LayerProfile {
-            pattern: "*.mlp*".into(),
-            sensitivity: QualitySensitivity::Low,
-            step_adaptive: true,
-            early_step_quality: 0.5,
-            final_step_quality: 0.85,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::FeedForward,
+            LayerProfile {
+                pattern: "*.mlp*".into(),
+                sensitivity: QualitySensitivity::Low,
+                step_adaptive: true,
+                early_step_quality: 0.5,
+                final_step_quality: 0.85,
+                learned_adjustment: 0.0,
+            },
+        );
 
         // Normalization layers are small but important
-        default_profiles.insert(FragmentType::Normalization, LayerProfile {
-            pattern: "*.norm*".into(),
-            sensitivity: QualitySensitivity::Full,
-            step_adaptive: false,
-            early_step_quality: 1.0,
-            final_step_quality: 1.0,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::Normalization,
+            LayerProfile {
+                pattern: "*.norm*".into(),
+                sensitivity: QualitySensitivity::Full,
+                step_adaptive: false,
+                early_step_quality: 1.0,
+                final_step_quality: 1.0,
+                learned_adjustment: 0.0,
+            },
+        );
 
         // Embeddings need full quality
-        default_profiles.insert(FragmentType::Embedding, LayerProfile {
-            pattern: "*.embed*".into(),
-            sensitivity: QualitySensitivity::Full,
-            step_adaptive: false,
-            early_step_quality: 1.0,
-            final_step_quality: 1.0,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::Embedding,
+            LayerProfile {
+                pattern: "*.embed*".into(),
+                sensitivity: QualitySensitivity::Full,
+                step_adaptive: false,
+                early_step_quality: 1.0,
+                final_step_quality: 1.0,
+                learned_adjustment: 0.0,
+            },
+        );
 
         // Convolutions vary
-        default_profiles.insert(FragmentType::Convolution, LayerProfile {
-            pattern: "*.conv*".into(),
-            sensitivity: QualitySensitivity::Medium,
-            step_adaptive: true,
-            early_step_quality: 0.6,
-            final_step_quality: 0.9,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::Convolution,
+            LayerProfile {
+                pattern: "*.conv*".into(),
+                sensitivity: QualitySensitivity::Medium,
+                step_adaptive: true,
+                early_step_quality: 0.6,
+                final_step_quality: 0.9,
+                learned_adjustment: 0.0,
+            },
+        );
 
         // Generic default
-        default_profiles.insert(FragmentType::Generic, LayerProfile {
-            pattern: "*".into(),
-            sensitivity: QualitySensitivity::Medium,
-            step_adaptive: false,
-            early_step_quality: 0.8,
-            final_step_quality: 0.8,
-            learned_adjustment: 0.0,
-        });
+        default_profiles.insert(
+            FragmentType::Generic,
+            LayerProfile {
+                pattern: "*".into(),
+                sensitivity: QualitySensitivity::Medium,
+                step_adaptive: false,
+                early_step_quality: 0.8,
+                final_step_quality: 0.8,
+                learned_adjustment: 0.0,
+            },
+        );
 
         Self {
             default_profiles,
@@ -261,7 +289,7 @@ impl QualityPredictor {
     ) {
         self.model_profiles
             .entry(model_id.into())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(layer_name.into(), profile);
     }
 
@@ -280,23 +308,29 @@ impl QualityPredictor {
         let mut predictor = Self::new();
 
         // SDXL-specific overrides
-        predictor.add_override("unet.down_blocks.0", LayerProfile {
-            pattern: "unet.down_blocks.0.*".into(),
-            sensitivity: QualitySensitivity::VeryLow,
-            step_adaptive: true,
-            early_step_quality: 0.4,
-            final_step_quality: 0.7,
-            learned_adjustment: 0.0,
-        });
+        predictor.add_override(
+            "unet.down_blocks.0",
+            LayerProfile {
+                pattern: "unet.down_blocks.0.*".into(),
+                sensitivity: QualitySensitivity::VeryLow,
+                step_adaptive: true,
+                early_step_quality: 0.4,
+                final_step_quality: 0.7,
+                learned_adjustment: 0.0,
+            },
+        );
 
-        predictor.add_override("vae.decoder", LayerProfile {
-            pattern: "vae.decoder.*".into(),
-            sensitivity: QualitySensitivity::Full,
-            step_adaptive: false,
-            early_step_quality: 1.0,
-            final_step_quality: 1.0,
-            learned_adjustment: 0.0,
-        });
+        predictor.add_override(
+            "vae.decoder",
+            LayerProfile {
+                pattern: "vae.decoder.*".into(),
+                sensitivity: QualitySensitivity::Full,
+                step_adaptive: false,
+                early_step_quality: 1.0,
+                final_step_quality: 1.0,
+                learned_adjustment: 0.0,
+            },
+        );
 
         predictor
     }
@@ -306,14 +340,17 @@ impl QualityPredictor {
         let mut predictor = Self::new();
 
         // Flux uses different architecture, adjust accordingly
-        predictor.add_override("transformer.single_transformer_blocks", LayerProfile {
-            pattern: "*.single_transformer_blocks.*".into(),
-            sensitivity: QualitySensitivity::Low,
-            step_adaptive: true,
-            early_step_quality: 0.5,
-            final_step_quality: 0.85,
-            learned_adjustment: 0.0,
-        });
+        predictor.add_override(
+            "transformer.single_transformer_blocks",
+            LayerProfile {
+                pattern: "*.single_transformer_blocks.*".into(),
+                sensitivity: QualitySensitivity::Low,
+                step_adaptive: true,
+                early_step_quality: 0.5,
+                final_step_quality: 0.85,
+                learned_adjustment: 0.0,
+            },
+        );
 
         predictor
     }
@@ -345,7 +382,8 @@ mod tests {
         let predictor = QualityPredictor::new();
 
         // Normalization should need full quality
-        let norm_quality = predictor.predict_quality("layer_norm", FragmentType::Normalization, 10, 20);
+        let norm_quality =
+            predictor.predict_quality("layer_norm", FragmentType::Normalization, 10, 20);
 
         // FFN should tolerate lower quality
         let ffn_quality = predictor.predict_quality("mlp", FragmentType::FeedForward, 10, 20);

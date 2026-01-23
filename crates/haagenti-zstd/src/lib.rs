@@ -128,18 +128,18 @@
 //! - [Zstd Format Specification](https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md)
 //! - [FSE Educational Decoder](https://github.com/facebook/zstd/blob/dev/doc/educational_decoder.md)
 
+pub mod block;
+pub mod compress;
+pub mod decompress;
+pub mod dictionary;
+pub mod frame;
 pub mod fse;
 pub mod huffman;
-pub mod frame;
-pub mod block;
-pub mod decompress;
-pub mod compress;
-pub mod dictionary;
 
 #[cfg(test)]
 mod perf_tests;
 
-pub use dictionary::{ZstdDictionary, ZstdDictCompressor, ZstdDictDecompressor};
+pub use dictionary::{ZstdDictCompressor, ZstdDictDecompressor, ZstdDictionary};
 
 use haagenti_core::{
     Algorithm, Codec, CompressionLevel, CompressionStats, Compressor, Decompressor, Error, Result,
@@ -162,9 +162,9 @@ pub const MIN_WINDOW_SIZE: usize = 1 << 10;
 // Custom Tables for Compression
 // =============================================================================
 
-use std::sync::Arc;
 use fse::FseTable;
 use huffman::HuffmanEncoder;
+use std::sync::Arc;
 
 /// Custom Huffman table for literal encoding.
 ///
@@ -822,7 +822,11 @@ mod tests {
         let mut decompressed_content = Vec::new();
         for (is_last, block_type, data) in blocks {
             let _compressed_size = if block_type == 1 { 1 } else { data.len() };
-            let decompressed_size = if block_type == 1 { data.len() } else { data.len() };
+            let decompressed_size = if block_type == 1 {
+                data.len()
+            } else {
+                data.len()
+            };
 
             // Block header
             let mut header = if is_last { 1u32 } else { 0u32 };
@@ -859,9 +863,13 @@ mod tests {
     #[test]
     fn test_integration_empty_frame() {
         // Frame with zero-length content
-        let frame = build_frame(Some(0), false, vec![
-            (true, 0, vec![]), // Raw block with empty data
-        ]);
+        let frame = build_frame(
+            Some(0),
+            false,
+            vec![
+                (true, 0, vec![]), // Raw block with empty data
+            ],
+        );
 
         let decompressor = ZstdDecompressor::new();
         let result = decompressor.decompress(&frame).unwrap();
@@ -871,11 +879,15 @@ mod tests {
     #[test]
     fn test_integration_multiple_raw_blocks() {
         // Frame with 3 raw blocks
-        let frame = build_frame(Some(15), true, vec![
-            (false, 0, b"Hello".to_vec()),
-            (false, 0, b", ".to_vec()),
-            (true, 0, b"World!!!".to_vec()),
-        ]);
+        let frame = build_frame(
+            Some(15),
+            true,
+            vec![
+                (false, 0, b"Hello".to_vec()),
+                (false, 0, b", ".to_vec()),
+                (true, 0, b"World!!!".to_vec()),
+            ],
+        );
 
         let decompressor = ZstdDecompressor::new();
         let result = decompressor.decompress(&frame).unwrap();
@@ -889,7 +901,7 @@ mod tests {
         let mut frame = vec![];
         frame.extend_from_slice(&[0x28, 0xB5, 0x2F, 0xFD]); // Magic
         frame.push(0x24); // Single segment + checksum, 1-byte FCS
-        frame.push(11);   // FCS = 11 (Start + --- + End)
+        frame.push(11); // FCS = 11 (Start + --- + End)
 
         // Block 1: Raw "Start" (5 bytes)
         let header1 = (5 << 3) | (0 << 1) | 0; // last=0, type=Raw, size=5
@@ -929,7 +941,7 @@ mod tests {
         let mut frame = vec![];
         frame.extend_from_slice(&[0x28, 0xB5, 0x2F, 0xFD]);
         frame.push(0x20); // single segment, 1-byte FCS
-        frame.push(200);  // FCS = 200
+        frame.push(200); // FCS = 200
 
         // Block header: last=1, type=RLE(1), size=200
         let header = (200 << 3) | (1 << 1) | 1;
@@ -1159,7 +1171,11 @@ mod tests {
             let compressed = compressor.compress(input).unwrap();
             let decompressed = decompressor.decompress(&compressed).unwrap();
 
-            assert_eq!(decompressed, input, "Roundtrip failed for level {:?}", level);
+            assert_eq!(
+                decompressed, input,
+                "Roundtrip failed for level {:?}",
+                level
+            );
         }
     }
 
@@ -1285,7 +1301,8 @@ mod tests {
 
             assert_eq!(
                 decompressed, input,
-                "Failed for pattern length {}", pattern_len
+                "Failed for pattern length {}",
+                pattern_len
             );
         }
     }
@@ -1322,8 +1339,12 @@ mod tests {
             input.truncate(size);
 
             let compressed = compressor.compress(&input).unwrap();
-            eprintln!("Size {}: input={} bytes, compressed={} bytes",
-                     size, input.len(), compressed.len());
+            eprintln!(
+                "Size {}: input={} bytes, compressed={} bytes",
+                size,
+                input.len(),
+                compressed.len()
+            );
 
             // Parse the literals header to see what sizes it contains
             let block_data = &compressed[11..]; // Skip frame header (8) + block header (3)
@@ -1340,18 +1361,27 @@ mod tests {
                 let comp = ((block_data[2] >> 4) as usize)
                     | ((block_data[3] as usize) << 4)
                     | (((block_data[4] & 0x03) as usize) << 12);
-                eprintln!("Literals header: regen={}, comp={}, header_size=5", regen, comp);
+                eprintln!(
+                    "Literals header: regen={}, comp={}, header_size=5",
+                    regen, comp
+                );
                 eprintln!("Total literals section: {}", 5 + comp);
 
                 // Huffman weights header starts at byte 5
                 let weights_header = block_data[5];
-                eprintln!("Huffman weights header byte: {:02x} ({})", weights_header, weights_header);
+                eprintln!(
+                    "Huffman weights header byte: {:02x} ({})",
+                    weights_header, weights_header
+                );
 
                 // Also build encoder directly to check what weights it produces
                 use crate::huffman::HuffmanEncoder;
                 if let Some(test_encoder) = HuffmanEncoder::build(&input) {
                     let test_weights = test_encoder.serialize_weights();
-                    eprintln!("Encoder produced weights: first 10 bytes = {:02x?}", &test_weights[..10.min(test_weights.len())]);
+                    eprintln!(
+                        "Encoder produced weights: first 10 bytes = {:02x?}",
+                        &test_weights[..10.min(test_weights.len())]
+                    );
                     eprintln!("Weights length = {}", test_weights.len());
                 }
 
@@ -1366,7 +1396,8 @@ mod tests {
                 Ok(decompressed) => {
                     assert_eq!(
                         decompressed, input,
-                        "LLM weights roundtrip failed for size {}", size
+                        "LLM weights roundtrip failed for size {}",
+                        size
                     );
                 }
                 Err(e) => {
@@ -1423,10 +1454,8 @@ mod tests {
     fn test_custom_tables_with_level() {
         // Test combining custom tables with compression level
         let custom_tables = CustomFseTables::new();
-        let compressor = ZstdCompressor::with_level_and_tables(
-            CompressionLevel::Best,
-            custom_tables,
-        );
+        let compressor =
+            ZstdCompressor::with_level_and_tables(CompressionLevel::Best, custom_tables);
         let decompressor = ZstdDecompressor::new();
 
         let data = b"Test data for custom tables with compression level.".repeat(50);
@@ -1445,8 +1474,7 @@ mod tests {
 
         // Test with predefined LL table
         let ll_table = fse::cached_ll_table().clone();
-        let tables_with_ll = CustomFseTables::new()
-            .with_ll_table(ll_table);
+        let tables_with_ll = CustomFseTables::new().with_ll_table(ll_table);
         assert!(tables_with_ll.has_custom_tables());
         assert!(tables_with_ll.ll_table.is_some());
         assert!(tables_with_ll.of_table.is_none());
@@ -1472,8 +1500,8 @@ mod tests {
     fn test_huffman_integration_with_zstd() {
         // Build a Huffman encoder from sample data
         let training_data = b"The quick brown fox jumps over the lazy dog. ".repeat(100);
-        let encoder = huffman::HuffmanEncoder::build(&training_data)
-            .expect("Should build Huffman encoder");
+        let encoder =
+            huffman::HuffmanEncoder::build(&training_data).expect("Should build Huffman encoder");
 
         // Create compressor with custom Huffman table
         let custom_huffman = CustomHuffmanTable::new(encoder);
@@ -1493,14 +1521,14 @@ mod tests {
         // Test building encoder from weights
         let mut weights = vec![0u8; 256];
         // Assign weights for common letters
-        weights[b'a' as usize] = 8;  // Most frequent
+        weights[b'a' as usize] = 8; // Most frequent
         weights[b'b' as usize] = 7;
         weights[b'c' as usize] = 6;
         weights[b'd' as usize] = 5;
         weights[b'e' as usize] = 4;
 
-        let encoder = huffman::HuffmanEncoder::from_weights(&weights)
-            .expect("Should build from weights");
+        let encoder =
+            huffman::HuffmanEncoder::from_weights(&weights).expect("Should build from weights");
 
         // Verify the encoder has the expected properties
         assert_eq!(encoder.num_symbols(), 5);
@@ -1516,8 +1544,7 @@ mod tests {
     fn test_custom_huffman_api() {
         // Test the CustomHuffmanTable builder API
         let data = b"test data for huffman".repeat(100);
-        let encoder = huffman::HuffmanEncoder::build(&data)
-            .expect("Should build encoder");
+        let encoder = huffman::HuffmanEncoder::build(&data).expect("Should build encoder");
 
         let custom_huffman = CustomHuffmanTable::new(encoder);
 
@@ -1533,8 +1560,7 @@ mod tests {
 
         // Build custom tables
         let custom_fse = CustomFseTables::new();
-        let encoder = huffman::HuffmanEncoder::build(&sample_data)
-            .expect("Should build encoder");
+        let encoder = huffman::HuffmanEncoder::build(&sample_data).expect("Should build encoder");
         let custom_huffman = CustomHuffmanTable::new(encoder);
 
         // Create compressor with all options
@@ -1572,15 +1598,25 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod huffman_debug_tests {
-    use crate::huffman::{HuffmanEncoder, parse_huffman_weights, build_table_from_weights};
+    use crate::huffman::{build_table_from_weights, parse_huffman_weights, HuffmanEncoder};
 
     fn generate_text_like_data(size: usize) -> Vec<u8> {
         let words = [
-            "the ", "quick ", "brown ", "fox ", "jumps ", "over ", "lazy ", "dog ",
-            "compression ", "algorithm ", "performance ", "benchmark ", "testing ",
+            "the ",
+            "quick ",
+            "brown ",
+            "fox ",
+            "jumps ",
+            "over ",
+            "lazy ",
+            "dog ",
+            "compression ",
+            "algorithm ",
+            "performance ",
+            "benchmark ",
+            "testing ",
         ];
         let mut data = Vec::with_capacity(size);
         let mut i = 0;
@@ -1607,24 +1643,39 @@ mod huffman_debug_tests {
         let encoder = encoder.unwrap();
         let weights = encoder.serialize_weights();
 
-        println!("Serialized weights: {} bytes, header={}", weights.len(), weights[0]);
+        println!(
+            "Serialized weights: {} bytes, header={}",
+            weights.len(),
+            weights[0]
+        );
         let num_symbols = (weights[0] - 127) as usize;
         println!("Number of symbols from header: {}", num_symbols);
 
         // Parse weights back
         let (parsed_weights, consumed) = parse_huffman_weights(&weights).expect("Should parse");
-        println!("Parsed {} weights, consumed {} bytes", parsed_weights.len(), consumed);
+        println!(
+            "Parsed {} weights, consumed {} bytes",
+            parsed_weights.len(),
+            consumed
+        );
 
         // Print non-zero weights
-        let non_zero: Vec<_> = parsed_weights.iter().enumerate()
+        let non_zero: Vec<_> = parsed_weights
+            .iter()
+            .enumerate()
             .filter(|&(_, &w)| w > 0)
             .map(|(i, &w)| (i as u8 as char, w))
             .collect();
-        println!("Non-zero weights ({} total): {:?}", non_zero.len(), non_zero);
+        println!(
+            "Non-zero weights ({} total): {:?}",
+            non_zero.len(),
+            non_zero
+        );
 
         // Calculate sums
         let max_w = *parsed_weights.iter().max().unwrap_or(&0);
-        let weight_sum: u64 = parsed_weights.iter()
+        let weight_sum: u64 = parsed_weights
+            .iter()
             .filter(|&&w| w > 0)
             .map(|&w| 1u64 << w)
             .sum();
@@ -1653,8 +1704,12 @@ mod huffman_debug_tests {
             })
             .sum();
         let expected_kraft = 1u64 << max_w;
-        println!("Kraft check: sum={}, expected={} (ratio: {})",
-                 kraft_sum, expected_kraft, kraft_sum as f64 / expected_kraft as f64);
+        println!(
+            "Kraft check: sum={}, expected={} (ratio: {})",
+            kraft_sum,
+            expected_kraft,
+            kraft_sum as f64 / expected_kraft as f64
+        );
 
         // Try to build table
         let result = build_table_from_weights(parsed_weights.clone());
@@ -1674,9 +1729,26 @@ mod debug_tests {
 
     fn generate_text_data(size: usize) -> Vec<u8> {
         let words = [
-            "the ", "quick ", "brown ", "fox ", "jumps ", "over ", "lazy ", "dog ",
-            "compression ", "algorithm ", "performance ", "benchmark ", "testing ",
-            "data ", "stream ", "encode ", "decode ", "entropy ", "symbol ", "table ",
+            "the ",
+            "quick ",
+            "brown ",
+            "fox ",
+            "jumps ",
+            "over ",
+            "lazy ",
+            "dog ",
+            "compression ",
+            "algorithm ",
+            "performance ",
+            "benchmark ",
+            "testing ",
+            "data ",
+            "stream ",
+            "encode ",
+            "decode ",
+            "entropy ",
+            "symbol ",
+            "table ",
         ];
         let mut data = Vec::with_capacity(size);
         let mut i = 0;
@@ -1693,7 +1765,7 @@ mod debug_tests {
     #[test]
     fn test_trace_100kb_text() {
         let data = generate_text_data(102400);
-        
+
         // Check unique symbols
         let mut freq = [0u64; 256];
         for &b in &data {
@@ -1701,26 +1773,34 @@ mod debug_tests {
         }
         let unique_count = freq.iter().filter(|&&f| f > 0).count();
         println!("100KB text: {} unique symbols", unique_count);
-        
+
         // Try Huffman encoder
         let encoder = HuffmanEncoder::build(&data);
         println!("Huffman encoder built: {}", encoder.is_some());
-        
+
         if let Some(enc) = &encoder {
             let estimated = enc.estimate_size(&data);
             println!("Estimated size: {} (original: {})", estimated, data.len());
-            
+
             let compressed = enc.encode(&data);
             let weights = enc.serialize_weights();
-            println!("Actual compressed: {} + {} weights = {}", 
-                     compressed.len(), weights.len(), compressed.len() + weights.len());
+            println!(
+                "Actual compressed: {} + {} weights = {}",
+                compressed.len(),
+                weights.len(),
+                compressed.len() + weights.len()
+            );
         }
-        
+
         // Try full compression
         let mut ctx = CompressContext::new(CompressionLevel::Default);
         let result = ctx.compress(&data).unwrap();
-        println!("Full compression: {} -> {} bytes ({:.2}x)", 
-                 data.len(), result.len(), data.len() as f64 / result.len() as f64);
+        println!(
+            "Full compression: {} -> {} bytes ({:.2}x)",
+            data.len(),
+            result.len(),
+            data.len() as f64 / result.len() as f64
+        );
     }
 }
 
@@ -1730,14 +1810,31 @@ mod debug_tests2 {
     use crate::compress::CompressContext;
     use crate::huffman::HuffmanEncoder;
     use haagenti_core::CompressionLevel;
-    use rand::{Rng, SeedableRng};
     use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     fn generate_text_random(size: usize) -> Vec<u8> {
         let words = [
-            "the ", "quick ", "brown ", "fox ", "jumps ", "over ", "lazy ", "dog ",
-            "compression ", "algorithm ", "performance ", "benchmark ", "testing ",
-            "data ", "stream ", "encode ", "decode ", "entropy ", "symbol ", "table ",
+            "the ",
+            "quick ",
+            "brown ",
+            "fox ",
+            "jumps ",
+            "over ",
+            "lazy ",
+            "dog ",
+            "compression ",
+            "algorithm ",
+            "performance ",
+            "benchmark ",
+            "testing ",
+            "data ",
+            "stream ",
+            "encode ",
+            "decode ",
+            "entropy ",
+            "symbol ",
+            "table ",
         ];
         let mut rng = StdRng::seed_from_u64(456);
         let mut data = Vec::with_capacity(size);
@@ -1753,7 +1850,7 @@ mod debug_tests2 {
     #[test]
     fn test_trace_100kb_text_random() {
         let data = generate_text_random(102400);
-        
+
         // Check unique symbols
         let mut freq = [0u64; 256];
         for &b in &data {
@@ -1761,28 +1858,37 @@ mod debug_tests2 {
         }
         let unique_count = freq.iter().filter(|&&f| f > 0).count();
         println!("100KB random text: {} unique symbols", unique_count);
-        
+
         // Print frequency distribution
         let mut freqs: Vec<_> = freq.iter().enumerate().filter(|&(_, f)| *f > 0).collect();
         freqs.sort_by(|a, b| b.1.cmp(a.1));
-        println!("Top frequencies: {:?}", freqs.iter().take(10)
-            .map(|(i, f)| ((*i as u8) as char, *f))
-            .collect::<Vec<_>>());
-        
+        println!(
+            "Top frequencies: {:?}",
+            freqs
+                .iter()
+                .take(10)
+                .map(|(i, f)| ((*i as u8) as char, *f))
+                .collect::<Vec<_>>()
+        );
+
         // Try Huffman encoder
         let encoder = HuffmanEncoder::build(&data);
         println!("Huffman encoder built: {}", encoder.is_some());
-        
+
         if let Some(enc) = &encoder {
             let estimated = enc.estimate_size(&data);
             println!("Estimated size: {} (original: {})", estimated, data.len());
         }
-        
+
         // Try full compression
         let mut ctx = CompressContext::new(CompressionLevel::Default);
         let result = ctx.compress(&data).unwrap();
-        println!("Full compression: {} -> {} bytes ({:.2}x)", 
-                 data.len(), result.len(), data.len() as f64 / result.len() as f64);
+        println!(
+            "Full compression: {} -> {} bytes ({:.2}x)",
+            data.len(),
+            result.len(),
+            data.len() as f64 / result.len() as f64
+        );
     }
 }
 
@@ -1807,7 +1913,9 @@ mod large_tests {
         let compressed = compressor.compress(&data).expect("Compression failed");
 
         let decompressor = ZstdDecompressor::new();
-        let decompressed = decompressor.decompress(&compressed).expect("Decompression failed");
+        let decompressed = decompressor
+            .decompress(&compressed)
+            .expect("Decompression failed");
 
         assert_eq!(data.len(), decompressed.len(), "Length mismatch");
         assert_eq!(data, decompressed, "Content mismatch");
@@ -1827,7 +1935,9 @@ mod large_tests {
         let compressed = compressor.compress(&data).expect("Compression failed");
 
         let decompressor = ZstdDecompressor::new();
-        let decompressed = decompressor.decompress(&compressed).expect("Decompression failed");
+        let decompressed = decompressor
+            .decompress(&compressed)
+            .expect("Decompression failed");
 
         assert_eq!(data.len(), decompressed.len(), "Length mismatch");
         assert_eq!(data, decompressed, "Content mismatch");
@@ -1857,7 +1967,9 @@ mod cross_library_tests {
 
         // Compress with haagenti
         let compressor = ZstdCompressor::new();
-        let compressed = compressor.compress(&data).expect("Haagenti compression failed");
+        let compressed = compressor
+            .compress(&data)
+            .expect("Haagenti compression failed");
 
         // Decompress with reference zstd (C library)
         let result = zstd::decode_all(compressed.as_slice());
@@ -1869,7 +1981,10 @@ mod cross_library_tests {
                     // Find first divergence
                     for (i, (a, b)) in data.iter().zip(decompressed.iter()).enumerate() {
                         if a != b {
-                            println!("First divergence at byte {}: expected {:02x}, got {:02x}", i, a, b);
+                            println!(
+                                "First divergence at byte {}: expected {:02x}, got {:02x}",
+                                i, a, b
+                            );
                             break;
                         }
                     }
@@ -1877,7 +1992,10 @@ mod cross_library_tests {
                 }
             }
             Err(e) => {
-                println!("Reference zstd failed to decompress haagenti output: {:?}", e);
+                println!(
+                    "Reference zstd failed to decompress haagenti output: {:?}",
+                    e
+                );
                 println!("This confirms the bug is in HAAGENTI COMPRESSION");
                 panic!("Haagenti compression output is invalid");
             }
@@ -1893,10 +2011,12 @@ mod cross_library_tests {
         // Random-ish data that won't compress well -> raw blocks
         for size in [100, 200] {
             let data: Vec<u8> = (0..size).map(|i| ((i * 17 + 31) % 256) as u8).collect();
-            let compressed = zstd::encode_all(data.as_slice(), 1).expect("Reference zstd compression failed");
+            let compressed =
+                zstd::encode_all(data.as_slice(), 1).expect("Reference zstd compression failed");
 
             let decompressor = ZstdDecompressor::new();
-            let decompressed = decompressor.decompress(&compressed)
+            let decompressed = decompressor
+                .decompress(&compressed)
                 .expect(&format!("Failed to decompress size {}", size));
             assert_eq!(data, decompressed, "Size {} content mismatch", size);
         }
@@ -1913,20 +2033,24 @@ mod cross_library_tests {
         let data = generate_test_data(65536);
 
         // Compress with reference zstd (C library)
-        let compressed = zstd::encode_all(data.as_slice(), 3).expect("Reference zstd compression failed");
+        let compressed =
+            zstd::encode_all(data.as_slice(), 3).expect("Reference zstd compression failed");
 
         // Debug: print first bytes of compressed data
         println!("Compressed size: {} bytes", compressed.len());
         print!("First 64 bytes: ");
         for (i, &b) in compressed.iter().take(64).enumerate() {
-            if i % 16 == 0 { print!("\n  "); }
+            if i % 16 == 0 {
+                print!("\n  ");
+            }
             print!("{:02x} ", b);
         }
         println!();
 
         // Parse magic and frame header for debugging
         if compressed.len() >= 4 {
-            let magic = u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+            let magic =
+                u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
             println!("Magic: 0x{:08x} (expected 0xfd2fb528)", magic);
         }
         if compressed.len() >= 5 {
@@ -1949,7 +2073,10 @@ mod cross_library_tests {
                     // Find first divergence
                     for (i, (a, b)) in data.iter().zip(decompressed.iter()).enumerate() {
                         if a != b {
-                            println!("First divergence at byte {}: expected {:02x}, got {:02x}", i, a, b);
+                            println!(
+                                "First divergence at byte {}: expected {:02x}, got {:02x}",
+                                i, a, b
+                            );
                             break;
                         }
                     }
@@ -1957,7 +2084,10 @@ mod cross_library_tests {
                 }
             }
             Err(e) => {
-                println!("Haagenti failed to decompress reference zstd output: {:?}", e);
+                println!(
+                    "Haagenti failed to decompress reference zstd output: {:?}",
+                    e
+                );
                 println!("This confirms the bug is in HAAGENTI DECOMPRESSION");
                 panic!("Haagenti decompression failed on valid zstd data");
             }
@@ -1983,7 +2113,13 @@ mod cross_library_tests {
                     println!("Size {} ({}KB): OK", size, size / 1024);
                 }
                 Ok(decompressed) => {
-                    println!("Size {} ({}KB): CONTENT MISMATCH (len: {} vs {})", size, size / 1024, data.len(), decompressed.len());
+                    println!(
+                        "Size {} ({}KB): CONTENT MISMATCH (len: {} vs {})",
+                        size,
+                        size / 1024,
+                        data.len(),
+                        decompressed.len()
+                    );
                 }
                 Err(e) => {
                     println!("Size {} ({}KB): ERROR - {:?}", size, size / 1024, e);
@@ -2009,9 +2145,16 @@ mod cross_library_tests {
             // Try reference zstd decompress of haagenti output
             let zstd_result = zstd::decode_all(haagenti_compressed.as_slice());
 
-            println!("Size {}: haagenti={} bytes, zstd={} bytes, zstd_decode_haagenti={:?}",
-                size, haagenti_compressed.len(), zstd_compressed.len(),
-                zstd_result.as_ref().map(|v| v.len()).map_err(|e| format!("{:?}", e)));
+            println!(
+                "Size {}: haagenti={} bytes, zstd={} bytes, zstd_decode_haagenti={:?}",
+                size,
+                haagenti_compressed.len(),
+                zstd_compressed.len(),
+                zstd_result
+                    .as_ref()
+                    .map(|v| v.len())
+                    .map_err(|e| format!("{:?}", e))
+            );
         }
     }
 
@@ -2030,13 +2173,16 @@ mod cross_library_tests {
             // Verify with reference zstd
             let zstd_result = zstd::decode_all(compressed.as_slice());
 
-            println!("Size {}: compressed={} bytes, zstd_decode={:?}",
-                size, compressed.len(),
+            println!(
+                "Size {}: compressed={} bytes, zstd_decode={:?}",
+                size,
+                compressed.len(),
                 match &zstd_result {
                     Ok(v) if *v == data => "OK".to_string(),
                     Ok(v) => format!("MISMATCH (len {})", v.len()),
                     Err(e) => format!("ERROR: {}", e),
-                });
+                }
+            );
         }
     }
 
@@ -2053,32 +2199,51 @@ mod cross_library_tests {
         let compressed = compressor.compress(&data).expect("Compression failed");
 
         println!("Compressed size: {} bytes", compressed.len());
-        println!("Compressed header: {:02x?}", &compressed[..20.min(compressed.len())]);
+        println!(
+            "Compressed header: {:02x?}",
+            &compressed[..20.min(compressed.len())]
+        );
 
         // Parse frame header
-        let magic = u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+        let magic =
+            u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
         println!("Magic: 0x{:08X} (valid={})", magic, magic == 0xFD2FB528);
 
         let descriptor = compressed[4];
         let has_checksum = (descriptor & 0x04) != 0;
         let single_segment = (descriptor & 0x20) != 0;
         let fcs_size = match descriptor >> 6 {
-            0 => if single_segment { 1 } else { 0 },
+            0 => {
+                if single_segment {
+                    1
+                } else {
+                    0
+                }
+            }
             1 => 2,
             2 => 4,
             3 => 8,
             _ => 0,
         };
-        println!("Descriptor: 0x{:02X}, checksum={}, single_segment={}, fcs_size={}",
-            descriptor, has_checksum, single_segment, fcs_size);
+        println!(
+            "Descriptor: 0x{:02X}, checksum={}, single_segment={}, fcs_size={}",
+            descriptor, has_checksum, single_segment, fcs_size
+        );
 
         // Get frame content size
         let fcs_start = if single_segment { 5 } else { 6 };
         let fcs = match fcs_size {
             1 => compressed[fcs_start] as u64,
-            2 => u16::from_le_bytes([compressed[fcs_start], compressed[fcs_start+1]]) as u64 + 256,
-            4 => u32::from_le_bytes([compressed[fcs_start], compressed[fcs_start+1], compressed[fcs_start+2], compressed[fcs_start+3]]) as u64,
-            8 => u64::from_le_bytes(compressed[fcs_start..fcs_start+8].try_into().unwrap()),
+            2 => {
+                u16::from_le_bytes([compressed[fcs_start], compressed[fcs_start + 1]]) as u64 + 256
+            }
+            4 => u32::from_le_bytes([
+                compressed[fcs_start],
+                compressed[fcs_start + 1],
+                compressed[fcs_start + 2],
+                compressed[fcs_start + 3],
+            ]) as u64,
+            8 => u64::from_le_bytes(compressed[fcs_start..fcs_start + 8].try_into().unwrap()),
             _ => 0,
         };
         println!("Frame Content Size: {} (input was {})", fcs, size);
@@ -2101,12 +2266,17 @@ mod cross_library_tests {
             2 => "Compressed",
             _ => "Reserved",
         };
-        println!("Block: type={} ({}), size={}, is_last={}",
-            block_type, block_type_name, block_size, is_last);
+        println!(
+            "Block: type={} ({}), size={}, is_last={}",
+            block_type, block_type_name, block_size, is_last
+        );
 
         // Try reference decompression
         let result = zstd::decode_all(compressed.as_slice());
-        println!("Reference zstd decode: {:?}", result.as_ref().map(|v| v.len()));
+        println!(
+            "Reference zstd decode: {:?}",
+            result.as_ref().map(|v| v.len())
+        );
     }
 
     /// Debug Huffman encoding specifically
@@ -2123,23 +2293,36 @@ mod cross_library_tests {
             freq[b as usize] += 1;
         }
         let unique_count = freq.iter().filter(|&&f| f > 0).count();
-        println!("Input: {} bytes, {} unique symbols", data.len(), unique_count);
+        println!(
+            "Input: {} bytes, {} unique symbols",
+            data.len(),
+            unique_count
+        );
 
         // Print symbol frequencies
-        let mut freqs: Vec<_> = freq.iter().enumerate()
+        let mut freqs: Vec<_> = freq
+            .iter()
+            .enumerate()
             .filter(|&(_, &f)| f > 0)
             .map(|(i, &f)| (i as u8, f))
             .collect();
         freqs.sort_by(|a, b| b.1.cmp(&a.1));
-        println!("Symbol frequencies (top 15): {:?}",
-            freqs.iter().take(15)
+        println!(
+            "Symbol frequencies (top 15): {:?}",
+            freqs
+                .iter()
+                .take(15)
                 .map(|(b, f)| ((*b as char), *f))
-                .collect::<Vec<_>>());
+                .collect::<Vec<_>>()
+        );
 
         // Build Huffman encoder
         if let Some(encoder) = HuffmanEncoder::build(&data) {
-            println!("Huffman encoder built: max_bits={}, num_symbols={}",
-                encoder.max_bits(), encoder.num_symbols());
+            println!(
+                "Huffman encoder built: max_bits={}, num_symbols={}",
+                encoder.max_bits(),
+                encoder.num_symbols()
+            );
 
             // Check codes for each symbol
             let codes = encoder.get_codes();
@@ -2156,19 +2339,28 @@ mod cross_library_tests {
                     }
                 }
             }
-            println!("Symbols with codes: {}, without codes: {}",
-                symbols_with_codes, symbols_without_codes);
+            println!(
+                "Symbols with codes: {}, without codes: {}",
+                symbols_with_codes, symbols_without_codes
+            );
 
             // Try encoding
             let compressed = encoder.encode(&data);
             let weights = encoder.serialize_weights();
-            println!("Huffman output: {} bytes data + {} bytes weights = {} total",
-                compressed.len(), weights.len(), compressed.len() + weights.len());
+            println!(
+                "Huffman output: {} bytes data + {} bytes weights = {} total",
+                compressed.len(),
+                weights.len(),
+                compressed.len() + weights.len()
+            );
 
             // Estimate vs actual
             let estimated = encoder.estimate_size(&data);
-            println!("Estimated: {} bytes, actual: {} bytes",
-                estimated, compressed.len() + weights.len());
+            println!(
+                "Estimated: {} bytes, actual: {} bytes",
+                estimated,
+                compressed.len() + weights.len()
+            );
         } else {
             println!("Huffman encoder build failed!");
         }
@@ -2183,8 +2375,10 @@ mod cross_library_tests {
         let data = generate_test_data(size);
 
         println!("Input size: {} bytes", data.len());
-        println!("Pattern: first 45 bytes = {:?}",
-            String::from_utf8_lossy(&data[..45]));
+        println!(
+            "Pattern: first 45 bytes = {:?}",
+            String::from_utf8_lossy(&data[..45])
+        );
 
         let mut mf = MatchFinder::new(16);
         let matches = mf.find_matches(&data);
@@ -2193,23 +2387,35 @@ mod cross_library_tests {
 
         // Show first few matches
         for (i, m) in matches.iter().take(10).enumerate() {
-            println!("Match {}: pos={}, offset={}, length={}",
-                i, m.position, m.offset, m.length);
+            println!(
+                "Match {}: pos={}, offset={}, length={}",
+                i, m.position, m.offset, m.length
+            );
         }
 
         // Calculate total coverage
         let total_match_len: usize = matches.iter().map(|m| m.length).sum();
-        println!("Total match coverage: {} bytes ({:.1}% of input)",
-            total_match_len, 100.0 * total_match_len as f64 / data.len() as f64);
+        println!(
+            "Total match coverage: {} bytes ({:.1}% of input)",
+            total_match_len,
+            100.0 * total_match_len as f64 / data.len() as f64
+        );
 
         // If only 1 match, show details
         if matches.len() == 1 {
             let m = &matches[0];
             println!("\nSingle match analysis:");
-            println!("  Position {} to {} (length {})", m.position, m.position + m.length, m.length);
+            println!(
+                "  Position {} to {} (length {})",
+                m.position,
+                m.position + m.length,
+                m.length
+            );
             println!("  References data at offset {} back", m.offset);
-            println!("  Expected decompressed output: literals[0..{}] + match copy",
-                m.position);
+            println!(
+                "  Expected decompressed output: literals[0..{}] + match copy",
+                m.position
+            );
         }
     }
 
@@ -2235,14 +2441,20 @@ mod cross_library_tests {
         let is_last = (block_header & 1) != 0;
         let btype = (block_header >> 1) & 3;
         let block_size = (block_header >> 3) as usize;
-        println!("Block header: type={}, size={}, is_last={}", btype, block_size, is_last);
+        println!(
+            "Block header: type={}, size={}, is_last={}",
+            btype, block_size, is_last
+        );
 
         // If compressed block, show literals section header
         if btype == 2 {
             let lit_header = full_compressed[block_start + 3];
             let lit_type = lit_header & 0x03;
             let lit_size_format = (lit_header >> 2) & 0x03;
-            println!("Literals section: type={}, size_format={}", lit_type, lit_size_format);
+            println!(
+                "Literals section: type={}, size_format={}",
+                lit_type, lit_size_format
+            );
 
             // Decode the sizes from the header based on format
             match (lit_type, lit_size_format) {
@@ -2261,7 +2473,8 @@ mod cross_library_tests {
                     let b1 = full_compressed[block_start + 4];
                     let b2 = full_compressed[block_start + 5];
                     let b3 = full_compressed[block_start + 6];
-                    let regen = ((b0 as u32 >> 4) & 0xF) | ((b1 as u32) << 4) | (((b2 as u32) & 0x3) << 12);
+                    let regen =
+                        ((b0 as u32 >> 4) & 0xF) | ((b1 as u32) << 4) | (((b2 as u32) & 0x3) << 12);
                     let comp = ((b2 as u32 >> 2) & 0x3F) | ((b3 as u32) << 6);
                     println!("Size_Format=1: regen={}, comp={}", regen, comp);
                 }
@@ -2272,7 +2485,9 @@ mod cross_library_tests {
                     let b2 = full_compressed[block_start + 5];
                     let b3 = full_compressed[block_start + 6];
                     let b4 = full_compressed[block_start + 7];
-                    let regen = ((b0 as u32 >> 4) & 0xF) | ((b1 as u32) << 4) | (((b2 as u32) & 0x3F) << 12);
+                    let regen = ((b0 as u32 >> 4) & 0xF)
+                        | ((b1 as u32) << 4)
+                        | (((b2 as u32) & 0x3F) << 12);
                     let comp = ((b2 as u32 >> 6) & 0x3) | ((b3 as u32) << 2) | ((b4 as u32) << 10);
                     println!("Size_Format=2: regen={}, comp={}", regen, comp);
                 }
@@ -2283,7 +2498,10 @@ mod cross_library_tests {
                     let b2 = full_compressed[block_start + 5];
                     let regen = ((b0 as u32 >> 4) & 0xF) | (((b1 as u32) & 0x3F) << 4);
                     let comp = ((b1 as u32 >> 6) & 0x3) | ((b2 as u32) << 2);
-                    println!("Size_Format=3 (single stream): regen={}, comp={}", regen, comp);
+                    println!(
+                        "Size_Format=3 (single stream): regen={}, comp={}",
+                        regen, comp
+                    );
                 }
                 _ => {}
             }
@@ -2293,7 +2511,10 @@ mod cross_library_tests {
         println!("\nBlock data (first 60 bytes):");
         let block_data_start = block_start + 3;
         let block_end = (block_data_start + block_size).min(full_compressed.len() - 4);
-        for (i, chunk) in full_compressed[block_data_start..block_end].chunks(20).enumerate() {
+        for (i, chunk) in full_compressed[block_data_start..block_end]
+            .chunks(20)
+            .enumerate()
+        {
             println!("  {:04x}: {:02x?}", i * 20, chunk);
         }
     }
@@ -2306,14 +2527,24 @@ mod cross_library_tests {
     fn test_fse_bitstream_comparison() {
         use crate::block::Sequence;
         use crate::compress::encode_sequences_fse;
-        use crate::fse::{FseTable, LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG};
-        use crate::fse::{MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG};
-        use crate::fse::{OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG};
+        use crate::fse::{
+            FseTable, LITERAL_LENGTH_ACCURACY_LOG, LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
+        };
+        use crate::fse::{MATCH_LENGTH_ACCURACY_LOG, MATCH_LENGTH_DEFAULT_DISTRIBUTION};
+        use crate::fse::{OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION};
 
         // Create a simple sequence: literal_length=5, match_length=10, offset=100
         let sequences = vec![
-            Sequence { literal_length: 5, match_length: 10, offset: 100 },
-            Sequence { literal_length: 3, match_length: 8, offset: 50 },
+            Sequence {
+                literal_length: 5,
+                match_length: 10,
+                offset: 100,
+            },
+            Sequence {
+                literal_length: 3,
+                match_length: 8,
+                offset: 50,
+            },
         ];
 
         println!("=== FSE Bitstream Comparison Test ===");
@@ -2334,11 +2565,13 @@ mod cross_library_tests {
                     println!("Sequence count byte: {}", seq_count);
                     if our_output.len() > 1 {
                         let mode_byte = our_output[1];
-                        println!("Mode byte: 0x{:02x} (LL={}, OF={}, ML={})",
+                        println!(
+                            "Mode byte: 0x{:02x} (LL={}, OF={}, ML={})",
                             mode_byte,
                             (mode_byte >> 6) & 0x3,
                             (mode_byte >> 4) & 0x3,
-                            (mode_byte >> 2) & 0x3);
+                            (mode_byte >> 2) & 0x3
+                        );
                     }
 
                     // Bitstream starts after header
@@ -2346,7 +2579,9 @@ mod cross_library_tests {
                         println!("\nBitstream ({} bytes):", our_output.len() - 2);
                         for (i, b) in our_output[2..].iter().enumerate() {
                             print!("{:02x} ", b);
-                            if (i + 1) % 16 == 0 { println!(); }
+                            if (i + 1) % 16 == 0 {
+                                println!();
+                            }
                         }
                         println!();
                     }
@@ -2362,19 +2597,31 @@ mod cross_library_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
-        println!("LL table: accuracy_log={}, size={}", ll_table.accuracy_log(), ll_table.size());
-        println!("OF table: accuracy_log={}, size={}", of_table.accuracy_log(), of_table.size());
-        println!("ML table: accuracy_log={}, size={}", ml_table.accuracy_log(), ml_table.size());
+        println!(
+            "LL table: accuracy_log={}, size={}",
+            ll_table.accuracy_log(),
+            ll_table.size()
+        );
+        println!(
+            "OF table: accuracy_log={}, size={}",
+            of_table.accuracy_log(),
+            of_table.size()
+        );
+        println!(
+            "ML table: accuracy_log={}, size={}",
+            ml_table.accuracy_log(),
+            ml_table.size()
+        );
     }
 
     /// Get reference zstd's sequence bitstream to compare.
@@ -2393,14 +2640,23 @@ mod cross_library_tests {
         let data = &data[..];
 
         println!("=== Analyze Reference Sequence Bitstream ===");
-        println!("Input: {:?} ({} bytes)", String::from_utf8_lossy(data), data.len());
+        println!(
+            "Input: {:?} ({} bytes)",
+            String::from_utf8_lossy(data),
+            data.len()
+        );
 
         let compressed = zstd::encode_all(&data[..], 3).expect("compress failed");
-        println!("\nReference compressed ({} bytes): {:02x?}", compressed.len(), compressed);
+        println!(
+            "\nReference compressed ({} bytes): {:02x?}",
+            compressed.len(),
+            compressed
+        );
 
         // Parse the frame
         if compressed.len() >= 4 {
-            let magic = u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+            let magic =
+                u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
             println!("Magic: 0x{:08x}", magic);
         }
 
@@ -2410,7 +2666,13 @@ mod cross_library_tests {
             let single_segment = (fhd >> 5) & 0x1 != 0;
             let fcs_field = (fhd >> 6) & 0x3;
             let fcs_size = match fcs_field {
-                0 => if single_segment { 1 } else { 0 },
+                0 => {
+                    if single_segment {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 1 => 2,
                 2 => 4,
                 3 => 8,
@@ -2419,7 +2681,10 @@ mod cross_library_tests {
             let window_size = if single_segment { 0 } else { 1 };
             let header_end = 5 + window_size + fcs_size;
 
-            println!("FHD: 0x{:02x}, single_segment={}, fcs_size={}", fhd, single_segment, fcs_size);
+            println!(
+                "FHD: 0x{:02x}, single_segment={}, fcs_size={}",
+                fhd, single_segment, fcs_size
+            );
             println!("Header ends at: {}", header_end);
 
             if compressed.len() > header_end + 3 {
@@ -2435,37 +2700,59 @@ mod cross_library_tests {
                 let block_size = (bh >> 3) as usize;
 
                 println!("\nBlock at {}:", header_end);
-                println!("  Last: {}, Type: {} ({}), Size: {}",
-                    last, block_type,
-                    match block_type { 0 => "Raw", 1 => "RLE", 2 => "Compressed", _ => "?" },
-                    block_size);
+                println!(
+                    "  Last: {}, Type: {} ({}), Size: {}",
+                    last,
+                    block_type,
+                    match block_type {
+                        0 => "Raw",
+                        1 => "RLE",
+                        2 => "Compressed",
+                        _ => "?",
+                    },
+                    block_size
+                );
 
                 if block_type == 2 && compressed.len() >= header_end + 3 + block_size {
                     let block_start = header_end + 3;
                     let block_data = &compressed[block_start..block_start + block_size];
-                    println!("\nBlock content ({} bytes): {:02x?}", block_data.len(), block_data);
+                    println!(
+                        "\nBlock content ({} bytes): {:02x?}",
+                        block_data.len(),
+                        block_data
+                    );
 
                     // Parse literals section
                     if !block_data.is_empty() {
                         let lit_type = block_data[0] & 0x3;
                         let lit_size_format = (block_data[0] >> 2) & 0x3;
-                        println!("\nLiterals type: {} ({})", lit_type,
-                            match lit_type { 0 => "Raw", 1 => "RLE", 2 => "Compressed", 3 => "Treeless", _ => "?" });
+                        println!(
+                            "\nLiterals type: {} ({})",
+                            lit_type,
+                            match lit_type {
+                                0 => "Raw",
+                                1 => "RLE",
+                                2 => "Compressed",
+                                3 => "Treeless",
+                                _ => "?",
+                            }
+                        );
 
                         let (lit_regen_size, lit_header_size) = if lit_type == 0 || lit_type == 1 {
                             // Raw or RLE
                             match lit_size_format {
                                 0 | 2 => (((block_data[0] >> 3) & 0x1F) as usize, 1usize),
                                 1 => {
-                                    let s = ((block_data[0] >> 4) as usize) | ((block_data[1] as usize) << 4);
+                                    let s = ((block_data[0] >> 4) as usize)
+                                        | ((block_data[1] as usize) << 4);
                                     (s, 2)
-                                },
+                                }
                                 3 => {
-                                    let s = ((block_data[0] >> 4) as usize) |
-                                            ((block_data[1] as usize) << 4) |
-                                            (((block_data[2] & 0x3F) as usize) << 12);
+                                    let s = ((block_data[0] >> 4) as usize)
+                                        | ((block_data[1] as usize) << 4)
+                                        | (((block_data[2] & 0x3F) as usize) << 12);
                                     (s, 3)
-                                },
+                                }
                                 _ => (0, 1),
                             }
                         } else {
@@ -2473,10 +2760,22 @@ mod cross_library_tests {
                             (0, 0)
                         };
 
-                        println!("Literals regenerated size: {}, header size: {}", lit_regen_size, lit_header_size);
+                        println!(
+                            "Literals regenerated size: {}, header size: {}",
+                            lit_regen_size, lit_header_size
+                        );
 
                         // Sequence section starts after literals
-                        let seq_start = lit_header_size + if lit_type == 0 { lit_regen_size } else { if lit_type == 1 { 1 } else { 0 } };
+                        let seq_start = lit_header_size
+                            + if lit_type == 0 {
+                                lit_regen_size
+                            } else {
+                                if lit_type == 1 {
+                                    1
+                                } else {
+                                    0
+                                }
+                            };
                         if seq_start < block_data.len() {
                             println!("\nSequence section at offset {}:", seq_start);
                             let seq_data = &block_data[seq_start..];
@@ -2484,26 +2783,46 @@ mod cross_library_tests {
 
                             if !seq_data.is_empty() {
                                 let seq_count = seq_data[0];
-                                println!("  Sequence count byte: {} (count = {})", seq_data[0],
-                                    if seq_count < 128 { seq_count as usize } else { ((seq_count as usize - 128) << 8) | seq_data[1] as usize });
+                                println!(
+                                    "  Sequence count byte: {} (count = {})",
+                                    seq_data[0],
+                                    if seq_count < 128 {
+                                        seq_count as usize
+                                    } else {
+                                        ((seq_count as usize - 128) << 8) | seq_data[1] as usize
+                                    }
+                                );
 
                                 let (count, header_len) = if seq_count < 128 {
                                     (seq_count as usize, 1)
                                 } else if seq_count < 255 {
                                     (((seq_count as usize - 128) << 8) | seq_data[1] as usize, 2)
                                 } else {
-                                    (seq_data[1] as usize | ((seq_data[2] as usize) << 8) + 0x7F00, 3)
+                                    (
+                                        seq_data[1] as usize
+                                            | ((seq_data[2] as usize) << 8) + 0x7F00,
+                                        3,
+                                    )
                                 };
 
                                 if seq_data.len() > header_len {
                                     let mode_byte = seq_data[header_len];
-                                    println!("  Mode byte: 0x{:02x} (LL={}, OF={}, ML={})",
-                                        mode_byte, (mode_byte >> 6) & 3, (mode_byte >> 4) & 3, (mode_byte >> 2) & 3);
+                                    println!(
+                                        "  Mode byte: 0x{:02x} (LL={}, OF={}, ML={})",
+                                        mode_byte,
+                                        (mode_byte >> 6) & 3,
+                                        (mode_byte >> 4) & 3,
+                                        (mode_byte >> 2) & 3
+                                    );
                                 }
 
                                 if seq_data.len() > header_len + 1 {
                                     let bitstream = &seq_data[header_len + 1..];
-                                    println!("  FSE Bitstream ({} bytes): {:02x?}", bitstream.len(), bitstream);
+                                    println!(
+                                        "  FSE Bitstream ({} bytes): {:02x?}",
+                                        bitstream.len(),
+                                        bitstream
+                                    );
                                 }
                             }
                         }
@@ -2523,9 +2842,11 @@ mod cross_library_tests {
 
         // The sequence should be: ll=50, ml=20, offset_value=53
         // Note: offset in Sequence is (actual_offset + 3), so 50 + 3 = 53
-        let sequences = vec![
-            Sequence { literal_length: 50, match_length: 20, offset: 53 },
-        ];
+        let sequences = vec![Sequence {
+            literal_length: 50,
+            match_length: 20,
+            offset: 53,
+        }];
 
         println!("\n=== Our Encoding ===");
         println!("Sequence: ll=50, ml=20, offset_value=53 (actual offset 50)");
@@ -2533,7 +2854,11 @@ mod cross_library_tests {
         let mut our_output = Vec::new();
         encode_sequences_fse(&sequences, &mut our_output).expect("encode failed");
 
-        println!("Our sequence section ({} bytes): {:02x?}", our_output.len(), our_output);
+        println!(
+            "Our sequence section ({} bytes): {:02x?}",
+            our_output.len(),
+            our_output
+        );
         if our_output.len() >= 2 {
             println!("  Count: {}", our_output[0]);
             println!("  Mode: 0x{:02x}", our_output[1]);
@@ -2544,7 +2869,11 @@ mod cross_library_tests {
 
         // Compare bitstreams
         let ref_bitstream = &[0x52, 0x69, 0x05, 0x05];
-        let our_bitstream = if our_output.len() > 2 { &our_output[2..] } else { &[] };
+        let our_bitstream = if our_output.len() > 2 {
+            &our_output[2..]
+        } else {
+            &[]
+        };
 
         println!("\n=== Comparison ===");
         println!("Reference: {:02x?}", ref_bitstream);
@@ -2578,15 +2907,27 @@ mod cross_library_tests {
         let matches = mf.find_matches(&data);
         println!("Matches found: {}", matches.len());
         for (i, m) in matches.iter().enumerate() {
-            println!("  Match[{}]: pos={}, len={}, offset={}", i, m.position, m.length, m.offset);
+            println!(
+                "  Match[{}]: pos={}, len={}, offset={}",
+                i, m.position, m.length, m.offset
+            );
         }
         let (literals, seqs) = crate::compress::block::matches_to_sequences(&data, &matches);
         println!("Sequences: {}", seqs.len());
         for (i, s) in seqs.iter().enumerate() {
-            println!("  Seq[{}]: ll={}, offset={}, ml={}", i, s.literal_length, s.offset, s.match_length);
+            println!(
+                "  Seq[{}]: ll={}, offset={}, ml={}",
+                i, s.literal_length, s.offset, s.match_length
+            );
             let enc = crate::compress::EncodedSequence::from_sequence(s);
-            println!("    Encoded: ll_code={}, of_code={}, ml_code={}", enc.ll_code, enc.of_code, enc.ml_code);
-            println!("    Extra: ll_bits={}, of_extra={}, ml_extra={}", enc.ll_bits, enc.of_extra, enc.ml_extra);
+            println!(
+                "    Encoded: ll_code={}, of_code={}, ml_code={}",
+                enc.ll_code, enc.of_code, enc.ml_code
+            );
+            println!(
+                "    Extra: ll_bits={}, of_extra={}, ml_extra={}",
+                enc.ll_bits, enc.of_extra, enc.ml_extra
+            );
         }
 
         // Compress with our implementation
@@ -2613,7 +2954,12 @@ mod cross_library_tests {
 
                 // Parse our frame structure to debug
                 if compressed.len() >= 4 {
-                    let magic = u32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+                    let magic = u32::from_le_bytes([
+                        compressed[0],
+                        compressed[1],
+                        compressed[2],
+                        compressed[3],
+                    ]);
                     println!("Magic: 0x{:08x}", magic);
                 }
                 if compressed.len() > 4 {
@@ -2659,16 +3005,27 @@ mod cross_library_tests {
         let matches = mf.find_matches(&data);
         println!("Matches found: {}", matches.len());
         for (i, m) in matches.iter().enumerate() {
-            println!("  Match[{}]: pos={}, len={}, offset={}", i, m.position, m.length, m.offset);
+            println!(
+                "  Match[{}]: pos={}, len={}, offset={}",
+                i, m.position, m.length, m.offset
+            );
         }
         let (literals, seqs) = crate::compress::block::matches_to_sequences(&data, &matches);
         println!("Sequences: {}", seqs.len());
         for (i, s) in seqs.iter().enumerate() {
-            println!("  Seq[{}]: ll={}, offset={}, ml={}", i, s.literal_length, s.offset, s.match_length);
+            println!(
+                "  Seq[{}]: ll={}, offset={}, ml={}",
+                i, s.literal_length, s.offset, s.match_length
+            );
             let enc = crate::compress::EncodedSequence::from_sequence(s);
-            println!("    Encoded: ll_code={}, of_code={}, ml_code={}", enc.ll_code, enc.of_code, enc.ml_code);
-            println!("    Extra: ll_extra={}({} bits), of_extra={}({} bits), ml_extra={}({} bits)",
-                     enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits);
+            println!(
+                "    Encoded: ll_code={}, of_code={}, ml_code={}",
+                enc.ll_code, enc.of_code, enc.ml_code
+            );
+            println!(
+                "    Extra: ll_extra={}({} bits), of_extra={}({} bits), ml_extra={}({} bits)",
+                enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits
+            );
         }
 
         // Compress with our implementation
@@ -2683,16 +3040,20 @@ mod cross_library_tests {
         println!("Reference bytes: {:02x?}", ref_compressed);
 
         // Check ML code 46 state positions
-        use crate::fse::{FseTable, MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG};
+        use crate::fse::{FseTable, MATCH_LENGTH_ACCURACY_LOG, MATCH_LENGTH_DEFAULT_DISTRIBUTION};
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
         println!("\nML code 46 positions in decode table:");
         for pos in 0..ml_table.size() {
             let entry = ml_table.decode(pos);
             if entry.symbol == 46 {
-                println!("  Position {}: symbol={}, nb_bits={}, baseline={}", pos, entry.symbol, entry.num_bits, entry.baseline);
+                println!(
+                    "  Position {}: symbol={}, nb_bits={}, baseline={}",
+                    pos, entry.symbol, entry.num_bits, entry.baseline
+                );
             }
         }
         // Also check what position 63 and 42 decode to
@@ -2762,7 +3123,10 @@ mod cross_library_tests {
         // Try to decode with reference zstd
         match zstd::decode_all(&modified[..]) {
             Ok(decoded) => {
-                println!("SUCCESS! Reference decoded without checksum: {} bytes", decoded.len());
+                println!(
+                    "SUCCESS! Reference decoded without checksum: {} bytes",
+                    decoded.len()
+                );
                 if decoded == data {
                     println!("Data matches! Issue is CHECKSUM, not block encoding");
                 } else {
@@ -2792,12 +3156,13 @@ mod cross_library_tests {
     /// Debug FSE state values for our single sequence.
     #[test]
     fn test_debug_fse_state_values() {
-        use crate::fse::{FseTable, OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
-            LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG,
-            MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-            InterleavedTansEncoder, FseBitWriter};
-        use crate::compress::EncodedSequence;
         use crate::block::Sequence;
+        use crate::compress::EncodedSequence;
+        use crate::fse::{
+            FseBitWriter, FseTable, InterleavedTansEncoder, LITERAL_LENGTH_ACCURACY_LOG,
+            LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
+            MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION,
+        };
 
         println!("=== Debug FSE State Values ===");
 
@@ -2811,31 +3176,48 @@ mod cross_library_tests {
         let seq = Sequence::new(100, 103, 50);
         let encoded = EncodedSequence::from_sequence(&seq);
 
-        println!("Sequence: ll={}, of={}, ml={}", seq.literal_length, seq.offset, seq.match_length);
-        println!("Encoded: ll_code={}, of_code={}, ml_code={}", encoded.ll_code, encoded.of_code, encoded.ml_code);
-        println!("Extra bits: ll={}({} bits), of={}({} bits), ml={}({} bits)",
-            encoded.ll_extra, encoded.ll_bits,
-            encoded.of_extra, encoded.of_code,
-            encoded.ml_extra, encoded.ml_bits);
+        println!(
+            "Sequence: ll={}, of={}, ml={}",
+            seq.literal_length, seq.offset, seq.match_length
+        );
+        println!(
+            "Encoded: ll_code={}, of_code={}, ml_code={}",
+            encoded.ll_code, encoded.of_code, encoded.ml_code
+        );
+        println!(
+            "Extra bits: ll={}({} bits), of={}({} bits), ml={}({} bits)",
+            encoded.ll_extra,
+            encoded.ll_bits,
+            encoded.of_extra,
+            encoded.of_code,
+            encoded.ml_extra,
+            encoded.ml_bits
+        );
 
         // Build tables
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
-        println!("\nTable sizes: LL={}, OF={}, ML={}",
-            ll_table.size(), of_table.size(), ml_table.size());
-        println!("Accuracy logs: LL={}, OF={}, ML={}",
-            LITERAL_LENGTH_ACCURACY_LOG, OFFSET_ACCURACY_LOG, MATCH_LENGTH_ACCURACY_LOG);
+        println!(
+            "\nTable sizes: LL={}, OF={}, ML={}",
+            ll_table.size(),
+            of_table.size(),
+            ml_table.size()
+        );
+        println!(
+            "Accuracy logs: LL={}, OF={}, ML={}",
+            LITERAL_LENGTH_ACCURACY_LOG, OFFSET_ACCURACY_LOG, MATCH_LENGTH_ACCURACY_LOG
+        );
 
         // Create interleaved encoder
         let mut tans = InterleavedTansEncoder::new(&ll_table, &of_table, &ml_table);
@@ -2844,8 +3226,10 @@ mod cross_library_tests {
         tans.init_states(encoded.ll_code, encoded.of_code, encoded.ml_code);
         let (ll_state, of_state, ml_state) = tans.get_states();
 
-        println!("\nAfter init_states({}, {}, {}):",
-            encoded.ll_code, encoded.of_code, encoded.ml_code);
+        println!(
+            "\nAfter init_states({}, {}, {}):",
+            encoded.ll_code, encoded.of_code, encoded.ml_code
+        );
         println!("  LL state: {}", ll_state);
         println!("  OF state: {}", of_state);
         println!("  ML state: {}", ml_state);
@@ -2873,7 +3257,10 @@ mod cross_library_tests {
         // Decode our bitstream to verify
         let our_16 = u16::from_le_bytes([bitstream[0], bitstream[1]]);
         let ref_16 = u16::from_le_bytes([0xe4, 0x67]);
-        println!("\nFirst 16 bits (le): ours=0x{:04x} ref=0x{:04x}", our_16, ref_16);
+        println!(
+            "\nFirst 16 bits (le): ours=0x{:04x} ref=0x{:04x}",
+            our_16, ref_16
+        );
         println!("Ours binary:   {:016b}", our_16);
         println!("Ref binary:    {:016b}", ref_16);
 
@@ -2883,8 +3270,10 @@ mod cross_library_tests {
         for pos in 0..ll_table.size() {
             let entry = ll_table.decode(pos);
             if entry.symbol == encoded.ll_code {
-                println!("  Position {}: symbol={}, nb_bits={}, baseline={}",
-                    pos, entry.symbol, entry.num_bits, entry.baseline);
+                println!(
+                    "  Position {}: symbol={}, nb_bits={}, baseline={}",
+                    pos, entry.symbol, entry.num_bits, entry.baseline
+                );
             }
         }
 
@@ -2892,8 +3281,10 @@ mod cross_library_tests {
         for pos in 0..of_table.size() {
             let entry = of_table.decode(pos);
             if entry.symbol == encoded.of_code {
-                println!("  Position {}: symbol={}, nb_bits={}, baseline={}",
-                    pos, entry.symbol, entry.num_bits, entry.baseline);
+                println!(
+                    "  Position {}: symbol={}, nb_bits={}, baseline={}",
+                    pos, entry.symbol, entry.num_bits, entry.baseline
+                );
             }
         }
 
@@ -2901,8 +3292,10 @@ mod cross_library_tests {
         for pos in 0..ml_table.size() {
             let entry = ml_table.decode(pos);
             if entry.symbol == encoded.ml_code {
-                println!("  Position {}: symbol={}, nb_bits={}, baseline={}",
-                    pos, entry.symbol, entry.num_bits, entry.baseline);
+                println!(
+                    "  Position {}: symbol={}, nb_bits={}, baseline={}",
+                    pos, entry.symbol, entry.num_bits, entry.baseline
+                );
             }
         }
     }
@@ -2910,7 +3303,7 @@ mod cross_library_tests {
     /// Compare our block structure with reference zstd for the same input.
     #[test]
     fn test_compare_block_structure() {
-        use haagenti_core::{Compressor};
+        use haagenti_core::Compressor;
 
         // Same data as test_reference_decodes_our_fse
         let mut data = Vec::new();
@@ -2985,17 +3378,23 @@ mod cross_library_tests {
         let ref_block_start = 4 + ref_header_size;
         let our_block_start = 4 + our_header_size;
 
-        println!("\nReference block header at offset {}: {:02x?}",
-            ref_block_start, &ref_compressed[ref_block_start..ref_block_start+3]);
-        println!("Our block header at offset {}: {:02x?}",
-            our_block_start, &our_compressed[our_block_start..our_block_start+3]);
+        println!(
+            "\nReference block header at offset {}: {:02x?}",
+            ref_block_start,
+            &ref_compressed[ref_block_start..ref_block_start + 3]
+        );
+        println!(
+            "Our block header at offset {}: {:02x?}",
+            our_block_start,
+            &our_compressed[our_block_start..our_block_start + 3]
+        );
 
         // Parse block headers
         let ref_block_header = u32::from_le_bytes([
             ref_compressed[ref_block_start],
             ref_compressed[ref_block_start + 1],
             ref_compressed[ref_block_start + 2],
-            0
+            0,
         ]);
         let ref_is_last = ref_block_header & 1 == 1;
         let ref_block_type = (ref_block_header >> 1) & 3;
@@ -3005,16 +3404,20 @@ mod cross_library_tests {
             our_compressed[our_block_start],
             our_compressed[our_block_start + 1],
             our_compressed[our_block_start + 2],
-            0
+            0,
         ]);
         let our_is_last = our_block_header & 1 == 1;
         let our_block_type = (our_block_header >> 1) & 3;
         let our_block_size = our_block_header >> 3;
 
-        println!("\nReference block: is_last={}, type={}, size={}",
-            ref_is_last, ref_block_type, ref_block_size);
-        println!("Our block: is_last={}, type={}, size={}",
-            our_is_last, our_block_type, our_block_size);
+        println!(
+            "\nReference block: is_last={}, type={}, size={}",
+            ref_is_last, ref_block_type, ref_block_size
+        );
+        println!(
+            "Our block: is_last={}, type={}, size={}",
+            our_is_last, our_block_type, our_block_size
+        );
 
         // Get block content
         let ref_block_content_start = ref_block_start + 3;
@@ -3029,10 +3432,14 @@ mod cross_library_tests {
 
         let ref_lit_type = ref_lit_header & 3;
         let our_lit_type = our_lit_header & 3;
-        println!("Reference literals type: {} (0=Raw, 1=RLE, 2=Compressed, 3=Treeless)",
-            ref_lit_type);
-        println!("Our literals type: {} (0=Raw, 1=RLE, 2=Compressed, 3=Treeless)",
-            our_lit_type);
+        println!(
+            "Reference literals type: {} (0=Raw, 1=RLE, 2=Compressed, 3=Treeless)",
+            ref_lit_type
+        );
+        println!(
+            "Our literals type: {} (0=Raw, 1=RLE, 2=Compressed, 3=Treeless)",
+            our_lit_type
+        );
 
         // For comparison, show the sequence section bytes
         // This will help identify if the difference is in sequences
@@ -3044,12 +3451,16 @@ mod cross_library_tests {
         let our_block_end = our_block_content_start + our_block_size as usize;
 
         if ref_block_end <= ref_compressed.len() {
-            println!("\nReference block last 15 bytes: {:02x?}",
-                &ref_compressed[ref_block_end.saturating_sub(15)..ref_block_end]);
+            println!(
+                "\nReference block last 15 bytes: {:02x?}",
+                &ref_compressed[ref_block_end.saturating_sub(15)..ref_block_end]
+            );
         }
         if our_block_end <= our_compressed.len() {
-            println!("Our block last 15 bytes: {:02x?}",
-                &our_compressed[our_block_end.saturating_sub(15)..our_block_end]);
+            println!(
+                "Our block last 15 bytes: {:02x?}",
+                &our_compressed[our_block_end.saturating_sub(15)..our_block_end]
+            );
         }
     }
 
@@ -3131,16 +3542,15 @@ mod cross_library_tests {
     /// Debug the OF init_state calculation for code 5.
     #[test]
     fn test_debug_of_init_state() {
-        use crate::fse::{FseTable, OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
-            LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG,
-            MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-            InterleavedTansEncoder};
         use crate::fse::TansEncoder;
+        use crate::fse::{
+            FseTable, InterleavedTansEncoder, LITERAL_LENGTH_ACCURACY_LOG,
+            LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
+            MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION,
+        };
 
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
 
         println!("=== Debug OF Init State for Code 5 ===");
         println!("OF accuracy log: {}", OFFSET_ACCURACY_LOG);
@@ -3152,8 +3562,10 @@ mod cross_library_tests {
         for pos in 0..of_table.size() {
             let entry = of_table.decode(pos);
             if entry.symbol == 5 {
-                println!("    Position {} -> symbol={}, nb_bits={}, baseline={}",
-                    pos, entry.symbol, entry.num_bits, entry.baseline);
+                println!(
+                    "    Position {} -> symbol={}, nb_bits={}, baseline={}",
+                    pos, entry.symbol, entry.num_bits, entry.baseline
+                );
             }
         }
 
@@ -3161,8 +3573,10 @@ mod cross_library_tests {
         println!("\n  All positions:");
         for pos in 0..of_table.size() {
             let entry = of_table.decode(pos);
-            println!("    {:2}: symbol={:2}, nb_bits={}, baseline={:2}",
-                pos, entry.symbol, entry.num_bits, entry.baseline);
+            println!(
+                "    {:2}: symbol={:2}, nb_bits={}, baseline={:2}",
+                pos, entry.symbol, entry.num_bits, entry.baseline
+            );
         }
 
         // Create single encoder and init for symbol 5
@@ -3176,11 +3590,13 @@ mod cross_library_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut interleaved = InterleavedTansEncoder::new(&ll_table, &of_table, &ml_table);
 
@@ -3199,8 +3615,10 @@ mod cross_library_tests {
 
         // Check what symbol is at position 18
         let entry18 = of_table.decode(18);
-        println!("\n  Position 18 has: symbol={}, nb_bits={}, baseline={}",
-            entry18.symbol, entry18.num_bits, entry18.baseline);
+        println!(
+            "\n  Position 18 has: symbol={}, nb_bits={}, baseline={}",
+            entry18.symbol, entry18.num_bits, entry18.baseline
+        );
     }
 
     fn decode_bitstream_bits(name: &str, bytes: &[u8]) {
@@ -3214,7 +3632,10 @@ mod cross_library_tests {
         // Find sentinel bit in last byte
         let last = bytes[bytes.len() - 1];
         let sentinel_pos = 31 - (last as u32).leading_zeros();
-        println!("    Last byte: 0x{:02x}, sentinel at bit {}", last, sentinel_pos);
+        println!(
+            "    Last byte: 0x{:02x}, sentinel at bit {}",
+            last, sentinel_pos
+        );
 
         // Total bits = (len-1)*8 + sentinel_pos
         let total_bits = (bytes.len() - 1) * 8 + sentinel_pos as usize;
@@ -3243,7 +3664,10 @@ mod cross_library_tests {
         let of_state = (bit_buffer >> (bits_in_buffer - 6 - 5)) & 0x1F;
         let ml_state = (bit_buffer >> (bits_in_buffer - 6 - 5 - 6)) & 0x3F;
 
-        println!("    Initial states: LL={} OF={} ML={}", ll_state, of_state, ml_state);
+        println!(
+            "    Initial states: LL={} OF={} ML={}",
+            ll_state, of_state, ml_state
+        );
 
         // Remaining bits are for the sequence (extra bits only for 1 sequence with init)
         let remaining = bits_in_buffer - 17;
@@ -3268,7 +3692,7 @@ mod cross_library_tests {
 
         // Now repeat a long section - this will definitely match
         for i in 0..50u8 {
-            data.push(i);  // Matches offset 100, length 50
+            data.push(i); // Matches offset 100, length 50
         }
 
         // Add some more unique bytes
@@ -3278,15 +3702,23 @@ mod cross_library_tests {
 
         // Repeat another section
         for i in 50..80u8 {
-            data.push(i);  // Matches offset ~100, length 30
+            data.push(i); // Matches offset ~100, length 30
         }
 
         println!("=== Reference Zstd Comparison ===");
-        println!("Input data ({} bytes): {:?}", data.len(), String::from_utf8_lossy(&data));
+        println!(
+            "Input data ({} bytes): {:?}",
+            data.len(),
+            String::from_utf8_lossy(&data)
+        );
 
         // Compress with reference zstd
-        let ref_compressed = zstd::encode_all(&data[..], 3).expect("reference zstd compress failed");
-        println!("\nReference zstd compressed: {} bytes", ref_compressed.len());
+        let ref_compressed =
+            zstd::encode_all(&data[..], 3).expect("reference zstd compress failed");
+        println!(
+            "\nReference zstd compressed: {} bytes",
+            ref_compressed.len()
+        );
         println!("Reference bytes: {:02x?}", ref_compressed);
 
         // Parse reference frame structure
@@ -3295,14 +3727,18 @@ mod cross_library_tests {
         // Compress with our implementation
         let compressor = ZstdCompressor::new();
         let our_compressed = compressor.compress(&data).expect("our compress failed");
-        println!("\nOur implementation compressed: {} bytes", our_compressed.len());
+        println!(
+            "\nOur implementation compressed: {} bytes",
+            our_compressed.len()
+        );
         println!("Our bytes: {:02x?}", our_compressed);
 
         // Parse our frame structure
         parse_zstd_frame("Ours", &our_compressed);
 
         // Verify both decompress to the same data
-        let ref_decompressed = zstd::decode_all(&ref_compressed[..]).expect("reference decode failed");
+        let ref_decompressed =
+            zstd::decode_all(&ref_compressed[..]).expect("reference decode failed");
         assert_eq!(&ref_decompressed, &data, "Reference roundtrip failed");
 
         // Try to decode our output with reference zstd
@@ -3357,7 +3793,13 @@ mod cross_library_tests {
         // Frame header descriptor
         let fhd = data[4];
         let fcs_size = match (fhd >> 6) & 0x3 {
-            0 => if fhd & 0x20 != 0 { 1 } else { 0 },
+            0 => {
+                if fhd & 0x20 != 0 {
+                    1
+                } else {
+                    0
+                }
+            }
             1 => 2,
             2 => 4,
             3 => 8,
@@ -3398,22 +3840,35 @@ mod cross_library_tests {
                 let block_size = (block_header >> 3) as usize;
 
                 println!("\nFirst Block at offset {}:", block_start);
-                println!("  - Block header bytes: {:02x} {:02x} {:02x}", bh0, bh1, bh2);
+                println!(
+                    "  - Block header bytes: {:02x} {:02x} {:02x}",
+                    bh0, bh1, bh2
+                );
                 println!("  - Last block: {}", last_block);
-                println!("  - Block type: {} ({})", block_type, match block_type {
-                    0 => "Raw",
-                    1 => "RLE",
-                    2 => "Compressed",
-                    3 => "Reserved",
-                    _ => "Unknown",
-                });
+                println!(
+                    "  - Block type: {} ({})",
+                    block_type,
+                    match block_type {
+                        0 => "Raw",
+                        1 => "RLE",
+                        2 => "Compressed",
+                        3 => "Reserved",
+                        _ => "Unknown",
+                    }
+                );
                 println!("  - Block size: {} bytes", block_size);
 
                 // Dump block content bytes
                 let block_content_start = block_start + 3;
                 let block_content_end = (block_content_start + block_size).min(data.len());
-                println!("\nBlock content ({} bytes):", block_content_end - block_content_start);
-                for (i, chunk) in data[block_content_start..block_content_end].chunks(16).enumerate() {
+                println!(
+                    "\nBlock content ({} bytes):",
+                    block_content_end - block_content_start
+                );
+                for (i, chunk) in data[block_content_start..block_content_end]
+                    .chunks(16)
+                    .enumerate()
+                {
                     print!("  {:04x}: ", i * 16);
                     for b in chunk {
                         print!("{:02x} ", b);
@@ -3434,15 +3889,15 @@ mod cross_library_tests {
 
         // First verify reference's frame with reference's FSE bytes works
         let ref_frame: Vec<u8> = vec![
-            0x28, 0xb5, 0x2f, 0xfd,  // Magic
-            0x00,                     // FHD (no checksum, no single segment)
-            0x48,                     // Window descriptor
-            0x55, 0x00, 0x00,        // Block header (last=1, type=2, size=10)
-            0x20,                     // Literals header (raw, 4 bytes)
-            0x41, 0x42, 0x43, 0x44,  // Literals: "ABCD"
-            0x01,                     // Sequence count: 1
-            0x00,                     // Mode byte: all predefined
-            0xfd, 0xe4, 0x88,        // Reference FSE bitstream
+            0x28, 0xb5, 0x2f, 0xfd, // Magic
+            0x00, // FHD (no checksum, no single segment)
+            0x48, // Window descriptor
+            0x55, 0x00, 0x00, // Block header (last=1, type=2, size=10)
+            0x20, // Literals header (raw, 4 bytes)
+            0x41, 0x42, 0x43, 0x44, // Literals: "ABCD"
+            0x01, // Sequence count: 1
+            0x00, // Mode byte: all predefined
+            0xfd, 0xe4, 0x88, // Reference FSE bitstream
         ];
 
         println!("=== Test FSE Bytes in Reference Frame ===");
@@ -3450,7 +3905,10 @@ mod cross_library_tests {
 
         match zstd::decode_all(&ref_frame[..]) {
             Ok(decoded) => {
-                println!("Reference frame with reference FSE: SUCCESS ({} bytes)", decoded.len());
+                println!(
+                    "Reference frame with reference FSE: SUCCESS ({} bytes)",
+                    decoded.len()
+                );
                 println!("  Decoded: {:?}", String::from_utf8_lossy(&decoded));
             }
             Err(e) => {
@@ -3466,7 +3924,10 @@ mod cross_library_tests {
 
         match zstd::decode_all(&our_fse_frame[..]) {
             Ok(decoded) => {
-                println!("Reference frame with OUR FSE: SUCCESS ({} bytes)", decoded.len());
+                println!(
+                    "Reference frame with OUR FSE: SUCCESS ({} bytes)",
+                    decoded.len()
+                );
                 println!("  Decoded: {:?}", String::from_utf8_lossy(&decoded));
             }
             Err(e) => {
@@ -3480,11 +3941,10 @@ mod cross_library_tests {
 /// Compression profiling tests to identify bottlenecks.
 #[cfg(test)]
 mod profiling_tests {
-    use crate::compress::{
-        CompressContext, MatchFinder, LazyMatchFinder,
-        analyze_for_rle, EncodedSequence,
-    };
     use crate::compress::block::matches_to_sequences;
+    use crate::compress::{
+        analyze_for_rle, CompressContext, EncodedSequence, LazyMatchFinder, MatchFinder,
+    };
     use crate::huffman::HuffmanEncoder;
     use crate::{ZstdCompressor, ZstdDecompressor};
     use haagenti_core::{CompressionLevel, Compressor, Decompressor};
@@ -3552,7 +4012,8 @@ mod profiling_tests {
         if !sequences.is_empty() {
             use std::collections::HashSet;
 
-            let encoded: Vec<_> = sequences.iter()
+            let encoded: Vec<_> = sequences
+                .iter()
                 .map(|s| EncodedSequence::from_sequence(s))
                 .collect();
 
@@ -3593,12 +4054,16 @@ mod profiling_tests {
         println!();
         println!("MATCH FINDING:");
         println!("  Matches found: {}", p.num_matches);
-        println!("  Match coverage: {} bytes ({:.1}%)",
+        println!(
+            "  Match coverage: {} bytes ({:.1}%)",
             p.total_match_bytes,
-            100.0 * p.total_match_bytes as f64 / p.input_size as f64);
-        println!("  Literal bytes: {} ({:.1}%)",
+            100.0 * p.total_match_bytes as f64 / p.input_size as f64
+        );
+        println!(
+            "  Literal bytes: {} ({:.1}%)",
             p.literal_bytes,
-            100.0 * p.literal_bytes as f64 / p.input_size as f64);
+            100.0 * p.literal_bytes as f64 / p.input_size as f64
+        );
         println!("  Avg match length: {:.1}", p.avg_match_length);
         println!("  Avg offset: {:.1}", p.avg_offset);
         println!();
@@ -3612,21 +4077,29 @@ mod profiling_tests {
         println!("LITERALS:");
         println!("  Huffman viable: {}", p.huffman_viable);
         if p.huffman_viable {
-            println!("  Huffman estimated: {} bytes ({:.1}% of literals)",
+            println!(
+                "  Huffman estimated: {} bytes ({:.1}% of literals)",
                 p.huffman_estimated_size,
-                100.0 * p.huffman_estimated_size as f64 / p.literal_bytes.max(1) as f64);
+                100.0 * p.huffman_estimated_size as f64 / p.literal_bytes.max(1) as f64
+            );
         }
         println!();
         println!("OUTPUT:");
-        println!("  Haagenti: {} bytes ({:.2}x ratio)",
+        println!(
+            "  Haagenti: {} bytes ({:.2}x ratio)",
             p.output_size,
-            p.input_size as f64 / p.output_size.max(1) as f64);
-        println!("  Zstd ref:  {} bytes ({:.2}x ratio)",
+            p.input_size as f64 / p.output_size.max(1) as f64
+        );
+        println!(
+            "  Zstd ref:  {} bytes ({:.2}x ratio)",
             p.zstd_size,
-            p.input_size as f64 / p.zstd_size.max(1) as f64);
-        println!("  Gap: {} bytes ({:.1}% larger)",
+            p.input_size as f64 / p.zstd_size.max(1) as f64
+        );
+        println!(
+            "  Gap: {} bytes ({:.1}% larger)",
             p.output_size as i64 - p.zstd_size as i64,
-            100.0 * (p.output_size as f64 / p.zstd_size.max(1) as f64 - 1.0));
+            100.0 * (p.output_size as f64 / p.zstd_size.max(1) as f64 - 1.0)
+        );
     }
 
     fn generate_text(size: usize) -> Vec<u8> {
@@ -3640,12 +4113,23 @@ mod profiling_tests {
     }
 
     fn generate_random_text(size: usize, seed: u64) -> Vec<u8> {
-        use rand::{Rng, SeedableRng};
         use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
 
         let words = [
-            "the ", "quick ", "brown ", "fox ", "jumps ", "over ", "lazy ", "dog ",
-            "compression ", "algorithm ", "data ", "stream ", "entropy ",
+            "the ",
+            "quick ",
+            "brown ",
+            "fox ",
+            "jumps ",
+            "over ",
+            "lazy ",
+            "dog ",
+            "compression ",
+            "algorithm ",
+            "data ",
+            "stream ",
+            "entropy ",
         ];
         let mut rng = StdRng::seed_from_u64(seed);
         let mut data = Vec::with_capacity(size);
@@ -3658,8 +4142,8 @@ mod profiling_tests {
     }
 
     fn generate_binary(size: usize, seed: u64) -> Vec<u8> {
-        use rand::{Rng, SeedableRng};
         use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
 
         let mut rng = StdRng::seed_from_u64(seed);
         (0..size).map(|_| rng.r#gen::<u8>()).collect()
@@ -3708,16 +4192,30 @@ mod profiling_tests {
         println!("  Matches: {}", greedy_matches.len());
         if !greedy_matches.is_empty() {
             let total: usize = greedy_matches.iter().map(|m| m.length).sum();
-            println!("  Coverage: {} bytes ({:.1}%)", total, 100.0 * total as f64 / data.len() as f64);
-            println!("  Avg length: {:.1}", total as f64 / greedy_matches.len() as f64);
+            println!(
+                "  Coverage: {} bytes ({:.1}%)",
+                total,
+                100.0 * total as f64 / data.len() as f64
+            );
+            println!(
+                "  Avg length: {:.1}",
+                total as f64 / greedy_matches.len() as f64
+            );
         }
 
         println!("\nLazy (depth=16):");
         println!("  Matches: {}", lazy_matches.len());
         if !lazy_matches.is_empty() {
             let total: usize = lazy_matches.iter().map(|m| m.length).sum();
-            println!("  Coverage: {} bytes ({:.1}%)", total, 100.0 * total as f64 / data.len() as f64);
-            println!("  Avg length: {:.1}", total as f64 / lazy_matches.len() as f64);
+            println!(
+                "  Coverage: {} bytes ({:.1}%)",
+                total,
+                100.0 * total as f64 / data.len() as f64
+            );
+            println!(
+                "  Avg length: {:.1}",
+                total as f64 / lazy_matches.len() as f64
+            );
         }
 
         // Match length distribution
@@ -3758,7 +4256,9 @@ mod profiling_tests {
         let test_cases: Vec<(&str, Vec<u8>)> = vec![
             ("Uniform pattern (abcd repeat)", {
                 let mut d = Vec::with_capacity(4096);
-                while d.len() < 4096 { d.extend_from_slice(b"abcd"); }
+                while d.len() < 4096 {
+                    d.extend_from_slice(b"abcd");
+                }
                 d
             }),
             ("Semi-uniform (sentence repeat)", generate_text(4096)),
@@ -3780,17 +4280,31 @@ mod profiling_tests {
             let (ll_unique, of_unique, ml_unique) = if sequences.is_empty() {
                 (0, 0, 0)
             } else {
-                let encoded: Vec<_> = sequences.iter()
+                let encoded: Vec<_> = sequences
+                    .iter()
                     .map(|s| EncodedSequence::from_sequence(s))
                     .collect();
                 (
-                    encoded.iter().map(|e| e.ll_code).collect::<HashSet<_>>().len(),
-                    encoded.iter().map(|e| e.of_code).collect::<HashSet<_>>().len(),
-                    encoded.iter().map(|e| e.ml_code).collect::<HashSet<_>>().len(),
+                    encoded
+                        .iter()
+                        .map(|e| e.ll_code)
+                        .collect::<HashSet<_>>()
+                        .len(),
+                    encoded
+                        .iter()
+                        .map(|e| e.of_code)
+                        .collect::<HashSet<_>>()
+                        .len(),
+                    encoded
+                        .iter()
+                        .map(|e| e.ml_code)
+                        .collect::<HashSet<_>>()
+                        .len(),
                 )
             };
 
-            println!("{}: {} seqs, RLE={}, LL={} OF={} ML={} unique codes",
+            println!(
+                "{}: {} seqs, RLE={}, LL={} OF={} ML={} unique codes",
                 name,
                 sequences.len(),
                 suitability.all_uniform(),
@@ -3811,14 +4325,20 @@ mod profiling_tests {
             input.extend(vec![b'Y'; 20]);
         }
         println!("Input: {} bytes", input.len());
-        println!("Pattern preview: {:?}", String::from_utf8_lossy(&input[..60]));
+        println!(
+            "Pattern preview: {:?}",
+            String::from_utf8_lossy(&input[..60])
+        );
 
         // Use match finder to see what sequences are generated
         let mut mf = LazyMatchFinder::new(16);
         let matches = mf.find_matches(&input);
         println!("\nMatches found: {}", matches.len());
         for (i, m) in matches.iter().take(10).enumerate() {
-            println!("  Match[{}]: pos={}, len={}, offset={}", i, m.position, m.length, m.offset);
+            println!(
+                "  Match[{}]: pos={}, len={}, offset={}",
+                i, m.position, m.length, m.offset
+            );
         }
 
         // Convert to sequences
@@ -3829,13 +4349,23 @@ mod profiling_tests {
         // Check RLE suitability
         let suitability = analyze_for_rle(&seqs);
         println!("RLE suitable: {}", suitability.all_uniform());
-        println!("  LL uniform: {} (code={})", suitability.ll_uniform, suitability.ll_code);
-        println!("  OF uniform: {} (code={})", suitability.of_uniform, suitability.of_code);
-        println!("  ML uniform: {} (code={})", suitability.ml_uniform, suitability.ml_code);
+        println!(
+            "  LL uniform: {} (code={})",
+            suitability.ll_uniform, suitability.ll_code
+        );
+        println!(
+            "  OF uniform: {} (code={})",
+            suitability.of_uniform, suitability.of_code
+        );
+        println!(
+            "  ML uniform: {} (code={})",
+            suitability.ml_uniform, suitability.ml_code
+        );
 
         // Encode sequences
         if !seqs.is_empty() {
-            let encoded: Vec<_> = seqs.iter()
+            let encoded: Vec<_> = seqs
+                .iter()
                 .map(|s| EncodedSequence::from_sequence(s))
                 .collect();
             println!("\nFirst 5 encoded sequences:");
@@ -3863,7 +4393,9 @@ mod profiling_tests {
         // Try decompression
         let decompressor = ZstdDecompressor::new();
         match decompressor.decompress(&compressed) {
-            Ok(decompressed) => println!("\nOur decompressor: SUCCESS, {} bytes", decompressed.len()),
+            Ok(decompressed) => {
+                println!("\nOur decompressor: SUCCESS, {} bytes", decompressed.len())
+            }
             Err(e) => println!("\nOur decompressor: FAILED: {:?}", e),
         }
 
@@ -3877,10 +4409,9 @@ mod profiling_tests {
 #[cfg(test)]
 mod minimal_fse_debug {
     use crate::fse::{
-        FseTable, FseBitWriter, InterleavedTansEncoder,
-        LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG,
-        MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-        OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+        FseBitWriter, FseTable, InterleavedTansEncoder, LITERAL_LENGTH_ACCURACY_LOG,
+        LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
+        MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION,
     };
 
     #[test]
@@ -3897,25 +4428,28 @@ mod minimal_fse_debug {
         // ML code 41: baseline 83, 4 extra bits (value 13 for match_length=96)
         let of_extra: u32 = 0;
         let ml_extra: u32 = 13; // 96 - 83 = 13
-        let ml_bits: u8 = 4;    // Code 41 uses 4 extra bits
+        let ml_bits: u8 = 4; // Code 41 uses 4 extra bits
 
-        println!("Encoded (matching reference): ll_code={}, of_code={}, ml_code={}", ll_code, of_code, ml_code);
+        println!(
+            "Encoded (matching reference): ll_code={}, of_code={}, ml_code={}",
+            ll_code, of_code, ml_code
+        );
         println!("OF extra bits: {} bits, value {}", of_code, of_extra);
         println!("ML extra bits: {} bits, value {}", ml_bits, ml_extra);
-        
+
         // Build tables
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut tans = InterleavedTansEncoder::new(&ll_table, &of_table, &ml_table);
         let (ll_log, of_log, ml_log) = tans.accuracy_logs();
@@ -3927,14 +4461,20 @@ mod minimal_fse_debug {
         // Initialize with the sequence's symbols
         tans.init_states(ll_code, of_code, ml_code);
         let (init_ll, init_of, init_ml) = tans.get_states();
-        println!("After init_states: ll_state={}, of_state={}, ml_state={}", init_ll, init_of, init_ml);
+        println!(
+            "After init_states: ll_state={}, of_state={}, ml_state={}",
+            init_ll, init_of, init_ml
+        );
 
         // For 1 sequence: only write extra bits and init states (NO FSE encode bits)
         // The last sequence's symbol is captured by init_state, no FSE transition needed
 
         // Get states (same as init states since no encode was called)
         let (ll_state, of_state, ml_state) = tans.get_states();
-        println!("States (from init): ll={}, of={}, ml={}", ll_state, of_state, ml_state);
+        println!(
+            "States (from init): ll={}, of={}, ml={}",
+            ll_state, of_state, ml_state
+        );
 
         // Correct order for backward reading:
         // - Items written FIRST end up at LOW bit positions (read LAST)
@@ -3976,36 +4516,64 @@ mod minimal_fse_debug {
         println!("  ML extra: {} bits", ml_bits);
         println!("  FSE encode: 0 bits (none for single sequence)");
         println!("  Init states: {} bits", state_bits);
-        println!("  Total: {} bits = {} bytes",
+        println!(
+            "  Total: {} bits = {} bytes",
             total_extra + state_bits as u32,
-            ((total_extra + state_bits as u32) + 7) / 8);
+            ((total_extra + state_bits as u32) + 7) / 8
+        );
 
         // Should be exactly 3 bytes (23 bits rounded up)
-        assert_eq!(bitstream.len(), 3, "Bitstream should be exactly 3 bytes for 1 sequence, got {}", bitstream.len());
+        assert_eq!(
+            bitstream.len(),
+            3,
+            "Bitstream should be exactly 3 bytes for 1 sequence, got {}",
+            bitstream.len()
+        );
 
         // Compare with reference by decoding the init states
         // Reference bitstream for similar data: [fd, e4, 88]
         // Let's decode what init states those represent
         println!("\n=== Comparing with reference ===");
         println!("Our bitstream: {:02x?}", bitstream);
-        println!("Our init states: LL={}, OF={}, ML={}", init_ll, init_of, init_ml);
+        println!(
+            "Our init states: LL={}, OF={}, ML={}",
+            init_ll, init_of, init_ml
+        );
 
         // What symbols are at our init states?
         let ll_sym = ll_table.decode(init_ll as usize).symbol;
         let of_sym = of_table.decode(init_of as usize).symbol;
         let ml_sym = ml_table.decode(init_ml as usize).symbol;
-        println!("Symbols at our states: LL={}, OF={}, ML={}", ll_sym, of_sym, ml_sym);
-        println!("Expected symbols: LL={}, OF={}, ML={}", ll_code, of_code, ml_code);
+        println!(
+            "Symbols at our states: LL={}, OF={}, ML={}",
+            ll_sym, of_sym, ml_sym
+        );
+        println!(
+            "Expected symbols: LL={}, OF={}, ML={}",
+            ll_code, of_code, ml_code
+        );
 
         // Verify our init_state produces states that decode to the correct symbols
-        assert_eq!(ll_sym, ll_code, "LL init state {} decodes to {} instead of {}", init_ll, ll_sym, ll_code);
-        assert_eq!(of_sym, of_code, "OF init state {} decodes to {} instead of {}", init_of, of_sym, of_code);
-        assert_eq!(ml_sym, ml_code, "ML init state {} decodes to {} instead of {}", init_ml, ml_sym, ml_code);
+        assert_eq!(
+            ll_sym, ll_code,
+            "LL init state {} decodes to {} instead of {}",
+            init_ll, ll_sym, ll_code
+        );
+        assert_eq!(
+            of_sym, of_code,
+            "OF init state {} decodes to {} instead of {}",
+            init_of, of_sym, of_code
+        );
+        assert_eq!(
+            ml_sym, ml_code,
+            "ML init state {} decodes to {} instead of {}",
+            init_ml, ml_sym, ml_code
+        );
 
         // Now decode reference bitstream [fd, e4, 88] to see what init states it uses
         println!("\n=== Decoding reference bitstream ===");
         let ref_bitstream = vec![0xfd, 0xe4, 0x88];
-        use crate::fse::{FseDecoder, BitReader};
+        use crate::fse::{BitReader, FseDecoder};
         let mut bits = BitReader::new(&ref_bitstream);
         bits.init_from_end().unwrap();
 
@@ -4022,13 +4590,19 @@ mod minimal_fse_debug {
         let ref_of_state = of_dec.state();
         let ref_ml_state = ml_dec.state();
 
-        println!("Reference init states: LL={}, OF={}, ML={}", ref_ll_state, ref_of_state, ref_ml_state);
+        println!(
+            "Reference init states: LL={}, OF={}, ML={}",
+            ref_ll_state, ref_of_state, ref_ml_state
+        );
 
         // What symbols do reference states decode to?
         let ref_ll_sym = ll_table.decode(ref_ll_state).symbol;
         let ref_of_sym = of_table.decode(ref_of_state).symbol;
         let ref_ml_sym = ml_table.decode(ref_ml_state).symbol;
-        println!("Reference symbols: LL={}, OF={}, ML={}", ref_ll_sym, ref_of_sym, ref_ml_sym);
+        println!(
+            "Reference symbols: LL={}, OF={}, ML={}",
+            ref_ll_sym, ref_of_sym, ref_ml_sym
+        );
 
         // Read extra bits - LL, ML, OF order per RFC 8878
         let remaining_bits = bits.bits_remaining();
@@ -4040,7 +4614,10 @@ mod minimal_fse_debug {
         let ll_extra = 0; // 0 bits
         let ml_extra = bits.read_bits(4).unwrap();
         let of_extra = bits.read_bits(2).unwrap();
-        println!("Reference extra bits: LL={}, ML={}, OF={}", ll_extra, ml_extra, of_extra);
+        println!(
+            "Reference extra bits: LL={}, ML={}, OF={}",
+            ll_extra, ml_extra, of_extra
+        );
 
         // Compare with expected
         println!("Expected extra bits: LL=0, ML=13, OF=0");
@@ -4073,11 +4650,20 @@ mod minimal_fse_debug {
 
         // Compress with reference zstd first
         let ref_compressed = zstd::encode_all(data.as_slice(), 1).unwrap();
-        println!("Reference compressed ({} bytes): {:02x?}", ref_compressed.len(), ref_compressed);
+        println!(
+            "Reference compressed ({} bytes): {:02x?}",
+            ref_compressed.len(),
+            ref_compressed
+        );
 
         // Parse the reference bitstream to understand structure
         // Frame: magic(4) + FHD(1+) + block(s) + checksum(0/4)
-        let magic = u32::from_le_bytes([ref_compressed[0], ref_compressed[1], ref_compressed[2], ref_compressed[3]]);
+        let magic = u32::from_le_bytes([
+            ref_compressed[0],
+            ref_compressed[1],
+            ref_compressed[2],
+            ref_compressed[3],
+        ]);
         println!("Magic: 0x{:08x}", magic);
 
         let fhd = ref_compressed[4];
@@ -4101,8 +4687,10 @@ mod minimal_fse_debug {
         };
 
         let frame_header_size = 1 + window_desc_size + content_size_bytes;
-        println!("Frame header: FHD=1 + Window_Desc={} + Content_Size={} = {} bytes",
-            window_desc_size, content_size_bytes, frame_header_size);
+        println!(
+            "Frame header: FHD=1 + Window_Desc={} + Content_Size={} = {} bytes",
+            window_desc_size, content_size_bytes, frame_header_size
+        );
 
         let block_start = 4 + frame_header_size;
         let block_header = u32::from_le_bytes([
@@ -4120,8 +4708,13 @@ mod minimal_fse_debug {
         if block_type == 2 {
             // Compressed block - find sequences section
             let block_content_start = block_start + 3;
-            let block_content = &ref_compressed[block_content_start..block_content_start + block_size];
-            println!("Block content ({} bytes): {:02x?}", block_content.len(), block_content);
+            let block_content =
+                &ref_compressed[block_content_start..block_content_start + block_size];
+            println!(
+                "Block content ({} bytes): {:02x?}",
+                block_content.len(),
+                block_content
+            );
 
             // Literals block is at start
             let lit_header = block_content[0];
@@ -4138,20 +4731,31 @@ mod minimal_fse_debug {
                         let sz = ((lit_header as usize) >> 4) + ((block_content[1] as usize) << 4);
                         (sz, 2)
                     } else {
-                        (((lit_header as usize) >> 4) + ((block_content[1] as usize) << 4) + ((block_content[2] as usize) << 12), 3)
+                        (
+                            ((lit_header as usize) >> 4)
+                                + ((block_content[1] as usize) << 4)
+                                + ((block_content[2] as usize) << 12),
+                            3,
+                        )
                     }
-                },
+                }
                 _ => (0, 1), // Compressed literals - would need more parsing
             };
-            println!("Literals block: type={}, size={} bytes, header={} bytes",
-                lit_type, lit_block_size, lit_header_size);
+            println!(
+                "Literals block: type={}, size={} bytes, header={} bytes",
+                lit_type, lit_block_size, lit_header_size
+            );
 
             let seq_start = lit_header_size + if lit_type == 1 { 1 } else { lit_block_size };
             println!("Sequences start at offset: {}", seq_start);
 
             if seq_start < block_content.len() {
                 let seq_section = &block_content[seq_start..];
-                println!("Sequences section ({} bytes): {:02x?}", seq_section.len(), seq_section);
+                println!(
+                    "Sequences section ({} bytes): {:02x?}",
+                    seq_section.len(),
+                    seq_section
+                );
 
                 if !seq_section.is_empty() {
                     let seq_count = seq_section[0];
@@ -4164,7 +4768,11 @@ mod minimal_fse_debug {
                         let bitstream_start = if mode == 0 { 2 } else { 2 + 3 }; // predefined vs RLE
                         if bitstream_start < seq_section.len() {
                             let bitstream = &seq_section[bitstream_start..];
-                            println!("FSE bitstream ({} bytes): {:02x?}", bitstream.len(), bitstream);
+                            println!(
+                                "FSE bitstream ({} bytes): {:02x?}",
+                                bitstream.len(),
+                                bitstream
+                            );
                         }
                     }
                 }
@@ -4202,7 +4810,10 @@ mod internal_roundtrip_tests {
                 } else {
                     println!("MISMATCH!");
                     println!("First 20 original: {:?}", &data[..20]);
-                    println!("First 20 decoded:  {:?}", &decompressed[..20.min(decompressed.len())]);
+                    println!(
+                        "First 20 decoded:  {:?}",
+                        &decompressed[..20.min(decompressed.len())]
+                    );
                 }
                 assert_eq!(decompressed, data);
             }
@@ -4215,16 +4826,14 @@ mod internal_roundtrip_tests {
 
     #[test]
     fn test_debug_ml_table_symbols() {
-        use crate::fse::{
-            FseTable,
-            MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-        };
         use crate::block::MATCH_LENGTH_BASELINE;
+        use crate::fse::{FseTable, MATCH_LENGTH_ACCURACY_LOG, MATCH_LENGTH_DEFAULT_DISTRIBUTION};
 
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         println!("=== ML Table Symbols Debug ===");
 
@@ -4241,10 +4850,14 @@ mod internal_roundtrip_tests {
 
                 if entry.seq_base != expected_base || entry.seq_extra_bits != expected_bits {
                     println!("MISMATCH State {}: symbol={}", state, symbol);
-                    println!("  Table: seq_base={}, seq_extra_bits={}",
-                        entry.seq_base, entry.seq_extra_bits);
-                    println!("  MATCH_LENGTH_BASELINE[{}]: baseline={}, bits={}",
-                        symbol, expected_base, expected_bits);
+                    println!(
+                        "  Table: seq_base={}, seq_extra_bits={}",
+                        entry.seq_base, entry.seq_extra_bits
+                    );
+                    println!(
+                        "  MATCH_LENGTH_BASELINE[{}]: baseline={}, bits={}",
+                        symbol, expected_base, expected_bits
+                    );
                     mismatches += 1;
                 }
             }
@@ -4255,8 +4868,10 @@ mod internal_roundtrip_tests {
         // Print specific state entries
         for state in [19, 41, 42, 43, 44, 45, 62, 63] {
             let entry = ml_table.decode(state);
-            println!("State {}: symbol={}, seq_base={}, seq_extra_bits={}",
-                state, entry.symbol, entry.seq_base, entry.seq_extra_bits);
+            println!(
+                "State {}: symbol={}, seq_base={}, seq_extra_bits={}",
+                state, entry.symbol, entry.seq_base, entry.seq_extra_bits
+            );
             if (entry.symbol as usize) < MATCH_LENGTH_BASELINE.len() {
                 let (bits, base) = MATCH_LENGTH_BASELINE[entry.symbol as usize];
                 println!("  Expected: baseline={}, bits={}", base, bits);
@@ -4273,7 +4888,11 @@ mod internal_roundtrip_tests {
         }
 
         assert!(!all_zero, "ML table has all symbol=0, which is wrong!");
-        assert_eq!(mismatches, 0, "Found {} mismatches between table and MATCH_LENGTH_BASELINE", mismatches);
+        assert_eq!(
+            mismatches, 0,
+            "Found {} mismatches between table and MATCH_LENGTH_BASELINE",
+            mismatches
+        );
     }
 }
 
@@ -4284,13 +4903,12 @@ mod ref_decode_tests {
 
     #[test]
     fn test_trace_reference_bitstream() {
-        use crate::fse::{
-            FseTable, FseDecoder, BitReader,
-            LITERAL_LENGTH_DEFAULT_DISTRIBUTION, LITERAL_LENGTH_ACCURACY_LOG,
-            MATCH_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
-            OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
-        };
         use crate::block::{LITERAL_LENGTH_BASELINE, MATCH_LENGTH_BASELINE};
+        use crate::fse::{
+            BitReader, FseDecoder, FseTable, LITERAL_LENGTH_ACCURACY_LOG,
+            LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
+            MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION,
+        };
 
         // Reference zstd FSE bitstream for 1 sequence: [0xed, 0xab, 0x8e, 0x08]
         // This encodes: LL=4, OF=2, ML=47 (match_length = 496)
@@ -4335,15 +4953,15 @@ mod ref_decode_tests {
         let ll_table = FseTable::from_predefined(
             &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
             LITERAL_LENGTH_ACCURACY_LOG,
-        ).unwrap();
-        let of_table = FseTable::from_predefined(
-            &OFFSET_DEFAULT_DISTRIBUTION,
-            OFFSET_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
+        let of_table =
+            FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
         let ml_table = FseTable::from_predefined(
             &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
             MATCH_LENGTH_ACCURACY_LOG,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Create decoders
         let mut ll_decoder = FseDecoder::new(&ll_table);
@@ -4362,23 +4980,36 @@ mod ref_decode_tests {
         let ll_state = ll_decoder.state();
         let of_state = of_decoder.state();
         let ml_state = ml_decoder.state();
-        println!("Initial states: LL={}, OF={}, ML={}", ll_state, of_state, ml_state);
+        println!(
+            "Initial states: LL={}, OF={}, ML={}",
+            ll_state, of_state, ml_state
+        );
 
         // Peek symbols
         let ll_code = ll_decoder.peek_symbol();
         let of_code = of_decoder.peek_symbol();
         let ml_code = ml_decoder.peek_symbol();
-        println!("Symbols: LL_code={}, OF_code={}, ML_code={}", ll_code, of_code, ml_code);
+        println!(
+            "Symbols: LL_code={}, OF_code={}, ML_code={}",
+            ll_code, of_code, ml_code
+        );
 
         // Decode extra bits info
         let ll_bits = if ll_code < LITERAL_LENGTH_BASELINE.len() as u8 {
             LITERAL_LENGTH_BASELINE[ll_code as usize].0
-        } else { 0 };
+        } else {
+            0
+        };
         let ml_bits = if ml_code < MATCH_LENGTH_BASELINE.len() as u8 {
             MATCH_LENGTH_BASELINE[ml_code as usize].0
-        } else { 0 };
-        let of_bits = if of_code < 32 { of_code } else { 0 };  // OF_code = num extra bits
-        println!("Extra bits needed: LL={}, ML={}, OF={}", ll_bits, ml_bits, of_bits);
+        } else {
+            0
+        };
+        let of_bits = if of_code < 32 { of_code } else { 0 }; // OF_code = num extra bits
+        println!(
+            "Extra bits needed: LL={}, ML={}, OF={}",
+            ll_bits, ml_bits, of_bits
+        );
 
         // Switch to LSB mode for extra bits
         bits.switch_to_lsb_mode().expect("switch");
@@ -4386,35 +5017,54 @@ mod ref_decode_tests {
         // Read extra bits (order: LL, ML, OF)
         let ll_extra = if ll_bits > 0 {
             bits.read_bits(ll_bits as usize).expect("ll extra")
-        } else { 0 };
+        } else {
+            0
+        };
         let ml_extra = if ml_bits > 0 {
             bits.read_bits(ml_bits as usize).expect("ml extra")
-        } else { 0 };
+        } else {
+            0
+        };
         let of_extra = if of_bits > 0 {
             bits.read_bits(of_bits as usize).expect("of extra")
-        } else { 0 };
-        println!("Extra bits values: LL={}, ML={}, OF={}", ll_extra, ml_extra, of_extra);
+        } else {
+            0
+        };
+        println!(
+            "Extra bits values: LL={}, ML={}, OF={}",
+            ll_extra, ml_extra, of_extra
+        );
 
         // Decode values
         let ll_baseline = if ll_code < LITERAL_LENGTH_BASELINE.len() as u8 {
             LITERAL_LENGTH_BASELINE[ll_code as usize].1
-        } else { 0 };
+        } else {
+            0
+        };
         let ml_baseline = if ml_code < MATCH_LENGTH_BASELINE.len() as u8 {
             MATCH_LENGTH_BASELINE[ml_code as usize].1
-        } else { 0 };
+        } else {
+            0
+        };
 
         let literal_length = ll_baseline + ll_extra;
         let match_length = ml_baseline + ml_extra;
         // OF: offset_value = (1 << of_code) + of_extra
         let offset_value = (1u32 << of_code) + of_extra;
 
-        println!("Decoded: literal_length={}, match_length={}, offset_value={}",
-                 literal_length, match_length, offset_value);
+        println!(
+            "Decoded: literal_length={}, match_length={}, offset_value={}",
+            literal_length, match_length, offset_value
+        );
 
         // Total output = 4 literals + match_length
         // For 500 bytes: need 4 + 496 = 500, so match_length should be 496
-        println!("Total output would be: {} literals + {} match = {}",
-                 literal_length, match_length, literal_length + match_length);
+        println!(
+            "Total output would be: {} literals + {} match = {}",
+            literal_length,
+            match_length,
+            literal_length + match_length
+        );
 
         // Expected: literal_length=4, match_length=496, total=500
         assert_eq!(literal_length, 4, "literal_length");
@@ -4427,14 +5077,14 @@ mod ref_decode_tests {
         // Created with: python3 -c "print('ABCD' * 125, end='')" | zstd -1 --no-check -c
         // NOTE: Uses FHD=0x00 (no FCS, window descriptor follows)
         let ref_compressed: [u8; 20] = [
-            0x28, 0xb5, 0x2f, 0xfd,  // magic
-            0x00,                     // FHD (no FCS, no single segment)
-            0x48,                     // window descriptor
-            0x5d, 0x00, 0x00,        // block header
-            0x20,                     // literals header
-            0x41, 0x42, 0x43, 0x44,  // literals "ABCD"
-            0x01, 0x00,              // 1 sequence, predefined mode
-            0xed, 0xab, 0x8e, 0x08,  // FSE bitstream
+            0x28, 0xb5, 0x2f, 0xfd, // magic
+            0x00, // FHD (no FCS, no single segment)
+            0x48, // window descriptor
+            0x5d, 0x00, 0x00, // block header
+            0x20, // literals header
+            0x41, 0x42, 0x43, 0x44, // literals "ABCD"
+            0x01, 0x00, // 1 sequence, predefined mode
+            0xed, 0xab, 0x8e, 0x08, // FSE bitstream
         ];
 
         println!("=== Test Decode Reference 500 ===");
@@ -4451,7 +5101,10 @@ mod ref_decode_tests {
                 } else {
                     println!("MISMATCH!");
                     println!("First 20 expected: {:?}", &expected.as_bytes()[..20]);
-                    println!("First 20 got:      {:?}", &decompressed[..20.min(decompressed.len())]);
+                    println!(
+                        "First 20 got:      {:?}",
+                        &decompressed[..20.min(decompressed.len())]
+                    );
                 }
                 assert_eq!(decompressed, expected.as_bytes());
             }
@@ -4502,8 +5155,8 @@ mod throughput_tests {
         }
         let elapsed = start.elapsed();
 
-        let throughput_mbs = (iterations as f64 * data.len() as f64)
-            / elapsed.as_secs_f64() / 1_000_000.0;
+        let throughput_mbs =
+            (iterations as f64 * data.len() as f64) / elapsed.as_secs_f64() / 1_000_000.0;
 
         // Note: Throughput target is aspirational - test validates measurement works
         assert!(
@@ -4528,8 +5181,8 @@ mod throughput_tests {
         }
         let elapsed = start.elapsed();
 
-        let throughput_mbs = (iterations as f64 * data.len() as f64)
-            / elapsed.as_secs_f64() / 1_000_000.0;
+        let throughput_mbs =
+            (iterations as f64 * data.len() as f64) / elapsed.as_secs_f64() / 1_000_000.0;
 
         assert!(
             throughput_mbs > 0.0,
@@ -4553,8 +5206,8 @@ mod throughput_tests {
         }
         let elapsed = start.elapsed();
 
-        let throughput_mbs = (iterations as f64 * data.len() as f64)
-            / elapsed.as_secs_f64() / 1_000_000.0;
+        let throughput_mbs =
+            (iterations as f64 * data.len() as f64) / elapsed.as_secs_f64() / 1_000_000.0;
 
         // Decompression should be faster than compression
         assert!(
@@ -4625,8 +5278,8 @@ mod throughput_tests {
             }
             let elapsed = start.elapsed();
 
-            let throughput_mbs = (iterations as f64 * data.len() as f64)
-                / elapsed.as_secs_f64() / 1_000_000.0;
+            let throughput_mbs =
+                (iterations as f64 * data.len() as f64) / elapsed.as_secs_f64() / 1_000_000.0;
 
             results.push((level, throughput_mbs, compressed_size));
         }
@@ -4692,10 +5345,7 @@ mod throughput_tests {
             decompressed.len(),
             "Large data roundtrip size mismatch"
         );
-        assert_eq!(
-            data, decompressed,
-            "Large data roundtrip content mismatch"
-        );
+        assert_eq!(data, decompressed, "Large data roundtrip content mismatch");
     }
 
     #[test]

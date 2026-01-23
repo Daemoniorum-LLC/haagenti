@@ -1,7 +1,6 @@
 //! Communication protocol for distributed inference
 
 use crate::{DistributedError, Result};
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -92,19 +91,22 @@ impl Message {
 
     /// Create error message
     pub fn error(source: impl Into<String>, destination: impl Into<String>, error: &str) -> Self {
-        Self::new(source, destination, MessageType::Error, error.as_bytes().to_vec())
+        Self::new(
+            source,
+            destination,
+            MessageType::Error,
+            error.as_bytes().to_vec(),
+        )
     }
 
     /// Serialize message
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
-            .map_err(|e| DistributedError::SerializationError(e.to_string()))
+        bincode::serialize(self).map_err(|e| DistributedError::SerializationError(e.to_string()))
     }
 
     /// Deserialize message
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        bincode::deserialize(data)
-            .map_err(|e| DistributedError::SerializationError(e.to_string()))
+        bincode::deserialize(data).map_err(|e| DistributedError::SerializationError(e.to_string()))
     }
 
     /// Get payload as string
@@ -118,7 +120,8 @@ impl Message {
 pub struct Protocol {
     /// Node ID
     node_id: String,
-    /// Message handlers
+    /// Message handlers (for future request-response pattern)
+    #[allow(dead_code)]
     pending_responses: std::collections::HashMap<u64, tokio::sync::oneshot::Sender<Message>>,
     /// Request timeout
     timeout: Duration,
@@ -182,7 +185,7 @@ impl AllReduce {
     /// Ring all-reduce algorithm
     pub fn ring_allreduce(&self, local_data: &mut [f32]) -> Result<()> {
         let n = local_data.len();
-        let chunk_size = (n + self.world_size - 1) / self.world_size;
+        let chunk_size = n.div_ceil(self.world_size);
 
         // Phase 1: Reduce-scatter
         for step in 0..self.world_size - 1 {
@@ -194,16 +197,18 @@ impl AllReduce {
 
             // In real implementation, send/receive over network
             // For now, simulate the reduction
-            let _send_data = &local_data[send_start..send_start.min(n).max(send_start + chunk_size).min(n)];
-            let recv_slice = &mut local_data[recv_start..recv_start.min(n).max(recv_start + chunk_size).min(n)];
+            let _send_data =
+                &local_data[send_start..send_start.min(n).max(send_start + chunk_size).min(n)];
+            let recv_slice =
+                &mut local_data[recv_start..recv_start.min(n).max(recv_start + chunk_size).min(n)];
 
             // Apply reduction (simulated - would receive from neighbor)
             for val in recv_slice.iter_mut() {
                 match self.op {
                     ReduceOp::Sum => *val *= 2.0, // Simulated sum from 2 nodes
-                    ReduceOp::Avg => {}, // Average divides after all sums
-                    ReduceOp::Max => {},
-                    ReduceOp::Min => {},
+                    ReduceOp::Avg => {}           // Average divides after all sums
+                    ReduceOp::Max => {}
+                    ReduceOp::Min => {}
                 }
             }
         }
@@ -224,7 +229,7 @@ impl AllReduce {
     }
 
     /// Bandwidth-optimal recursive halving-doubling
-    pub fn recursive_halving_doubling(&self, local_data: &mut [f32]) -> Result<()> {
+    pub fn recursive_halving_doubling(&self, _local_data: &mut [f32]) -> Result<()> {
         // More efficient for small messages or non-power-of-2 world sizes
         let mut step = 1;
 
@@ -257,7 +262,8 @@ impl AllReduce {
 pub struct Broadcast {
     /// Root rank
     root: usize,
-    /// World size
+    /// World size (for tree broadcast topology)
+    #[allow(dead_code)]
     world_size: usize,
     /// Current rank
     rank: usize,
@@ -317,9 +323,8 @@ impl Scatter {
     /// Scatter data from root to all ranks
     pub fn scatter<T: Clone>(&self, send_data: Option<&[T]>, recv_buf: &mut [T]) -> Result<()> {
         if self.rank == self.root {
-            let data = send_data.ok_or_else(|| {
-                DistributedError::CommError("Root must provide send data".into())
-            })?;
+            let data = send_data
+                .ok_or_else(|| DistributedError::CommError("Root must provide send data".into()))?;
 
             // Calculate chunk for each rank
             let chunk_size = data.len() / self.world_size;
@@ -342,7 +347,8 @@ impl Scatter {
 pub struct Gather {
     /// Root rank
     root: usize,
-    /// World size
+    /// World size (for gather topology)
+    #[allow(dead_code)]
     world_size: usize,
     /// Current rank
     rank: usize,
@@ -368,8 +374,7 @@ impl Gather {
             let chunk_size = send_data.len();
 
             // Root copies its own data
-            buf[self.rank * chunk_size..(self.rank + 1) * chunk_size]
-                .clone_from_slice(send_data);
+            buf[self.rank * chunk_size..(self.rank + 1) * chunk_size].clone_from_slice(send_data);
 
             // Receive from other ranks (simulated)
         } else {

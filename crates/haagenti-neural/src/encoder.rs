@@ -87,14 +87,15 @@ impl NeuralEncoder {
         shape: &[usize],
         layer_type: LayerType,
     ) -> Result<EncodedTensor> {
-        let codebook = self.codebooks.get(layer_type).ok_or_else(|| {
-            NeuralError::CodebookNotFound(format!("{:?}", layer_type))
-        })?;
+        let codebook = self
+            .codebooks
+            .get(layer_type)
+            .ok_or_else(|| NeuralError::CodebookNotFound(format!("{:?}", layer_type)))?;
 
         let dim = codebook.config.centroid_dim;
         let num_vectors = data.len() / dim;
 
-        if data.len() % dim != 0 {
+        if !data.len().is_multiple_of(dim) {
             return Err(NeuralError::DimensionMismatch {
                 expected: (num_vectors + 1) * dim,
                 actual: data.len(),
@@ -158,10 +159,7 @@ impl NeuralEncoder {
             .collect();
 
         // Find scale to fit in i8 range
-        let max_abs = residuals
-            .iter()
-            .map(|r| r.abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = residuals.iter().map(|r| r.abs()).fold(0.0f32, f32::max);
 
         if max_abs < 1e-6 {
             return (None, 0.0);
@@ -268,8 +266,8 @@ mod tests {
         let codebooks = LayerCodebook::with_defaults("test");
         let encoder = NeuralEncoder::new(EncoderConfig::default(), codebooks);
 
-        // Low MSE should give high PSNR
-        assert!(encoder.compute_psnr(0.001) > 30.0);
+        // Low MSE should give high PSNR (MSE=0.001 -> PSNR=30.0)
+        assert!(encoder.compute_psnr(0.001) >= 30.0);
         // High MSE should give low PSNR
         assert!(encoder.compute_psnr(0.1) < 20.0);
     }

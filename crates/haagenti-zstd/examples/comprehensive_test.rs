@@ -10,9 +10,15 @@ fn main() {
         ("empty", vec![]),
         ("single byte", vec![b'A']),
         ("small repeating", b"ABCDABCDABCDABCD".to_vec()),
-        ("lorem ipsum", b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".to_vec()),
+        (
+            "lorem ipsum",
+            b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".to_vec(),
+        ),
         ("binary zeros", vec![0u8; 1000]),
-        ("random-ish", (0..256).cycle().take(1000).map(|x| x as u8).collect()),
+        (
+            "random-ish",
+            (0..256).cycle().take(1000).map(|x| x as u8).collect(),
+        ),
         ("long text pattern", {
             let input = b"The quick brown fox jumps over the lazy dog. ";
             let mut v = Vec::new();
@@ -98,5 +104,12 @@ fn main() {
         }
     }
 
-    println!("\n{}", if all_passed { "ALL TESTS PASSED!" } else { "SOME TESTS FAILED!" });
+    println!(
+        "\n{}",
+        if all_passed {
+            "ALL TESTS PASSED!"
+        } else {
+            "SOME TESTS FAILED!"
+        }
+    );
 }

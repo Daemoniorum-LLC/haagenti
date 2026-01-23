@@ -14,12 +14,14 @@ mod quantization;
 mod runtime;
 mod thermal;
 
-pub use coreml::{CoreMLConfig, CoreMLModel, CoreMLRuntime};
+pub use coreml::{CoreMLConfig, CoreMLMetadata, CoreMLModel, CoreMLRuntime, TensorDescription};
 pub use error::{MobileError, Result};
-pub use nnapi::{NnapiConfig, NnapiModel, NnapiRuntime};
-pub use quantization::{Int4Quantizer, QuantizationConfig, QuantizedTensor};
-pub use runtime::{MobileRuntime, RuntimeConfig, RuntimeStats};
-pub use thermal::{ThermalManager, ThermalPolicy, ThermalState};
+pub use nnapi::{operations, NnapiConfig, NnapiModel, NnapiRuntime, OperationSupport};
+pub use quantization::{Int4Quantizer, QuantizationConfig, QuantizationMetrics, QuantizedTensor};
+pub use runtime::{
+    BatchContext, CompletionHandler, ExecutionContext, MobileRuntime, RuntimeConfig, RuntimeStats,
+};
+pub use thermal::{ThermalEvent, ThermalHistory, ThermalManager, ThermalPolicy, ThermalState};
 
 /// Platform detection
 pub mod platform {

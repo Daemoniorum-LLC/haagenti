@@ -6,7 +6,11 @@ use haagenti_zstd::ZstdCompressor;
 fn main() {
     // Simple repeating pattern
     let input = b"ABCDABCDABCDABCD";
-    println!("Input: {:?} ({} bytes)", String::from_utf8_lossy(input), input.len());
+    println!(
+        "Input: {:?} ({} bytes)",
+        String::from_utf8_lossy(input),
+        input.len()
+    );
 
     let compressor = ZstdCompressor::new();
     let compressed = compressor.compress(input).unwrap();
@@ -23,13 +27,19 @@ fn main() {
 
     // Parse frame
     println!("\n=== Frame Parsing ===");
-    println!("Magic: {:02x} {:02x} {:02x} {:02x}", compressed[0], compressed[1], compressed[2], compressed[3]);
+    println!(
+        "Magic: {:02x} {:02x} {:02x} {:02x}",
+        compressed[0], compressed[1], compressed[2], compressed[3]
+    );
 
     let fhd = compressed[4];
     println!("FHD: 0x{:02x}", fhd);
     let single_segment = (fhd >> 5) & 1 != 0;
     let fcs_flag = (fhd >> 6) & 3;
-    println!("  single_segment: {}, fcs_flag: {}", single_segment, fcs_flag);
+    println!(
+        "  single_segment: {}, fcs_flag: {}",
+        single_segment, fcs_flag
+    );
 
     let mut pos = 5;
     if !single_segment {
@@ -38,7 +48,13 @@ fn main() {
     }
 
     let fcs_size = match fcs_flag {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -55,8 +71,17 @@ fn main() {
     let block_type = (bh >> 1) & 3;
     let block_size = bh >> 3;
     pos += 3;
-    println!("\nBlock header at pos {}: {:02x} {:02x} {:02x}", pos - 3, compressed[pos - 3], compressed[pos - 2], compressed[pos - 1]);
-    println!("  is_last: {}, block_type: {}, block_size: {}", is_last, block_type, block_size);
+    println!(
+        "\nBlock header at pos {}: {:02x} {:02x} {:02x}",
+        pos - 3,
+        compressed[pos - 3],
+        compressed[pos - 2],
+        compressed[pos - 1]
+    );
+    println!(
+        "  is_last: {}, block_type: {}, block_size: {}",
+        is_last, block_type, block_size
+    );
 
     // Block content
     if block_type == 2 {
@@ -84,7 +109,9 @@ fn main() {
             3 => {
                 let lit_byte1 = compressed[pos + 1];
                 let lit_byte2 = compressed[pos + 2];
-                let size = ((lit_byte0 >> 4) as usize) | ((lit_byte1 as usize) << 4) | ((lit_byte2 as usize) << 12);
+                let size = ((lit_byte0 >> 4) as usize)
+                    | ((lit_byte1 as usize) << 4)
+                    | ((lit_byte2 as usize) << 12);
                 println!("  byte1: 0x{:02x}, byte2: 0x{:02x}", lit_byte1, lit_byte2);
                 println!("  3-byte header, size: {}", size);
             }

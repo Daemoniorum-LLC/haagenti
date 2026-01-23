@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use haagenti::compressive::CompressiveSpectralEncoder;
-use haagenti::{ZstdCodec, Codec, Compressor};
+use haagenti::{Codec, Compressor, ZstdCodec};
 
 /// Block size for INT4 quantization.
 const Q4_BLOCK_SIZE: usize = 32;
@@ -61,8 +61,8 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
     let header_json = std::str::from_utf8(&data[8..8 + header_len])
         .map_err(|e| format!("Invalid UTF-8: {}", e))?;
 
-    let header: serde_json::Value = serde_json::from_str(header_json)
-        .map_err(|e| format!("Invalid JSON: {}", e))?;
+    let header: serde_json::Value =
+        serde_json::from_str(header_json).map_err(|e| format!("Invalid JSON: {}", e))?;
 
     let mut tensors = HashMap::new();
 
@@ -73,19 +73,34 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
             }
 
             if let serde_json::Value::Object(tensor_obj) = value {
-                let dtype = tensor_obj.get("dtype").and_then(|v| v.as_str())
-                    .unwrap_or("F32").to_string();
+                let dtype = tensor_obj
+                    .get("dtype")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("F32")
+                    .to_string();
 
-                let shape: Vec<usize> = tensor_obj.get("shape")
+                let shape: Vec<usize> = tensor_obj
+                    .get("shape")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_u64().map(|n| n as usize))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let offsets = tensor_obj.get("data_offsets").and_then(|v| v.as_array());
                 if let Some(offs) = offsets {
                     let start = offs[0].as_u64().unwrap_or(0) as usize;
                     let end = offs[1].as_u64().unwrap_or(0) as usize;
-                    tensors.insert(name, TensorInfo { dtype, shape, data_offsets: (start, end) });
+                    tensors.insert(
+                        name,
+                        TensorInfo {
+                            dtype,
+                            shape,
+                            data_offsets: (start, end),
+                        },
+                    );
                 }
             }
         }
@@ -97,16 +112,19 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
 /// Convert bytes to f32 based on dtype.
 fn bytes_to_f32(data: &[u8], dtype: &str) -> Vec<f32> {
     match dtype {
-        "F32" => data.chunks_exact(4)
+        "F32" => data
+            .chunks_exact(4)
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect(),
-        "F16" => data.chunks_exact(2)
+        "F16" => data
+            .chunks_exact(2)
             .map(|c| {
                 let bits = u16::from_le_bytes([c[0], c[1]]);
                 half::f16::from_bits(bits).to_f32()
             })
             .collect(),
-        "BF16" => data.chunks_exact(2)
+        "BF16" => data
+            .chunks_exact(2)
             .map(|c| {
                 let bits = u16::from_le_bytes([c[0], c[1]]);
                 f32::from_bits((bits as u32) << 16)
@@ -214,8 +232,10 @@ fn main() {
 
     println!("\n=== Full Compression Pipeline ===\n");
     println!("Input: {}", input_path.display());
-    println!("Pipeline: FP16/BF16 → Spectral@{}% (~5x) → INT4 (~4x) → Zstd (~2x)",
-             (retention_ratio * 100.0) as u32);
+    println!(
+        "Pipeline: FP16/BF16 → Spectral@{}% (~5x) → INT4 (~4x) → Zstd (~2x)",
+        (retention_ratio * 100.0) as u32
+    );
     println!("Target: ~40x total compression\n");
 
     let start = Instant::now();
@@ -277,20 +297,26 @@ fn main() {
 
         // Stage 1: Compressive spectral encoding on ORIGINAL float values
         // This is where the 5x compression happens (at 10% retention)
-        let (spectral_data, spectral_bytes): (Vec<f32>, usize) = if let Ok(fragments) = spectral_encoder.encode_2d(&values, width, height) {
-            let bytes: usize = fragments.iter().map(|f| f.data.len()).sum();
-            total_spectral_bytes += bytes;
-            // Collect all fragment data as f32 for next stage
-            let data: Vec<f32> = fragments.iter()
-                .flat_map(|f| f.data.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])))
-                .collect();
-            (data, bytes)
-        } else {
-            // Fallback: use original values
-            let bytes = values.len() * 4;
-            total_spectral_bytes += bytes;
-            (values.clone(), bytes)
-        };
+        let (spectral_data, spectral_bytes): (Vec<f32>, usize) =
+            if let Ok(fragments) = spectral_encoder.encode_2d(&values, width, height) {
+                let bytes: usize = fragments.iter().map(|f| f.data.len()).sum();
+                total_spectral_bytes += bytes;
+                // Collect all fragment data as f32 for next stage
+                let data: Vec<f32> = fragments
+                    .iter()
+                    .flat_map(|f| {
+                        f.data
+                            .chunks_exact(4)
+                            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    })
+                    .collect();
+                (data, bytes)
+            } else {
+                // Fallback: use original values
+                let bytes = values.len() * 4;
+                total_spectral_bytes += bytes;
+                (values.clone(), bytes)
+            };
 
         // Stage 2: INT4 quantization on spectral coefficients
         let quantized = quantize_int4(&spectral_data);
@@ -323,39 +349,58 @@ fn main() {
     }
 
     let elapsed = start.elapsed();
-    println!("\n\nProcessed {} tensors in {:.2}s\n", tensor_count, elapsed.as_secs_f64());
+    println!(
+        "\n\nProcessed {} tensors in {:.2}s\n",
+        tensor_count,
+        elapsed.as_secs_f64()
+    );
 
     // Print results
     println!("=== Compression Results ===\n");
     println!("{:<20} {:>12} {:>10}", "Stage", "Size", "Ratio");
     println!("{}", "-".repeat(45));
 
-    println!("{:<20} {:>12} {:>10}",
-             "Original (FP16/BF16)",
-             format!("{:.2} MB", total_original_bytes as f64 / 1024.0 / 1024.0),
-             "1.00x");
+    println!(
+        "{:<20} {:>12} {:>10}",
+        "Original (FP16/BF16)",
+        format!("{:.2} MB", total_original_bytes as f64 / 1024.0 / 1024.0),
+        "1.00x"
+    );
 
     let spectral_ratio = total_original_bytes as f64 / total_spectral_bytes as f64;
-    println!("{:<20} {:>12} {:>10}",
-             "After Spectral@10%",
-             format!("{:.2} MB", total_spectral_bytes as f64 / 1024.0 / 1024.0),
-             format!("{:.1}x", spectral_ratio));
+    println!(
+        "{:<20} {:>12} {:>10}",
+        "After Spectral@10%",
+        format!("{:.2} MB", total_spectral_bytes as f64 / 1024.0 / 1024.0),
+        format!("{:.1}x", spectral_ratio)
+    );
 
     let q4_ratio = total_original_bytes as f64 / total_quantized_bytes as f64;
-    println!("{:<20} {:>12} {:>10}",
-             "After INT4",
-             format!("{:.2} MB", total_quantized_bytes as f64 / 1024.0 / 1024.0),
-             format!("{:.1}x", q4_ratio));
+    println!(
+        "{:<20} {:>12} {:>10}",
+        "After INT4",
+        format!("{:.2} MB", total_quantized_bytes as f64 / 1024.0 / 1024.0),
+        format!("{:.1}x", q4_ratio)
+    );
 
     let final_ratio = total_original_bytes as f64 / total_final_bytes as f64;
-    println!("{:<20} {:>12} {:>10}",
-             "After Zstd",
-             format!("{:.2} MB", total_final_bytes as f64 / 1024.0 / 1024.0),
-             format!("{:.1}x", final_ratio));
+    println!(
+        "{:<20} {:>12} {:>10}",
+        "After Zstd",
+        format!("{:.2} MB", total_final_bytes as f64 / 1024.0 / 1024.0),
+        format!("{:.1}x", final_ratio)
+    );
 
     println!("\n=== Summary ===\n");
-    println!("Input:  {:.2} MB ({} tensors)", total_original_bytes as f64 / 1024.0 / 1024.0, tensor_count);
-    println!("Output: {:.2} MB", total_final_bytes as f64 / 1024.0 / 1024.0);
+    println!(
+        "Input:  {:.2} MB ({} tensors)",
+        total_original_bytes as f64 / 1024.0 / 1024.0,
+        tensor_count
+    );
+    println!(
+        "Output: {:.2} MB",
+        total_final_bytes as f64 / 1024.0 / 1024.0
+    );
     println!("Total compression: {:.1}x", final_ratio);
     println!();
 
@@ -365,5 +410,8 @@ fn main() {
     println!("Projected for 405B model:");
     println!("  Input:  {:.0} GB (FP16)", input_405b_gb);
     println!("  Output: {:.1} GB", projected_gb);
-    println!("  Target: 19 GB {}", if projected_gb <= 25.0 { "✓" } else { "✗" });
+    println!(
+        "  Target: 19 GB {}",
+        if projected_gb <= 25.0 { "✓" } else { "✗" }
+    );
 }

@@ -1,9 +1,9 @@
 //! Compare working vs failing case
 
 use haagenti_core::{CompressionLevel, Compressor};
-use haagenti_zstd::ZstdCompressor;
 use haagenti_zstd::compress::block::matches_to_sequences;
 use haagenti_zstd::compress::MatchFinder;
+use haagenti_zstd::ZstdCompressor;
 use std::io::Cursor;
 
 fn test_pattern(name: &str, data: &[u8]) {
@@ -16,7 +16,11 @@ fn test_pattern(name: &str, data: &[u8]) {
 
     // Convert to sequences
     let (literals, sequences) = matches_to_sequences(data, &matches);
-    println!("Literals: {}, Sequences: {}", literals.len(), sequences.len());
+    println!(
+        "Literals: {}, Sequences: {}",
+        literals.len(),
+        sequences.len()
+    );
 
     // Compress
     let compressor = ZstdCompressor::with_level(CompressionLevel::Fast);
@@ -24,7 +28,9 @@ fn test_pattern(name: &str, data: &[u8]) {
 
     // Decode
     match zstd::decode_all(Cursor::new(&compressed)) {
-        Ok(dec) if dec == data => println!("Result: OK ({} -> {} bytes)", data.len(), compressed.len()),
+        Ok(dec) if dec == data => {
+            println!("Result: OK ({} -> {} bytes)", data.len(), compressed.len())
+        }
         Ok(_) => println!("Result: MISMATCH"),
         Err(e) => println!("Result: FAILED - {:?}", e),
     }
@@ -36,7 +42,8 @@ fn main() {
     test_pattern("Simple repeat (WORKS)", working);
 
     // Failing: 2 log lines
-    let failing = b"[2024-01-01 10:00:00] INFO Request #0\n[2024-01-02 10:01:00] INFO Request #1000\n";
+    let failing =
+        b"[2024-01-01 10:00:00] INFO Request #0\n[2024-01-02 10:01:00] INFO Request #1000\n";
     test_pattern("Log lines (FAILS)", failing);
 
     // What's different about log lines?

@@ -1,8 +1,8 @@
 //! Genetic algorithm for architecture and hyperparameter search
 
 use crate::{OptError, Result};
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -69,7 +69,9 @@ pub enum DimensionType {
 impl SearchSpace {
     /// Create new search space
     pub fn new() -> Self {
-        Self { dimensions: Vec::new() }
+        Self {
+            dimensions: Vec::new(),
+        }
     }
 
     /// Add discrete dimension
@@ -270,7 +272,8 @@ impl GeneticSearch {
     pub fn initialize(&mut self) {
         self.population.clear();
         for _ in 0..self.config.population_size {
-            self.population.push(Individual::random(&self.space, &mut self.rng));
+            self.population
+                .push(Individual::random(&self.space, &mut self.rng));
         }
     }
 
@@ -288,7 +291,9 @@ impl GeneticSearch {
 
         // Sort by fitness (descending)
         self.population.sort_by(|a, b| {
-            b.fitness.partial_cmp(&a.fitness).unwrap_or(std::cmp::Ordering::Equal)
+            b.fitness
+                .partial_cmp(&a.fitness)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Update best
@@ -363,9 +368,9 @@ impl GeneticSearch {
             self.evolve(&fitness_fn)?;
         }
 
-        self.best.clone().ok_or_else(|| {
-            OptError::OptimizationFailed("No best individual found".into())
-        })
+        self.best
+            .clone()
+            .ok_or_else(|| OptError::OptimizationFailed("No best individual found".into()))
     }
 
     /// Get best individual

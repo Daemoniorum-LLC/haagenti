@@ -45,7 +45,13 @@ fn parse_frame(data: &[u8], label: &str) {
 
     // Frame content size
     let fcs_size = match fcs_flag {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -82,8 +88,10 @@ fn parse_frame(data: &[u8], label: &str) {
             _ => "Unknown",
         };
 
-        println!("\n  Block {}: type={} ({}), size={} bytes, last={}",
-                 block_num, block_type, type_name, block_size, is_last);
+        println!(
+            "\n  Block {}: type={} ({}), size={} bytes, last={}",
+            block_num, block_type, type_name, block_size, is_last
+        );
 
         if block_type == 2 && pos + block_size <= data.len() {
             // Analyze compressed block structure
@@ -101,8 +109,13 @@ fn parse_frame(data: &[u8], label: &str) {
 
     // Check for checksum
     if content_checksum && pos + 4 <= data.len() {
-        println!("\n  Checksum: {:02x}{:02x}{:02x}{:02x}",
-                 data[pos], data[pos + 1], data[pos + 2], data[pos + 3]);
+        println!(
+            "\n  Checksum: {:02x}{:02x}{:02x}{:02x}",
+            data[pos],
+            data[pos + 1],
+            data[pos + 2],
+            data[pos + 3]
+        );
     }
 }
 
@@ -124,8 +137,10 @@ fn analyze_compressed_block(block: &[u8]) {
         _ => "Unknown",
     };
 
-    println!("    Literals: type={} ({}), size_format={}",
-             lit_block_type, type_name, size_format);
+    println!(
+        "    Literals: type={} ({}), size_format={}",
+        lit_block_type, type_name, size_format
+    );
 
     // Parse literal sizes based on format
     let (regen_size, compressed_size, header_size) = match lit_block_type {
@@ -218,7 +233,12 @@ fn analyze_compressed_block(block: &[u8]) {
     println!("      Header size: {} bytes", header_size);
 
     // Estimate sequences section
-    let lit_section_size = header_size + if lit_block_type == 1 { 1 } else { compressed_size };
+    let lit_section_size = header_size
+        + if lit_block_type == 1 {
+            1
+        } else {
+            compressed_size
+        };
     if lit_section_size < block.len() {
         let seq_section = &block[lit_section_size..];
         println!("    Sequences section: {} bytes", seq_section.len());
@@ -263,7 +283,11 @@ fn main() {
         parse_frame(&our_compressed, "OURS");
 
         let gap = (our_compressed.len() as f64 / ref_compressed.len() as f64 - 1.0) * 100.0;
-        println!("\n  Size comparison: ref={}, ours={}, gap={:+.1}%",
-                 ref_compressed.len(), our_compressed.len(), gap);
+        println!(
+            "\n  Size comparison: ref={}, ours={}, gap={:+.1}%",
+            ref_compressed.len(),
+            our_compressed.len(),
+            gap
+        );
     }
 }

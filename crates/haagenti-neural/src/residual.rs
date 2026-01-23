@@ -82,8 +82,8 @@ impl ResidualRefiner {
             // Update with momentum
             for (i, (r, g)) in residuals.iter_mut().zip(gradients.iter()).enumerate() {
                 if self.config.use_momentum {
-                    momentum_buffer[i] = self.config.momentum * momentum_buffer[i]
-                        - self.config.learning_rate * g;
+                    momentum_buffer[i] =
+                        self.config.momentum * momentum_buffer[i] - self.config.learning_rate * g;
                     *r += momentum_buffer[i];
                 } else {
                     *r -= self.config.learning_rate * g;
@@ -135,10 +135,7 @@ impl ResidualRefiner {
 
     /// Find optimal scale to minimize quantization error
     fn find_optimal_scale(&self, residuals: &[f32]) -> f32 {
-        let max_abs = residuals
-            .iter()
-            .map(|r| r.abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = residuals.iter().map(|r| r.abs()).fold(0.0f32, f32::max);
 
         if max_abs < 1e-8 {
             return 1.0;
@@ -181,12 +178,19 @@ impl ResidualRefiner {
                 .collect();
 
             // Update reconstruction
-            for (recon, &qr) in current_reconstruction.iter_mut().zip(quantized_residual.iter()) {
+            for (recon, &qr) in current_reconstruction
+                .iter_mut()
+                .zip(quantized_residual.iter())
+            {
                 *recon += qr as f32 * scale;
             }
 
             // Compute MSE at this level
-            let mse = self.compute_mse(original, &vec![0.0; original.len()], &current_reconstruction);
+            let mse = self.compute_mse(
+                original,
+                &vec![0.0; original.len()],
+                &current_reconstruction,
+            );
 
             residual_levels.push(ResidualLevel {
                 level,
@@ -203,7 +207,11 @@ impl ResidualRefiner {
 
         Ok(MultiLevelResidual {
             levels: residual_levels,
-            final_mse: self.compute_mse(original, &vec![0.0; original.len()], &current_reconstruction),
+            final_mse: self.compute_mse(
+                original,
+                &vec![0.0; original.len()],
+                &current_reconstruction,
+            ),
         })
     }
 }
@@ -274,7 +282,9 @@ mod tests {
         let original: Vec<f32> = (0..100).map(|i| i as f32 * 0.1).collect();
         let quantized: Vec<f32> = original.iter().map(|x| (x * 2.0).round() / 2.0).collect();
 
-        let multi = refiner.multi_level_refine(&original, &quantized, 3).unwrap();
+        let multi = refiner
+            .multi_level_refine(&original, &quantized, 3)
+            .unwrap();
 
         assert!(!multi.levels.is_empty());
         // Each level should reduce MSE

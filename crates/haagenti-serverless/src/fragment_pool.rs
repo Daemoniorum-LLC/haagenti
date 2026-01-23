@@ -240,8 +240,7 @@ impl FragmentPool {
     /// Remove fragment
     pub fn remove(&self, key: &str) -> Option<PooledFragment> {
         if let Some((_, fragment)) = self.fragments.remove(key) {
-            self.total_size
-                .fetch_sub(fragment.size, Ordering::SeqCst);
+            self.total_size.fetch_sub(fragment.size, Ordering::SeqCst);
             self.hash_to_key.remove(&fragment.hash);
             Some(fragment)
         } else {
@@ -358,8 +357,9 @@ pub struct FragmentPrewarmer {
     prewarm_list: Vec<PrewarmEntry>,
 }
 
-/// Pre-warm entry
+/// Pre-warm entry (internal to FragmentPrewarmer)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct PrewarmEntry {
     key: String,
     priority: u32,
@@ -386,7 +386,8 @@ impl FragmentPrewarmer {
 
     /// Sort by priority
     pub fn sort(&mut self) {
-        self.prewarm_list.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.prewarm_list
+            .sort_by(|a, b| b.priority.cmp(&a.priority));
     }
 
     /// Pre-warm fragments

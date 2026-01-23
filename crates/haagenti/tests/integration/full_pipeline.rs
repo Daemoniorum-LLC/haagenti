@@ -55,7 +55,10 @@ fn test_spectral_roundtrip_64x64() {
     let encoder = CompressiveSpectralEncoder::new(DEFAULT_FRAGMENTS, retention);
     let fragments = encoder.encode_2d(&original, width, height).unwrap();
 
-    assert!(!fragments.is_empty(), "Should produce at least one fragment");
+    assert!(
+        !fragments.is_empty(),
+        "Should produce at least one fragment"
+    );
 
     // Decode
     let mut decoder = CompressiveSpectralDecoder::new();
@@ -75,10 +78,7 @@ fn test_spectral_roundtrip_64x64() {
     );
     assert!(report.psnr > 25.0, "PSNR too low: {} dB", report.psnr);
 
-    println!(
-        "64x64 spectral roundtrip: {}",
-        report
-    );
+    println!("64x64 spectral roundtrip: {}", report);
 }
 
 #[test]
@@ -110,10 +110,7 @@ fn test_spectral_roundtrip_128x256() {
         report.cosine_similarity
     );
 
-    println!(
-        "128x256 spectral roundtrip: {}",
-        report
-    );
+    println!("128x256 spectral roundtrip: {}", report);
 }
 
 #[test]
@@ -154,20 +151,14 @@ fn test_spectral_plus_int4_roundtrip() {
         combined_report.cosine_similarity
     );
 
-    println!(
-        "Spectral + INT4 combined: {}",
-        combined_report
-    );
+    println!("Spectral + INT4 combined: {}", combined_report);
 
     // Also verify INT4 alone
     let int4_only = quantize_int4(&original);
     let int4_only_reconstructed = dequantize_int4(&int4_only, original.len());
     let int4_only_report = compute_quality(&original, &int4_only_reconstructed);
 
-    println!(
-        "INT4 only: {}",
-        int4_only_report
-    );
+    println!("INT4 only: {}", int4_only_report);
 }
 
 #[test]
@@ -254,7 +245,10 @@ fn test_progressive_quality() {
 
     println!("\nProgressive quality curve:");
     for (frag_idx, cos_sim) in &quality_curve {
-        println!("  Fragment {}: cosine similarity = {:.6}", frag_idx, cos_sim);
+        println!(
+            "  Fragment {}: cosine similarity = {:.6}",
+            frag_idx, cos_sim
+        );
     }
 }
 
@@ -262,11 +256,11 @@ fn test_progressive_quality() {
 fn test_non_square_tensors() {
     // Test various non-square dimensions
     let test_cases = [
-        (32, 128),  // Tall
-        (128, 32),  // Wide
-        (64, 100),  // Arbitrary
-        (100, 64),  // Arbitrary reversed
-        (256, 64),  // Very wide
+        (32, 128), // Tall
+        (128, 32), // Wide
+        (64, 100), // Arbitrary
+        (100, 64), // Arbitrary reversed
+        (256, 64), // Very wide
     ];
 
     for (width, height) in test_cases {

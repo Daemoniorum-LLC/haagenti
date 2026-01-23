@@ -252,7 +252,10 @@ mod tests {
         // Kraft = 4 * 2^(1-1) = 4 > 2^1 = 2, invalid
         let weights = [1u8, 1, 1, 1];
         let result = HuffmanTable::from_weights(&weights);
-        assert!(result.is_err(), "4 equal weight-1 symbols should fail Kraft check");
+        assert!(
+            result.is_err(),
+            "4 equal weight-1 symbols should fail Kraft check"
+        );
 
         // Valid 4-symbol tree: weights [2, 2, 1, 1]
         // max_bits = 2

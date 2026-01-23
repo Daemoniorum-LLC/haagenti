@@ -118,8 +118,9 @@ pub struct ShardAssignment {
     pub memory_required: u64,
 }
 
-/// Connection info
+/// Connection info (tracking data for future connection analytics)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ConnectionInfo {
     peer_id: String,
     connected_at: Instant,
@@ -187,7 +188,9 @@ impl Node {
 
     /// Get available memory
     pub fn available_memory(&self) -> u64 {
-        self.config.memory_capacity.saturating_sub(self.resources.memory_used)
+        self.config
+            .memory_capacity
+            .saturating_sub(self.resources.memory_used)
     }
 
     /// Assign shard to node
@@ -253,10 +256,10 @@ impl NodeRegistry {
     /// Register a node
     pub fn register(&mut self, node: Node) {
         let id = node.id().to_string();
-        if node.role() == NodeRole::Coordinator || node.role() == NodeRole::Hybrid {
-            if self.coordinator_id.is_none() {
-                self.coordinator_id = Some(id.clone());
-            }
+        if (node.role() == NodeRole::Coordinator || node.role() == NodeRole::Hybrid)
+            && self.coordinator_id.is_none()
+        {
+            self.coordinator_id = Some(id.clone());
         }
         self.nodes.insert(id, node);
     }
@@ -281,7 +284,9 @@ impl NodeRegistry {
 
     /// Get coordinator node
     pub fn coordinator(&self) -> Option<&Node> {
-        self.coordinator_id.as_ref().and_then(|id| self.nodes.get(id))
+        self.coordinator_id
+            .as_ref()
+            .and_then(|id| self.nodes.get(id))
     }
 
     /// Get all worker nodes

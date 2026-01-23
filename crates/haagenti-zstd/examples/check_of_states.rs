@@ -1,17 +1,12 @@
 //! Check what OF states our encoder produces.
 
-use haagenti_zstd::fse::{
-    FseTable, TansEncoder,
-    OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
-};
+use haagenti_zstd::fse::{FseTable, TansEncoder, OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION};
 
 fn main() {
     println!("=== OF State Check ===\n");
 
-    let of_table = FseTable::from_predefined(
-        &OFFSET_DEFAULT_DISTRIBUTION,
-        OFFSET_ACCURACY_LOG,
-    ).unwrap();
+    let of_table =
+        FseTable::from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
 
     let mut encoder = TansEncoder::from_decode_table(&of_table);
 
@@ -28,8 +23,10 @@ fn main() {
         encoder.init_state(code);
         let state = encoder.get_state();
         let entry = of_table.decode(state as usize);
-        println!("  Code {} → state {} → decodes to symbol {}", 
-                 code, state, entry.symbol);
+        println!(
+            "  Code {} → state {} → decodes to symbol {}",
+            code, state, entry.symbol
+        );
     }
 
     // Reference uses state 14 for OF_code=2

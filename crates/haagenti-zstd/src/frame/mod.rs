@@ -20,13 +20,13 @@
 //!
 //! - [RFC 8878 Section 3.1](https://datatracker.ietf.org/doc/html/rfc8878#section-3.1)
 
-mod header;
 mod block;
 mod checksum;
+mod header;
 
-pub use header::{FrameHeader, FrameDescriptor};
 pub use block::{BlockHeader, BlockType};
 pub use checksum::xxhash64;
+pub use header::{FrameDescriptor, FrameHeader};
 
 /// Zstd magic number (little-endian: 0xFD2FB528).
 pub const ZSTD_MAGIC: u32 = 0xFD2FB528;

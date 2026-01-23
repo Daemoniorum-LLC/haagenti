@@ -1,16 +1,16 @@
 //! Speculative loader coordinating intent prediction and fragment loading
 
 use crate::{
-    BufferConfig, BufferEntry, Intent, IntentConfig, IntentPredictor,
-    PredictionResult, Result, SessionHistory, SpeculationBuffer, SpeculativeError,
+    BufferConfig, BufferEntry, Intent, IntentConfig, IntentPredictor, Result, SessionHistory,
+    SpeculationBuffer,
 };
 use haagenti_fragments::FragmentId;
 use haagenti_importance::SemanticCategory;
 use haagenti_network::{LoadRequest, NetworkLoader, Priority};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn};
+use tokio::sync::RwLock;
+use tracing::{debug, info};
 
 /// Configuration for speculative loader
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,7 +163,10 @@ impl SpeculativeLoader {
         fragment_ids.dedup();
 
         if fragment_ids.is_empty() {
-            debug!("No fragments to speculate for '{}'", intent.predicted_prompt);
+            debug!(
+                "No fragments to speculate for '{}'",
+                intent.predicted_prompt
+            );
             return Ok(());
         }
 
@@ -213,7 +216,10 @@ impl SpeculativeLoader {
         let entries = self.buffer.entries_for_intent(prompt);
 
         // Log hit rate
-        let ready_count = entries.iter().filter(|e| e.state == crate::buffer::EntryState::Ready).count();
+        let ready_count = entries
+            .iter()
+            .filter(|e| e.state == crate::buffer::EntryState::Ready)
+            .count();
 
         if !entries.is_empty() {
             info!(
@@ -325,7 +331,10 @@ impl FragmentResolver for SimpleResolver {
         category: SemanticCategory,
         _model_id: &str,
     ) -> Vec<FragmentId> {
-        self.category_fragments.get(&category).cloned().unwrap_or_default()
+        self.category_fragments
+            .get(&category)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 

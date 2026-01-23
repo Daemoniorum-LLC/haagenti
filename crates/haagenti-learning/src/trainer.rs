@@ -2,14 +2,14 @@
 
 use crate::{
     adapter::AdapterRegistry,
-    buffer::{Experience, ReplayBuffer, BufferConfig},
+    buffer::{BufferConfig, Experience, ReplayBuffer},
     consolidation::EwcRegularizer,
     scheduler::{LearningRateScheduler, SchedulerConfig},
     LearningError, Result,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Trainer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,7 +173,8 @@ impl OnlineTrainer {
                 return Err(LearningError::TrainingError("Buffer empty".into()));
             }
             // Clone experiences and collect indices to release the borrow
-            let experiences: Vec<Experience> = samples.iter().map(|(_, e, _)| (*e).clone()).collect();
+            let experiences: Vec<Experience> =
+                samples.iter().map(|(_, e, _)| (*e).clone()).collect();
             let indices: Vec<usize> = samples.iter().map(|(i, _, _)| *i).collect();
             (experiences, indices)
         };
@@ -207,8 +208,8 @@ impl OnlineTrainer {
 
         if let Some(start) = self.start_time {
             self.stats.training_time_secs = start.elapsed().as_secs_f64();
-            self.stats.samples_per_sec = self.stats.total_samples as f32
-                / self.stats.training_time_secs as f32;
+            self.stats.samples_per_sec =
+                self.stats.total_samples as f32 / self.stats.training_time_secs as f32;
         }
 
         Ok(loss)
@@ -217,9 +218,10 @@ impl OnlineTrainer {
     /// Accumulate gradients
     fn accumulate_gradients(&mut self, gradients: HashMap<String, Vec<f32>>) {
         for (name, grad) in gradients {
-            let acc = self.accumulated_gradients.entry(name).or_insert_with(|| {
-                vec![0.0; grad.len()]
-            });
+            let acc = self
+                .accumulated_gradients
+                .entry(name)
+                .or_insert_with(|| vec![0.0; grad.len()]);
 
             for (a, g) in acc.iter_mut().zip(&grad) {
                 *a += g / self.config.gradient_accumulation as f32;
@@ -235,7 +237,7 @@ impl OnlineTrainer {
         }
 
         // Add EWC gradient contribution
-        if let Some(ref ewc) = self.ewc {
+        if let Some(ref _ewc) = self.ewc {
             // Would need current params to compute EWC gradient
             // For now, just a placeholder
         }

@@ -96,36 +96,95 @@ impl PromptCategory {
     pub fn keywords(&self) -> &'static [&'static str] {
         match self {
             PromptCategory::Portrait => &[
-                "portrait", "face", "person", "woman", "man", "girl", "boy",
-                "character", "headshot", "bust", "selfie",
+                "portrait",
+                "face",
+                "person",
+                "woman",
+                "man",
+                "girl",
+                "boy",
+                "character",
+                "headshot",
+                "bust",
+                "selfie",
             ],
             PromptCategory::Landscape => &[
-                "landscape", "mountain", "forest", "ocean", "sky", "sunset",
-                "sunrise", "nature", "scenery", "vista", "horizon",
+                "landscape",
+                "mountain",
+                "forest",
+                "ocean",
+                "sky",
+                "sunset",
+                "sunrise",
+                "nature",
+                "scenery",
+                "vista",
+                "horizon",
             ],
             PromptCategory::Abstract => &[
-                "abstract", "geometric", "pattern", "fractal", "surreal",
-                "dreamlike", "psychedelic", "minimalist",
+                "abstract",
+                "geometric",
+                "pattern",
+                "fractal",
+                "surreal",
+                "dreamlike",
+                "psychedelic",
+                "minimalist",
             ],
             PromptCategory::Photorealistic => &[
-                "photo", "photograph", "realistic", "hyperrealistic",
-                "photorealistic", "raw", "unedited", "natural",
+                "photo",
+                "photograph",
+                "realistic",
+                "hyperrealistic",
+                "photorealistic",
+                "raw",
+                "unedited",
+                "natural",
             ],
             PromptCategory::Anime => &[
-                "anime", "manga", "cartoon", "illustrated", "cel-shaded",
-                "2d", "chibi", "kawaii",
+                "anime",
+                "manga",
+                "cartoon",
+                "illustrated",
+                "cel-shaded",
+                "2d",
+                "chibi",
+                "kawaii",
             ],
             PromptCategory::Architecture => &[
-                "building", "architecture", "interior", "room", "house",
-                "skyscraper", "cathedral", "bridge", "structure",
+                "building",
+                "architecture",
+                "interior",
+                "room",
+                "house",
+                "skyscraper",
+                "cathedral",
+                "bridge",
+                "structure",
             ],
             PromptCategory::Object => &[
-                "product", "object", "item", "thing", "device", "tool",
-                "furniture", "vehicle", "food",
+                "product",
+                "object",
+                "item",
+                "thing",
+                "device",
+                "tool",
+                "furniture",
+                "vehicle",
+                "food",
             ],
             PromptCategory::Fantasy => &[
-                "fantasy", "magical", "dragon", "wizard", "elf", "fairy",
-                "mythical", "enchanted", "sci-fi", "futuristic", "cyberpunk",
+                "fantasy",
+                "magical",
+                "dragon",
+                "wizard",
+                "elf",
+                "fairy",
+                "mythical",
+                "enchanted",
+                "sci-fi",
+                "futuristic",
+                "cyberpunk",
             ],
             PromptCategory::Mixed => &[],
         }
@@ -229,11 +288,8 @@ impl PromptCategory {
 
         scores.sort_by(|a, b| b.1.cmp(&a.1));
 
-        let mut result: SmallVec<[PromptCategory; 3]> = scores
-            .into_iter()
-            .take(3)
-            .map(|(cat, _)| cat)
-            .collect();
+        let mut result: SmallVec<[PromptCategory; 3]> =
+            scores.into_iter().take(3).map(|(cat, _)| cat).collect();
 
         if result.is_empty() {
             result.push(PromptCategory::Mixed);

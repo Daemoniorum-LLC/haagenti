@@ -1,14 +1,17 @@
 //! Unified mobile runtime
 
 use crate::{
-    coreml::{CoreMLModel, CoreMLRuntime},
-    nnapi::{NnapiModel, NnapiRuntime},
+    coreml::CoreMLRuntime,
+    nnapi::NnapiRuntime,
     quantization::{Int4Quantizer, QuantizationConfig},
     thermal::{ThermalManager, ThermalState},
     MobileError, Result,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+
+/// Completion handler type for async execution callbacks
+pub type CompletionHandler = Box<dyn FnOnce(Result<Vec<f32>>) + Send>;
 
 /// Runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,9 +98,11 @@ impl RuntimeStats {
 pub struct MobileRuntime {
     /// Configuration
     config: RuntimeConfig,
-    /// CoreML runtime (iOS)
+    /// CoreML runtime (iOS) - platform-specific, used via cfg
+    #[allow(dead_code)]
     coreml: Option<CoreMLRuntime>,
-    /// NNAPI runtime (Android)
+    /// NNAPI runtime (Android) - platform-specific, used via cfg
+    #[allow(dead_code)]
     nnapi: Option<NnapiRuntime>,
     /// Thermal manager
     thermal: ThermalManager,
@@ -198,7 +203,7 @@ impl MobileRuntime {
         result
     }
 
-    async fn infer_internal(&self, model_name: &str, input: &[f32]) -> Result<Vec<f32>> {
+    async fn infer_internal(&self, _model_name: &str, input: &[f32]) -> Result<Vec<f32>> {
         #[cfg(target_os = "ios")]
         {
             if let Some(ref coreml) = self.coreml {
@@ -305,7 +310,7 @@ pub struct ExecutionContext {
     /// Priority (higher = more urgent)
     pub priority: u32,
     /// Callback on completion
-    completion_handler: Option<Box<dyn FnOnce(Result<Vec<f32>>) + Send>>,
+    completion_handler: Option<CompletionHandler>,
 }
 
 impl std::fmt::Debug for ExecutionContext {
@@ -314,7 +319,10 @@ impl std::fmt::Debug for ExecutionContext {
             .field("model_name", &self.model_name)
             .field("timeout", &self.timeout)
             .field("priority", &self.priority)
-            .field("completion_handler", &self.completion_handler.as_ref().map(|_| "..."))
+            .field(
+                "completion_handler",
+                &self.completion_handler.as_ref().map(|_| "..."),
+            )
             .finish()
     }
 }
@@ -386,7 +394,7 @@ impl BatchContext {
 
     /// Get batch count
     pub fn batch_count(&self) -> usize {
-        (self.inputs.len() + self.max_batch_size - 1) / self.max_batch_size
+        self.inputs.len().div_ceil(self.max_batch_size)
     }
 }
 

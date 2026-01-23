@@ -40,13 +40,13 @@
 //! let compressed = compressor.compress(&data)?;
 //! ```
 
-use super::{
-    MatchFinder, LazyMatchFinder, Match,
-    analysis::{CompressibilityFingerprint, PatternType, CompressionStrategy},
-};
 use super::block::{encode_literals, encode_sequences, matches_to_sequences};
 use super::sequences::encode_sequences_fse;
-use crate::frame::{ZSTD_MAGIC, xxhash64};
+use super::{
+    analysis::{CompressibilityFingerprint, CompressionStrategy, PatternType},
+    LazyMatchFinder, Match, MatchFinder,
+};
+use crate::frame::{xxhash64, ZSTD_MAGIC};
 use haagenti_core::Result;
 
 #[cfg(feature = "parallel")]
@@ -100,6 +100,7 @@ impl SpeculativeStrategy {
 }
 
 /// Result of a single compression attempt.
+#[allow(dead_code)]
 struct CompressionResult {
     /// The compressed data.
     data: Vec<u8>,
@@ -294,9 +295,9 @@ impl SpeculativeCompressor {
 
         // Block header (last block = true)
         let size = match block_type {
-            0 => input.len(),       // Raw
-            1 => input.len(),       // RLE
-            2 => encoded.len(),     // Compressed
+            0 => input.len(),   // Raw
+            1 => input.len(),   // RLE
+            2 => encoded.len(), // Compressed
             _ => unreachable!(),
         };
         let header = 1u32 | ((block_type as u32) << 1) | ((size as u32) << 3);
@@ -324,13 +325,13 @@ impl SpeculativeCompressor {
             10u8
         } else {
             let log = (content_size as f64).log2().ceil() as u8;
-            log.max(10).min(30)
+            log.clamp(10, 30)
         };
 
         let (fcs_size, descriptor) = if content_size > 65535 {
             (4, 0x80u8 | checksum_flag)
         } else {
-            (0, 0x00u8 | checksum_flag)
+            (0, checksum_flag)
         };
 
         output.push(descriptor);
@@ -366,7 +367,11 @@ impl SpeculativeCompressor {
         for &strategy in &self.strategies {
             let result = self.compress_with_strategy(input, strategy)?;
 
-            if best.as_ref().map(|b| result.len() < b.len()).unwrap_or(true) {
+            if best
+                .as_ref()
+                .map(|b| result.len() < b.len())
+                .unwrap_or(true)
+            {
                 best = Some(result);
             }
         }
@@ -385,7 +390,8 @@ impl SpeculativeCompressor {
         _fingerprint: &CompressibilityFingerprint,
     ) -> Result<Vec<u8>> {
         // Run all strategies in parallel
-        let results: Vec<_> = self.strategies
+        let results: Vec<_> = self
+            .strategies
             .par_iter()
             .filter_map(|&strategy| {
                 self.compress_with_strategy(input, strategy)
@@ -400,9 +406,7 @@ impl SpeculativeCompressor {
             .min_by_key(|r| r.data.len())
             .map(|r| r.data);
 
-        Ok(best.unwrap_or_else(|| {
-            self.compress_raw(input).unwrap_or_else(|_| input.to_vec())
-        }))
+        Ok(best.unwrap_or_else(|| self.compress_raw(input).unwrap_or_else(|_| input.to_vec())))
     }
 }
 
@@ -459,7 +463,11 @@ mod tests {
         let result = compressor.compress(&input).unwrap();
 
         // RLE should be very efficient
-        assert!(result.len() < 50, "RLE compression too large: {} bytes", result.len());
+        assert!(
+            result.len() < 50,
+            "RLE compression too large: {} bytes",
+            result.len()
+        );
     }
 
     #[test]
@@ -511,16 +519,17 @@ mod tests {
 
     #[test]
     fn test_custom_strategies() {
-        let compressor = SpeculativeCompressor::new()
-            .with_strategies(&[SpeculativeStrategy::GreedyFast, SpeculativeStrategy::LiteralsOnly]);
+        let compressor = SpeculativeCompressor::new().with_strategies(&[
+            SpeculativeStrategy::GreedyFast,
+            SpeculativeStrategy::LiteralsOnly,
+        ]);
 
         assert_eq!(compressor.strategies.len(), 2);
     }
 
     #[test]
     fn test_parallel_threshold() {
-        let compressor = SpeculativeCompressor::new()
-            .with_parallel_threshold(1024);
+        let compressor = SpeculativeCompressor::new().with_parallel_threshold(1024);
 
         assert_eq!(compressor.parallel_threshold, 1024);
     }
@@ -590,19 +599,24 @@ mod tests {
     fn test_parallel_compression() {
         use std::time::Instant;
 
-        let compressor = SpeculativeCompressor::new()
-            .with_parallel_threshold(1024);
+        let compressor = SpeculativeCompressor::new().with_parallel_threshold(1024);
 
         // Large data to trigger parallel path
-        let input: Vec<u8> = (0..65536).flat_map(|_| b"pattern_".iter().copied()).collect();
+        let input: Vec<u8> = (0..65536)
+            .flat_map(|_| b"pattern_".iter().copied())
+            .collect();
 
         let start = Instant::now();
         let result = compressor.compress(&input).unwrap();
         let elapsed = start.elapsed();
 
         // Should complete reasonably fast (parallel)
-        println!("Parallel compression: {} bytes -> {} bytes in {:?}",
-                 input.len(), result.len(), elapsed);
+        println!(
+            "Parallel compression: {} bytes -> {} bytes in {:?}",
+            input.len(),
+            result.len(),
+            elapsed
+        );
 
         // Should compress well
         assert!(result.len() < input.len() / 2);

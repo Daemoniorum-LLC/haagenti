@@ -111,8 +111,7 @@ impl StreamBuffer {
         let to_write = data.len().min(space);
 
         if to_write > 0 {
-            self.data[self.write_pos..self.write_pos + to_write]
-                .copy_from_slice(&data[..to_write]);
+            self.data[self.write_pos..self.write_pos + to_write].copy_from_slice(&data[..to_write]);
             self.write_pos += to_write;
         }
 

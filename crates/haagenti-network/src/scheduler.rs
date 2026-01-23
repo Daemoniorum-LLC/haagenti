@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Semaphore};
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 /// Scheduler configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,7 +93,7 @@ impl BandwidthMonitor {
 
         // Remove old samples
         let cutoff = Instant::now() - self.sample_window;
-        while samples.front().map_or(false, |s| s.timestamp < cutoff) {
+        while samples.front().is_some_and(|s| s.timestamp < cutoff) {
             samples.pop_front();
         }
 
@@ -206,17 +206,20 @@ impl Scheduler {
     }
 
     /// Get next fragment to download
-    pub async fn next(&self) -> Option<(PrioritizedFragment, SchedulerPermit)> {
+    pub async fn next(&self) -> Option<(PrioritizedFragment, SchedulerPermit<'_>)> {
         let fragment = self.queue.pop()?;
 
         // Wait for download slot
         let permit = self.semaphore.clone().acquire_owned().await.ok()?;
         self.active.fetch_add(1, Ordering::Relaxed);
 
-        Some((fragment, SchedulerPermit {
-            _permit: permit,
-            scheduler: self,
-        }))
+        Some((
+            fragment,
+            SchedulerPermit {
+                _permit: permit,
+                scheduler: self,
+            },
+        ))
     }
 
     /// Record completed download
@@ -280,7 +283,11 @@ impl Scheduler {
     }
 
     /// Update priority of queued fragment
-    pub fn update_priority(&self, fragment_id: &haagenti_fragments::FragmentId, priority: Priority) {
+    pub fn update_priority(
+        &self,
+        fragment_id: &haagenti_fragments::FragmentId,
+        priority: Priority,
+    ) {
         self.queue.update_priority(fragment_id, priority);
     }
 }

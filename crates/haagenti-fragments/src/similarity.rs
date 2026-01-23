@@ -3,8 +3,8 @@
 //! Uses LSH (Locality-Sensitive Hashing) to enable sub-linear
 //! nearest neighbor search across millions of fragments.
 
+use crate::{Fragment, FragmentId, FragmentSignature, SignatureConfig};
 use arcanum_primitives::prelude::Blake3;
-use crate::{Fragment, FragmentId, FragmentSignature, Result, SignatureConfig};
 use dashmap::DashMap;
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
@@ -115,7 +115,8 @@ impl SimilarityIndex {
 
         // Add to LSH bands
         for (band_idx, band_map) in self.bands.iter().enumerate() {
-            let band_hash = BandHash::from_signature(&signature.simhash, band_idx, self.rows_per_band);
+            let band_hash =
+                BandHash::from_signature(&signature.simhash, band_idx, self.rows_per_band);
 
             band_map
                 .entry(band_hash)

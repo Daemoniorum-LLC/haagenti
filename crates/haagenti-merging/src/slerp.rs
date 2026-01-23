@@ -77,10 +77,8 @@ impl SlerpMerger {
         let dot = dot.clamp(-1.0, 1.0);
 
         // If vectors are nearly parallel, use linear interpolation
-        if dot.abs() > 1.0 - self.config.epsilon {
-            if self.config.linear_fallback {
-                return self.linear_interpolate(a, b);
-            }
+        if dot.abs() > 1.0 - self.config.epsilon && self.config.linear_fallback {
+            return self.linear_interpolate(a, b);
         }
 
         // Compute SLERP
@@ -142,7 +140,7 @@ impl SlerpMerger {
         b: &WeightTensor,
         t: f32,
     ) -> Result<WeightTensor> {
-        let mut merger = Self::new(SlerpConfig::with_t(t));
+        let merger = Self::new(SlerpConfig::with_t(t));
         merger.slerp(a, b)
     }
 
@@ -223,6 +221,9 @@ mod tests {
 
         // Should fall back to linear interpolation
         let result = merger.slerp(&a, &b).unwrap();
-        assert_eq!(result.data, vec![1.5, 3.0, 4.5]);
+        let expected = vec![1.5, 3.0, 4.5];
+        for (r, e) in result.data.iter().zip(expected.iter()) {
+            assert!((r - e).abs() < 1e-5, "expected {}, got {}", e, r);
+        }
     }
 }

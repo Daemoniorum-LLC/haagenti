@@ -180,17 +180,36 @@ impl PromptAnalyzer {
         let mut category_keywords = HashMap::new();
 
         // Human/Portrait keywords
-        for kw in &["portrait", "face", "person", "woman", "man", "girl", "boy", "human", "people"] {
+        for kw in &[
+            "portrait", "face", "person", "woman", "man", "girl", "boy", "human", "people",
+        ] {
             category_keywords.insert(kw.to_string(), (SemanticCategory::Human, 0.9));
         }
 
         // Landscape keywords
-        for kw in &["landscape", "mountain", "forest", "ocean", "sky", "sunset", "nature", "scenery"] {
+        for kw in &[
+            "landscape",
+            "mountain",
+            "forest",
+            "ocean",
+            "sky",
+            "sunset",
+            "nature",
+            "scenery",
+        ] {
             category_keywords.insert(kw.to_string(), (SemanticCategory::Landscape, 0.8));
         }
 
         // Architecture keywords
-        for kw in &["building", "architecture", "city", "street", "house", "castle", "interior"] {
+        for kw in &[
+            "building",
+            "architecture",
+            "city",
+            "street",
+            "house",
+            "castle",
+            "interior",
+        ] {
             category_keywords.insert(kw.to_string(), (SemanticCategory::Architecture, 0.8));
         }
 
@@ -214,10 +233,27 @@ impl PromptAnalyzer {
         }
 
         let style_keywords = vec![
-            "detailed", "intricate", "8k", "4k", "hdr", "cinematic",
-            "dramatic", "soft", "sharp", "vibrant", "muted", "dark",
-            "bright", "professional", "amateur", "raw", "processed",
-        ].into_iter().map(String::from).collect();
+            "detailed",
+            "intricate",
+            "8k",
+            "4k",
+            "hdr",
+            "cinematic",
+            "dramatic",
+            "soft",
+            "sharp",
+            "vibrant",
+            "muted",
+            "dark",
+            "bright",
+            "professional",
+            "amateur",
+            "raw",
+            "processed",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
 
         Self {
             category_keywords,
@@ -250,9 +286,8 @@ impl PromptAnalyzer {
         }
 
         // Sort categories by score
-        let mut categories: SmallVec<[(SemanticCategory, f32); 4]> = category_scores
-            .into_iter()
-            .collect();
+        let mut categories: SmallVec<[(SemanticCategory, f32); 4]> =
+            category_scores.into_iter().collect();
         categories.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         categories.truncate(4);
 
@@ -273,9 +308,10 @@ impl PromptAnalyzer {
         };
 
         // Adjust for style keywords
-        let detail_boost = if detected_styles.iter().any(|s: &String|
-            s.contains("8k") || s.contains("detailed") || s.contains("intricate")
-        ) {
+        let detail_boost = if detected_styles
+            .iter()
+            .any(|s: &String| s.contains("8k") || s.contains("detailed") || s.contains("intricate"))
+        {
             0.2
         } else {
             0.0
