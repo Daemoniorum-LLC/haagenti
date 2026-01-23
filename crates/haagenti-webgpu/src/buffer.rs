@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(pool.pooled_count(), 1);
 
         // Reallocate should reuse
-        let buffer3 = pool
+        let _buffer3 = pool
             .allocate(500, vec![BufferUsage::Storage], "buf3")
             .unwrap();
         assert_eq!(pool.pooled_count(), 0); // Buffer was reused
