@@ -72,6 +72,10 @@
 //! - `zstd` - Zstd compression for better ratios
 //! - `full` - All features (default)
 
+// Allow various lints in experimental holotensor code
+#![allow(dead_code, deprecated)]
+#![allow(clippy::needless_range_loop)]
+
 // Local modules (implementations owned by haagenti-hct)
 pub mod holotensor;
 pub mod tensor;
