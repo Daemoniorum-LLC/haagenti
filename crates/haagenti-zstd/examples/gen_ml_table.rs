@@ -154,8 +154,12 @@ fn main() {
                     .position(|&(extra_bits, baseline)| {
                         extra_bits == nb_add_bits && baseline == base_val
                     })
-                    .unwrap_or_else(|| panic!("No ML code found for state {} (nbAddBits={}, baseVal={})",
-                        state, nb_add_bits, base_val)) as u8;
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "No ML code found for state {} (nbAddBits={}, baseVal={})",
+                            state, nb_add_bits, base_val
+                        )
+                    }) as u8;
 
                 // Calculate baseline (nextState from zstd)
                 let baseline = next_state;
