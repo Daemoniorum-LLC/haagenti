@@ -3,8 +3,8 @@ name = "haagenti-grpc"
 version = "0.1.0"
 edition = "2021"
 description = "gRPC server for Haagenti compression service"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/Daemoniorum-LLC/workspace"
+license.workspace = true
+repository.workspace = true
 keywords = ["compression", "grpc", "zstd", "lz4", "brotli"]
 categories = ["compression", "network-programming"]
 
