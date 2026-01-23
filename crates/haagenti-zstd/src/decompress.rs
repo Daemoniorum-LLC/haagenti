@@ -2,8 +2,8 @@
 //!
 //! This module integrates all components to provide complete decompression.
 
-use crate::frame::{FrameHeader, BlockHeader, BlockType, ZSTD_MAGIC, xxhash64};
 use crate::block::{decode_raw_block, decode_rle_block, LiteralsSection, SequencesSection};
+use crate::frame::{xxhash64, BlockHeader, BlockType, FrameHeader, ZSTD_MAGIC};
 use haagenti_core::{Error, Result};
 
 /// Decompression context holding state across blocks.
@@ -108,7 +108,11 @@ pub fn decompress_frame(input: &[u8]) -> Result<Vec<u8>> {
                 decode_raw_block(block_data, &mut ctx.output)?;
             }
             BlockType::Rle => {
-                decode_rle_block(block_data, block_header.decompressed_size(), &mut ctx.output)?;
+                decode_rle_block(
+                    block_data,
+                    block_header.decompressed_size(),
+                    &mut ctx.output,
+                )?;
             }
             BlockType::Compressed => {
                 decode_compressed_block(block_data, &mut ctx)?;
@@ -128,12 +132,8 @@ pub fn decompress_frame(input: &[u8]) -> Result<Vec<u8>> {
         if pos + 4 > input.len() {
             return Err(Error::corrupted("Frame truncated at checksum"));
         }
-        let expected = u32::from_le_bytes([
-            input[pos],
-            input[pos + 1],
-            input[pos + 2],
-            input[pos + 3],
-        ]);
+        let expected =
+            u32::from_le_bytes([input[pos], input[pos + 1], input[pos + 2], input[pos + 3]]);
         let actual = (xxhash64(&ctx.output, 0) & 0xFFFFFFFF) as u32;
 
         if expected != actual {
@@ -226,7 +226,11 @@ pub fn decompress_frame_with_dict(
                 decode_raw_block(block_data, &mut ctx.output)?;
             }
             BlockType::Rle => {
-                decode_rle_block(block_data, block_header.decompressed_size(), &mut ctx.output)?;
+                decode_rle_block(
+                    block_data,
+                    block_header.decompressed_size(),
+                    &mut ctx.output,
+                )?;
             }
             BlockType::Compressed => {
                 decode_compressed_block(block_data, &mut ctx)?;
@@ -246,12 +250,8 @@ pub fn decompress_frame_with_dict(
         if pos + 4 > input.len() {
             return Err(Error::corrupted("Frame truncated at checksum"));
         }
-        let expected = u32::from_le_bytes([
-            input[pos],
-            input[pos + 1],
-            input[pos + 2],
-            input[pos + 3],
-        ]);
+        let expected =
+            u32::from_le_bytes([input[pos], input[pos + 1], input[pos + 2], input[pos + 3]]);
         // Checksum is computed on the actual decompressed content (without dict prefix)
         let content = &ctx.output[dict_len..];
         let actual = (xxhash64(content, 0) & 0xFFFFFFFF) as u32;
@@ -311,18 +311,24 @@ fn execute_sequences(
     let mut literal_pos = 0;
 
     // Pre-reserve capacity to avoid reallocations
-    let total_output: usize = sequences.sequences.iter()
+    let total_output: usize = sequences
+        .sequences
+        .iter()
         .map(|s| s.literal_length as usize + s.match_length as usize)
         .sum();
-    ctx.output.reserve(total_output + literal_bytes.len() - literal_pos);
+    ctx.output
+        .reserve(total_output + literal_bytes.len() - literal_pos);
 
     for seq in &sequences.sequences {
         // Copy literal_length bytes from literals
         let literal_end = literal_pos + seq.literal_length as usize;
         if literal_end > literal_bytes.len() {
-            return Err(Error::corrupted("Literal length exceeds available literals"));
+            return Err(Error::corrupted(
+                "Literal length exceeds available literals",
+            ));
         }
-        ctx.output.extend_from_slice(&literal_bytes[literal_pos..literal_end]);
+        ctx.output
+            .extend_from_slice(&literal_bytes[literal_pos..literal_end]);
         literal_pos = literal_end;
 
         // Offset is already resolved to actual byte offset by sequence decoder
@@ -345,7 +351,8 @@ fn execute_sequences(
             // Fast path: non-overlapping copy (offset >= match_length)
             if offset >= match_length {
                 // Safe to use extend_from_within for non-overlapping
-                ctx.output.extend_from_within(match_start..match_start + match_length);
+                ctx.output
+                    .extend_from_within(match_start..match_start + match_length);
             } else {
                 // Overlapping copy - need special handling
                 copy_match_overlapping(&mut ctx.output, match_start, offset, match_length);
@@ -366,7 +373,12 @@ fn execute_sequences(
 /// When offset < match_length, the source and destination overlap.
 /// This handles the RLE-like pattern efficiently.
 #[inline(always)]
-fn copy_match_overlapping(output: &mut Vec<u8>, match_start: usize, offset: usize, match_length: usize) {
+fn copy_match_overlapping(
+    output: &mut Vec<u8>,
+    match_start: usize,
+    offset: usize,
+    match_length: usize,
+) {
     // Reserve space
     output.reserve(match_length);
     let out_len = output.len();
@@ -815,7 +827,7 @@ mod tests {
         let mut frame = vec![];
         frame.extend_from_slice(&[0x28, 0xB5, 0x2F, 0xFD]);
         frame.push(0x20); // single segment, 1-byte FCS
-        frame.push(100);  // FCS = 100
+        frame.push(100); // FCS = 100
 
         let compressed_block = build_compressed_block_literals_only(&literals);
 

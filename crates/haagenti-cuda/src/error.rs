@@ -66,9 +66,7 @@ impl CudaError {
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
-            CudaError::OutOfMemory { .. }
-                | CudaError::PoolExhausted(_)
-                | CudaError::StreamSync(_)
+            CudaError::OutOfMemory { .. } | CudaError::PoolExhausted(_) | CudaError::StreamSync(_)
         )
     }
 

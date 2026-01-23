@@ -28,10 +28,10 @@
 //! let reconstructed = decoder.decode(&meta, &fragments)?;
 //! ```
 
-use haagenti_core::{Error, Result};
-use crate::holotensor::{dct_2d, idct_2d, HoloFragment};
-use crate::spectral_analysis::SpectralAnalyzer;
 use crate::compressive::CompressiveSpectralEncoder;
+use crate::holotensor::HoloFragment;
+use crate::spectral_analysis::SpectralAnalyzer;
+use haagenti_core::{Error, Result};
 
 /// Metadata for adaptive encoding.
 #[derive(Debug, Clone)]
@@ -121,7 +121,8 @@ impl AdaptiveSpectralEncoder {
         }
 
         // Analyze spectral characteristics
-        let optimal_retention = self.analyzer
+        let optimal_retention = self
+            .analyzer
             .compute_optimal_retention(data, width, height)
             .unwrap_or(self.fallback_retention);
 
@@ -186,7 +187,7 @@ impl AdaptiveSpectralDecoder {
     /// Decode fragments using metadata.
     pub fn decode(
         &self,
-        meta: &AdaptiveEncodingMeta,
+        _meta: &AdaptiveEncodingMeta,
         fragments: &[HoloFragment],
     ) -> Result<Vec<f32>> {
         if fragments.is_empty() {

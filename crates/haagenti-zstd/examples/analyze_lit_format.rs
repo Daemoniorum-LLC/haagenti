@@ -1,4 +1,5 @@
 //! Analyze literal header format according to RFC 8878
+#![allow(clippy::identity_op)]
 
 fn main() {
     println!("RFC 8878 Section 3.1.1.3.1 - Literals Section Header:");

@@ -1,10 +1,10 @@
 //! Debug FSE encoding for failing case
 
 use haagenti_core::{CompressionLevel, Compressor};
-use haagenti_zstd::ZstdCompressor;
 use haagenti_zstd::compress::block::matches_to_sequences;
 use haagenti_zstd::compress::MatchFinder;
 use haagenti_zstd::compress::{encode_sequences_fse, EncodedSequence};
+use haagenti_zstd::ZstdCompressor;
 use std::io::Cursor;
 
 fn main() {
@@ -17,7 +17,10 @@ fn main() {
     let matches = mf.find_matches(data);
     println!("\nMatches: {}", matches.len());
     for m in &matches {
-        println!("  pos={}, offset={}, len={}", m.position, m.offset, m.length);
+        println!(
+            "  pos={}, offset={}, len={}",
+            m.position, m.offset, m.length
+        );
     }
 
     // Convert to sequences

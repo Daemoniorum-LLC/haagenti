@@ -348,7 +348,10 @@ fn roundtrip(
         let offset = essential_start + i * 4;
         if offset + 4 <= frag0.len() {
             all_coeffs.push(f32::from_le_bytes([
-                frag0[offset], frag0[offset + 1], frag0[offset + 2], frag0[offset + 3]
+                frag0[offset],
+                frag0[offset + 1],
+                frag0[offset + 2],
+                frag0[offset + 3],
             ]));
         }
     }
@@ -364,7 +367,10 @@ fn roundtrip(
             let offset = 8 + i * 4;
             if offset + 4 <= data.len() {
                 all_coeffs.push(f32::from_le_bytes([
-                    data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                    data[offset],
+                    data[offset + 1],
+                    data[offset + 2],
+                    data[offset + 3],
                 ]));
             }
         }
@@ -504,8 +510,7 @@ fn main() {
     println!("File size: {:.2} MB", file_size as f64 / 1024.0 / 1024.0);
 
     // Parse header
-    let (data_start, tensors) =
-        parse_safetensors_header(&data).expect("Failed to parse header");
+    let (data_start, tensors) = parse_safetensors_header(&data).expect("Failed to parse header");
     println!("Tensors: {}\n", tensors.len());
 
     // Initialize encoder
@@ -522,9 +527,7 @@ fn main() {
 
     // Sort tensors by size (largest first) for consistent processing
     let mut sorted_tensors: Vec<_> = tensors.iter().collect();
-    sorted_tensors.sort_by_key(|(_, info)| {
-        std::cmp::Reverse(info.shape.iter().product::<usize>())
-    });
+    sorted_tensors.sort_by_key(|(_, info)| std::cmp::Reverse(info.shape.iter().product::<usize>()));
 
     println!("Processing tensors...\n");
 
@@ -537,7 +540,10 @@ fn main() {
     for (idx, (name, info)) in sorted_tensors.iter().enumerate() {
         // Early exit if limit reached
         if max_tensors > 0 && tensor_count >= max_tensors {
-            println!("\n  [Stopping at {} tensors per MAX_TENSORS limit]", max_tensors);
+            println!(
+                "\n  [Stopping at {} tensors per MAX_TENSORS limit]",
+                max_tensors
+            );
             break;
         }
         let num_elements: usize = info.shape.iter().product();
@@ -663,16 +669,12 @@ fn main() {
 
     // Calculate aggregate metrics
     let avg_mse: f32 = results.iter().map(|r| r.mse).sum::<f32>() / results.len() as f32;
-    let avg_cosine: f32 =
-        results.iter().map(|r| r.cosine_sim).sum::<f32>() / results.len() as f32;
+    let avg_cosine: f32 = results.iter().map(|r| r.cosine_sim).sum::<f32>() / results.len() as f32;
     let worst_cosine = results
         .iter()
         .map(|r| r.cosine_sim)
         .fold(f32::MAX, f32::min);
-    let best_cosine = results
-        .iter()
-        .map(|r| r.cosine_sim)
-        .fold(0.0f32, f32::max);
+    let best_cosine = results.iter().map(|r| r.cosine_sim).fold(0.0f32, f32::max);
     let best_psnr = results.iter().map(|r| r.psnr).fold(0.0f32, f32::max);
     let worst_psnr = results
         .iter()
@@ -696,12 +698,28 @@ fn main() {
     println!("=== Quality Metrics ===\n");
     println!("{:<20} {:>12}", "Metric", "Value");
     println!("{}", "-".repeat(35));
-    println!("{:<20} {:>12}", "Avg Cosine Sim", format!("{:.6}", avg_cosine));
-    println!("{:<20} {:>12}", "Best Cosine Sim", format!("{:.6}", best_cosine));
-    println!("{:<20} {:>12}", "Worst Cosine Sim", format!("{:.6}", worst_cosine));
+    println!(
+        "{:<20} {:>12}",
+        "Avg Cosine Sim",
+        format!("{:.6}", avg_cosine)
+    );
+    println!(
+        "{:<20} {:>12}",
+        "Best Cosine Sim",
+        format!("{:.6}", best_cosine)
+    );
+    println!(
+        "{:<20} {:>12}",
+        "Worst Cosine Sim",
+        format!("{:.6}", worst_cosine)
+    );
     println!("{:<20} {:>12}", "Avg MSE", format!("{:.2e}", avg_mse));
     println!("{:<20} {:>12}", "Best PSNR", format!("{:.1} dB", best_psnr));
-    println!("{:<20} {:>12}", "Worst PSNR", format!("{:.1} dB", worst_psnr));
+    println!(
+        "{:<20} {:>12}",
+        "Worst PSNR",
+        format!("{:.1} dB", worst_psnr)
+    );
 
     // Show worst performing tensors
     println!("\n=== Lowest Quality Tensors ===\n");
@@ -723,10 +741,7 @@ fn main() {
         };
         println!(
             "{:<40} {:>10.6} {:>10.1} {:>12}",
-            truncated_name,
-            result.cosine_sim,
-            result.psnr,
-            shape_str
+            truncated_name, result.cosine_sim, result.psnr, shape_str
         );
     }
 
@@ -764,10 +779,18 @@ fn main() {
     let input_405b_gb = 810.0;
     let projected_gb = input_405b_gb / ratio;
     println!("Input:  {:.0} GB (FP16)", input_405b_gb);
-    println!("Output: {:.1} GB (before zstd, ~{:.1} GB after)", projected_gb, projected_gb / 2.0);
+    println!(
+        "Output: {:.1} GB (before zstd, ~{:.1} GB after)",
+        projected_gb,
+        projected_gb / 2.0
+    );
     println!(
         "Target: 19 GB {}",
-        if projected_gb / 2.0 <= 25.0 { "OK" } else { "MISS" }
+        if projected_gb / 2.0 <= 25.0 {
+            "OK"
+        } else {
+            "MISS"
+        }
     );
 
     // Show attention tensor quality (important for inference)
@@ -775,7 +798,9 @@ fn main() {
 
     let attn_results: Vec<_> = results
         .iter()
-        .filter(|r| r.name.contains("attn") || r.name.contains("attention") || r.name.contains("self_attn"))
+        .filter(|r| {
+            r.name.contains("attn") || r.name.contains("attention") || r.name.contains("self_attn")
+        })
         .collect();
 
     let mlp_results: Vec<_> = results
@@ -784,13 +809,23 @@ fn main() {
         .collect();
 
     if !attn_results.is_empty() {
-        let avg_attn_cosine: f32 = attn_results.iter().map(|r| r.cosine_sim).sum::<f32>() / attn_results.len() as f32;
-        println!("Attention layers ({} tensors): avg cosine = {:.6}", attn_results.len(), avg_attn_cosine);
+        let avg_attn_cosine: f32 =
+            attn_results.iter().map(|r| r.cosine_sim).sum::<f32>() / attn_results.len() as f32;
+        println!(
+            "Attention layers ({} tensors): avg cosine = {:.6}",
+            attn_results.len(),
+            avg_attn_cosine
+        );
     }
 
     if !mlp_results.is_empty() {
-        let avg_mlp_cosine: f32 = mlp_results.iter().map(|r| r.cosine_sim).sum::<f32>() / mlp_results.len() as f32;
-        println!("MLP/FFN layers ({} tensors):   avg cosine = {:.6}", mlp_results.len(), avg_mlp_cosine);
+        let avg_mlp_cosine: f32 =
+            mlp_results.iter().map(|r| r.cosine_sim).sum::<f32>() / mlp_results.len() as f32;
+        println!(
+            "MLP/FFN layers ({} tensors):   avg cosine = {:.6}",
+            mlp_results.len(),
+            avg_mlp_cosine
+        );
     }
 
     println!("\n=== Validation Complete ===\n");
@@ -800,7 +835,10 @@ fn main() {
         total_original as f64 / 1024.0 / 1024.0,
         total_compressed as f64 / 1024.0 / 1024.0
     );
-    println!("Quality:     {} (avg cosine: {:.6})", quality_grade, avg_cosine);
+    println!(
+        "Quality:     {} (avg cosine: {:.6})",
+        quality_grade, avg_cosine
+    );
 
     if quality_grade == "EXCELLENT" || quality_grade == "GOOD" {
         println!("\nRound-trip validation PASSED!");

@@ -1,40 +1,48 @@
 //! Decode and compare bitstreams bit by bit
 
-use haagenti_zstd::fse::{FseTable, FseDecoder, BitReader};
 use haagenti_zstd::block::{LITERAL_LENGTH_BASELINE, MATCH_LENGTH_BASELINE};
+use haagenti_zstd::fse::{BitReader, FseDecoder, FseTable};
 
 // Predefined distributions (from RFC 8878)
 const PREDEFINED_LL_DISTRIBUTION: [i16; 36] = [
-    4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 1, 1, 1, 1, 1,
+    4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 1, 1, 1, 1, 1,
     -1, -1, -1, -1,
 ];
 const PREDEFINED_LL_ACCURACY_LOG: u8 = 6;
 
 const PREDEFINED_OF_DISTRIBUTION: [i16; 29] = [
-    1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1,
+    1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1,
 ];
 const PREDEFINED_OF_ACCURACY_LOG: u8 = 5;
 
 const PREDEFINED_ML_DISTRIBUTION: [i16; 53] = [
-    1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1,
-    -1, -1, -1, -1, -1,
+    1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1,
 ];
 const PREDEFINED_ML_ACCURACY_LOG: u8 = 6;
 
 fn decode_literal_length(code: u8, extra_bits: u32) -> u32 {
-    if code as usize >= LITERAL_LENGTH_BASELINE.len() { return 0; }
+    if code as usize >= LITERAL_LENGTH_BASELINE.len() {
+        return 0;
+    }
     let (bits, baseline) = LITERAL_LENGTH_BASELINE[code as usize];
-    if bits == 0 { baseline } else { baseline + (extra_bits & ((1 << bits) - 1)) }
+    if bits == 0 {
+        baseline
+    } else {
+        baseline + (extra_bits & ((1 << bits) - 1))
+    }
 }
 
 fn decode_match_length(code: u8, extra_bits: u32) -> u32 {
-    if code as usize >= MATCH_LENGTH_BASELINE.len() { return 3; }
+    if code as usize >= MATCH_LENGTH_BASELINE.len() {
+        return 3;
+    }
     let (bits, baseline) = MATCH_LENGTH_BASELINE[code as usize];
-    if bits == 0 { baseline } else { baseline + (extra_bits & ((1 << bits) - 1)) }
+    if bits == 0 {
+        baseline
+    } else {
+        baseline + (extra_bits & ((1 << bits) - 1))
+    }
 }
 
 fn decode_offset(code: u8, extra_bits: u32) -> u32 {
@@ -64,7 +72,10 @@ fn main() {
     // Show bytes in binary
     println!("\nBytes (MSB first, position from end):");
     for i in (0..10).rev() {
-        println!("  Byte {}: 0x{:02x} = {:08b}", i, our_bitstream[i], our_bitstream[i]);
+        println!(
+            "  Byte {}: 0x{:02x} = {:08b}",
+            i, our_bitstream[i], our_bitstream[i]
+        );
     }
 
     // Now decode using the actual BitReader
@@ -85,9 +96,12 @@ fn decode_sequences(data: &[u8], num_sequences: usize) {
     }
 
     // Build predefined tables
-    let ll_table = FseTable::from_predefined(&PREDEFINED_LL_DISTRIBUTION, PREDEFINED_LL_ACCURACY_LOG).unwrap();
-    let of_table = FseTable::from_predefined(&PREDEFINED_OF_DISTRIBUTION, PREDEFINED_OF_ACCURACY_LOG).unwrap();
-    let ml_table = FseTable::from_predefined(&PREDEFINED_ML_DISTRIBUTION, PREDEFINED_ML_ACCURACY_LOG).unwrap();
+    let ll_table =
+        FseTable::from_predefined(&PREDEFINED_LL_DISTRIBUTION, PREDEFINED_LL_ACCURACY_LOG).unwrap();
+    let of_table =
+        FseTable::from_predefined(&PREDEFINED_OF_DISTRIBUTION, PREDEFINED_OF_ACCURACY_LOG).unwrap();
+    let ml_table =
+        FseTable::from_predefined(&PREDEFINED_ML_DISTRIBUTION, PREDEFINED_ML_ACCURACY_LOG).unwrap();
 
     // Create bit reader
     let mut bits = BitReader::new(data);
@@ -103,8 +117,12 @@ fn decode_sequences(data: &[u8], num_sequences: usize) {
     of_decoder.init_state(&mut bits).unwrap();
     ml_decoder.init_state(&mut bits).unwrap();
 
-    println!("\nInitial states: LL={}, OF={}, ML={}",
-             ll_decoder.state(), of_decoder.state(), ml_decoder.state());
+    println!(
+        "\nInitial states: LL={}, OF={}, ML={}",
+        ll_decoder.state(),
+        of_decoder.state(),
+        ml_decoder.state()
+    );
 
     // Switch to LSB mode for extra bits
     bits.switch_to_lsb_mode().unwrap();
@@ -117,35 +135,53 @@ fn decode_sequences(data: &[u8], num_sequences: usize) {
         let of_code = of_decoder.peek_symbol();
         let ml_code = ml_decoder.peek_symbol();
 
-        println!("\nSequence {}: codes LL={}, OF={}, ML={}", i, ll_code, of_code, ml_code);
+        println!(
+            "\nSequence {}: codes LL={}, OF={}, ML={}",
+            i, ll_code, of_code, ml_code
+        );
 
         // Read extra bits in LL, ML, OF order
         let ll_extra_bits_needed = if ll_code < LITERAL_LENGTH_BASELINE.len() as u8 {
             LITERAL_LENGTH_BASELINE[ll_code as usize].0
-        } else { 0 };
+        } else {
+            0
+        };
 
         let ml_extra_bits_needed = if ml_code < MATCH_LENGTH_BASELINE.len() as u8 {
             MATCH_LENGTH_BASELINE[ml_code as usize].0
-        } else { 0 };
+        } else {
+            0
+        };
 
         let of_extra_bits_needed = offset_code_extra_bits(of_code);
 
-        println!("  Extra bits needed: LL={}, ML={}, OF={}",
-                 ll_extra_bits_needed, ml_extra_bits_needed, of_extra_bits_needed);
+        println!(
+            "  Extra bits needed: LL={}, ML={}, OF={}",
+            ll_extra_bits_needed, ml_extra_bits_needed, of_extra_bits_needed
+        );
 
         let ll_extra = if ll_extra_bits_needed > 0 {
             bits.read_bits(ll_extra_bits_needed as usize).unwrap_or(0)
-        } else { 0 };
+        } else {
+            0
+        };
 
         let ml_extra = if ml_extra_bits_needed > 0 {
             bits.read_bits(ml_extra_bits_needed as usize).unwrap_or(0)
-        } else { 0 };
+        } else {
+            0
+        };
 
         let of_extra = if of_extra_bits_needed > 0 {
             bits.read_bits(of_extra_bits_needed as usize).unwrap_or(0)
-        } else { 0 };
+        } else {
+            0
+        };
 
-        println!("  Extra bits read: LL={}, ML={}, OF={}", ll_extra, ml_extra, of_extra);
+        println!(
+            "  Extra bits read: LL={}, ML={}, OF={}",
+            ll_extra, ml_extra, of_extra
+        );
 
         if !is_last {
             // Update states
@@ -153,8 +189,12 @@ fn decode_sequences(data: &[u8], num_sequences: usize) {
             ml_decoder.update_state(&mut bits).unwrap();
             of_decoder.update_state(&mut bits).unwrap();
 
-            println!("  New states: LL={}, OF={}, ML={}",
-                     ll_decoder.state(), of_decoder.state(), ml_decoder.state());
+            println!(
+                "  New states: LL={}, OF={}, ML={}",
+                ll_decoder.state(),
+                of_decoder.state(),
+                ml_decoder.state()
+            );
         }
 
         // Decode final values
@@ -162,6 +202,9 @@ fn decode_sequences(data: &[u8], num_sequences: usize) {
         let match_length = decode_match_length(ml_code, ml_extra);
         let offset_value = decode_offset(of_code, of_extra);
 
-        println!("  Decoded: LL={}, ML={}, offset_value={}", literal_length, match_length, offset_value);
+        println!(
+            "  Decoded: LL={}, ML={}, offset_value={}",
+            literal_length, match_length, offset_value
+        );
     }
 }

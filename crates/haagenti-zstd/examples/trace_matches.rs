@@ -20,15 +20,24 @@ fn main() {
 
     println!("\n=== Matches Found ({}) ===", matches.len());
     for (i, m) in matches.iter().enumerate() {
-        println!("Match {}: pos={}, offset={}, length={}", i, m.position, m.offset, m.length);
+        println!(
+            "Match {}: pos={}, offset={}, length={}",
+            i, m.position, m.offset, m.length
+        );
 
         // Show what this match refers to
         let match_start = m.position - m.offset;
         let match_content = &data[match_start..match_start + m.length.min(30)];
         let current_content = &data[m.position..m.position + m.length.min(30)];
 
-        println!("  Source (offset back): {:?}", String::from_utf8_lossy(match_content));
-        println!("  Current position:     {:?}", String::from_utf8_lossy(current_content));
+        println!(
+            "  Source (offset back): {:?}",
+            String::from_utf8_lossy(match_content)
+        );
+        println!(
+            "  Current position:     {:?}",
+            String::from_utf8_lossy(current_content)
+        );
 
         // Verify the match is valid
         if match_content != current_content {
@@ -47,8 +56,10 @@ fn main() {
 
     println!("\nSequences: {}", sequences.len());
     for (i, seq) in sequences.iter().enumerate() {
-        println!("  Seq {}: LL={}, offset={}, ML={}",
-                 i, seq.literal_length, seq.offset, seq.match_length);
+        println!(
+            "  Seq {}: LL={}, offset={}, ML={}",
+            i, seq.literal_length, seq.offset, seq.match_length
+        );
     }
 
     // Verify that literals + matches reconstruct the original
@@ -61,7 +72,10 @@ fn main() {
         // Add literals
         let ll = seq.literal_length as usize;
         if lit_pos + ll > literals.len() {
-            println!("ERROR: Not enough literals at lit_pos={}, need {} more", lit_pos, ll);
+            println!(
+                "ERROR: Not enough literals at lit_pos={}, need {} more",
+                lit_pos, ll
+            );
             break;
         }
         reconstructed.extend_from_slice(&literals[lit_pos..lit_pos + ll]);
@@ -79,7 +93,10 @@ fn main() {
         };
 
         if data_pos < offset {
-            println!("ERROR: Match offset {} exceeds current position {}", offset, data_pos);
+            println!(
+                "ERROR: Match offset {} exceeds current position {}",
+                offset, data_pos
+            );
             break;
         }
 

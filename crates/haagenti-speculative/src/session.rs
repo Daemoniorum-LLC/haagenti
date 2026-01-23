@@ -1,4 +1,5 @@
 //! Session history tracking for pattern learning
+#![allow(clippy::items_after_test_module)]
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -101,7 +102,7 @@ impl SessionHistory {
         }
 
         // Update patterns periodically
-        if self.history.len() % 10 == 0 {
+        if self.history.len().is_multiple_of(10) {
             self.analyze_patterns();
         }
     }
@@ -119,7 +120,14 @@ impl SessionHistory {
 
         // Analyze styles
         let mut style_counts: HashMap<String, u32> = HashMap::new();
-        let style_keywords = ["anime", "realistic", "photorealistic", "artistic", "cartoon", "3d"];
+        let style_keywords = [
+            "anime",
+            "realistic",
+            "photorealistic",
+            "artistic",
+            "cartoon",
+            "3d",
+        ];
 
         for entry in &self.history {
             let lower = entry.prompt.to_lowercase();
@@ -173,7 +181,8 @@ impl SessionHistory {
             / total.max(1.0);
 
         // Sort patterns by confidence
-        self.patterns.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        self.patterns
+            .sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
     }
 
     /// Get predicted next prompt type
@@ -339,7 +348,7 @@ mod tests {
 
         let export = history.export();
         assert_eq!(export.prompt_count, 5);
-        assert!(export.session_duration >= 0);
+        let _ = export.session_duration; // Just verify it exists
     }
 
     #[test]
@@ -381,7 +390,13 @@ mod tests {
 
         // Should predict style pattern
         let prediction = history.predict_next();
-        assert!(prediction.is_some() || history.patterns_of_type(PatternType::Style).is_empty().not());
+        assert!(
+            prediction.is_some()
+                || history
+                    .patterns_of_type(PatternType::Style)
+                    .is_empty()
+                    .not()
+        );
     }
 
     #[test]
@@ -416,8 +431,8 @@ mod tests {
     fn test_session_duration() {
         let history = SessionHistory::new(100);
 
-        // Duration should be >= 0 (just created)
-        assert!(history.session_duration() >= 0);
+        // Duration should exist (always >= 0 for u64)
+        let _ = history.session_duration();
     }
 }
 

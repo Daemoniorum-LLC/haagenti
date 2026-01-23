@@ -20,8 +20,12 @@ fn main() {
         match zstd::decode_all(std::io::Cursor::new(&compressed)) {
             Ok(decompressed) => {
                 if decompressed == data {
-                    println!("Size {}: PASS (compressed {} -> {} bytes)",
-                             size, data.len(), compressed.len());
+                    println!(
+                        "Size {}: PASS (compressed {} -> {} bytes)",
+                        size,
+                        data.len(),
+                        compressed.len()
+                    );
                 } else {
                     println!("Size {}: FAIL - data mismatch", size);
                     println!("  Expected: {} bytes", data.len());
@@ -29,8 +33,10 @@ fn main() {
                     // Find first difference
                     for i in 0..data.len().min(decompressed.len()) {
                         if data[i] != decompressed[i] {
-                            println!("  First diff at {}: expected 0x{:02x}, got 0x{:02x}",
-                                     i, data[i], decompressed[i]);
+                            println!(
+                                "  First diff at {}: expected 0x{:02x}, got 0x{:02x}",
+                                i, data[i], decompressed[i]
+                            );
                             break;
                         }
                     }
@@ -39,7 +45,10 @@ fn main() {
             Err(e) => {
                 println!("Size {}: FAIL - decode error: {}", size, e);
                 println!("  Compressed: {} bytes", compressed.len());
-                println!("  First 32 bytes: {:02x?}", &compressed[..32.min(compressed.len())]);
+                println!(
+                    "  First 32 bytes: {:02x?}",
+                    &compressed[..32.min(compressed.len())]
+                );
             }
         }
     }

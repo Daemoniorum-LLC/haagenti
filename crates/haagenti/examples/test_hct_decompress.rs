@@ -77,7 +77,11 @@ fn main() {
         Ok(data) => {
             println!("SUCCESS! Decompressed {} bytes", data.len());
             if data.len() != original_size as usize {
-                println!("WARNING: Size mismatch! Expected {}, got {}", original_size, data.len());
+                println!(
+                    "WARNING: Size mismatch! Expected {}, got {}",
+                    original_size,
+                    data.len()
+                );
             }
 
             // Show first few bytes

@@ -1,6 +1,6 @@
 //! Combined importance scoring
 
-use crate::{PromptAnalyzer, PromptFeatures, QualityPredictor, Result, UsageHistory};
+use crate::{PromptAnalyzer, PromptFeatures, QualityPredictor, UsageHistory};
 use haagenti_fragments::{FragmentId, FragmentType};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -112,7 +112,14 @@ impl ImportanceScorer {
         total_steps: u32,
     ) -> ImportanceScore {
         let features = self.analyzer.analyze(prompt);
-        self.score_with_features(fragment_id, layer_name, fragment_type, &features, step, total_steps)
+        self.score_with_features(
+            fragment_id,
+            layer_name,
+            fragment_type,
+            &features,
+            step,
+            total_steps,
+        )
     }
 
     /// Score with pre-analyzed features
@@ -128,7 +135,9 @@ impl ImportanceScorer {
         // Compute component scores
         let prompt_score = features.layer_importance(layer_name);
         let history_score = self.history.importance(&fragment_id);
-        let quality_score = self.predictor.predict_importance(layer_name, fragment_type, step, total_steps);
+        let quality_score =
+            self.predictor
+                .predict_importance(layer_name, fragment_type, step, total_steps);
         let step_score = self.compute_step_importance(step, total_steps);
 
         // Weighted combination
@@ -144,7 +153,9 @@ impl ImportanceScorer {
         let confidence = if has_history { 0.8 } else { 0.5 };
 
         // Recommended quality
-        let recommended_quality = self.predictor.predict_quality(layer_name, fragment_type, step, total_steps);
+        let recommended_quality =
+            self.predictor
+                .predict_quality(layer_name, fragment_type, step, total_steps);
 
         // Load order (inverse of importance)
         let load_order = ((1.0 - importance) * 1000.0) as u32;
@@ -251,7 +262,14 @@ impl AdaptiveScorer {
         step: u32,
         total_steps: u32,
     ) -> ImportanceScore {
-        let mut score = self.base.score(fragment_id, layer_name, fragment_type, prompt, step, total_steps);
+        let mut score = self.base.score(
+            fragment_id,
+            layer_name,
+            fragment_type,
+            prompt,
+            step,
+            total_steps,
+        );
 
         // Apply learned adjustment if we have feedback
         if let Some(adjustment) = self.compute_adjustment(&fragment_id) {
@@ -273,7 +291,8 @@ impl AdaptiveScorer {
 
     /// Compute adjustment from feedback
     fn compute_adjustment(&self, fragment_id: &FragmentId) -> Option<f32> {
-        let relevant: Vec<_> = self.feedback
+        let relevant: Vec<_> = self
+            .feedback
             .iter()
             .filter(|f| f.fragment_id == *fragment_id)
             .collect();
@@ -283,10 +302,8 @@ impl AdaptiveScorer {
         }
 
         // Compute average prediction error
-        let avg_error: f32 = relevant
-            .iter()
-            .map(|f| f.actual - f.predicted)
-            .sum::<f32>() / relevant.len() as f32;
+        let avg_error: f32 =
+            relevant.iter().map(|f| f.actual - f.predicted).sum::<f32>() / relevant.len() as f32;
 
         Some(avg_error * 0.5) // Apply 50% of the error as adjustment
     }

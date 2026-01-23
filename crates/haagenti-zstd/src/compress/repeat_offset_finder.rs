@@ -19,7 +19,7 @@
 //! 2. **Bonus Scoring**: Give repeat offset matches a length bonus
 //! 3. **State Tracking**: Keep repeat offsets synchronized with encoder
 
-use super::match_finder::{Match, MatchFinder, LazyMatchFinder, MIN_MATCH_LENGTH, MAX_MATCH_LENGTH};
+use super::match_finder::{LazyMatchFinder, Match, MAX_MATCH_LENGTH, MIN_MATCH_LENGTH};
 
 /// Bonus (in bytes) for matches at repeat offsets.
 /// A match at rep0 saves ~8 bits = 1 byte, so a bonus of 1-2 is appropriate.
@@ -63,9 +63,7 @@ impl RepeatOffsetMatchFinder {
                 // rep0 - no change
             } else if actual_offset == self.rep_offsets[1] {
                 // rep1 -> rotate to front
-                let temp = self.rep_offsets[1];
-                self.rep_offsets[1] = self.rep_offsets[0];
-                self.rep_offsets[0] = temp;
+                self.rep_offsets.swap(1, 0);
             } else if actual_offset == self.rep_offsets[2] {
                 // rep2 -> rotate to front
                 let temp = self.rep_offsets[2];
@@ -135,7 +133,8 @@ impl RepeatOffsetMatchFinder {
         // Quick 4-byte prefix check
         if pos + 4 <= input.len() && match_pos + 4 <= input.len() {
             let cur = unsafe { std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32) };
-            let prev = unsafe { std::ptr::read_unaligned(input.as_ptr().add(match_pos) as *const u32) };
+            let prev =
+                unsafe { std::ptr::read_unaligned(input.as_ptr().add(match_pos) as *const u32) };
 
             if cur != prev {
                 return 0;
@@ -153,7 +152,11 @@ impl RepeatOffsetMatchFinder {
             while len < max_len && input[match_pos + len] == input[pos + len] {
                 len += 1;
             }
-            if len >= MIN_MATCH_LENGTH { len } else { 0 }
+            if len >= MIN_MATCH_LENGTH {
+                len
+            } else {
+                0
+            }
         }
     }
 
@@ -161,7 +164,12 @@ impl RepeatOffsetMatchFinder {
     ///
     /// Probes all 3 repeat offsets first, then falls back to hash chain search.
     /// Returns the match with the best "effective length" (length + bonus for rep offsets).
-    fn find_best_match_with_rep(&mut self, input: &[u8], pos: usize, literal_length: usize) -> Option<Match> {
+    fn find_best_match_with_rep(
+        &mut self,
+        input: &[u8],
+        pos: usize,
+        _literal_length: usize,
+    ) -> Option<Match> {
         let mut best_match: Option<Match> = None;
         let mut best_score: usize = 0;
 
@@ -198,7 +206,7 @@ impl RepeatOffsetMatchFinder {
 
         if let Some(hash_match) = self.inner.inner.find_best_match(input, pos, hash as usize) {
             // Score without repeat bonus
-            let hash_score = hash_match.length;
+            let _hash_score = hash_match.length;
 
             // Check if hash match is at a repeat offset (gets bonus retroactively)
             let hash_is_rep = self.rep_offset_index(hash_match.offset);

@@ -48,8 +48,8 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
         .map_err(|e| format!("Invalid UTF-8 in header: {}", e))?;
 
     // Parse JSON
-    let header: serde_json::Value = serde_json::from_str(header_json)
-        .map_err(|e| format!("Invalid JSON header: {}", e))?;
+    let header: serde_json::Value =
+        serde_json::from_str(header_json).map_err(|e| format!("Invalid JSON header: {}", e))?;
 
     let mut tensors = HashMap::new();
 
@@ -132,8 +132,7 @@ fn convert_safetensors_to_hct(config: &ConverterConfig) -> Result<ConversionStat
     let start = Instant::now();
 
     // Read entire file
-    let data = fs::read(&config.input)
-        .map_err(|e| format!("Failed to read input: {}", e))?;
+    let data = fs::read(&config.input).map_err(|e| format!("Failed to read input: {}", e))?;
 
     println!(
         "Read {} ({:.2} MB)",
@@ -186,9 +185,13 @@ fn convert_safetensors_to_hct(config: &ConverterConfig) -> Result<ConversionStat
             }
             CompressionAlgorithm::Zstd => {
                 let compressor = ZstdCompressor::with_level(config.level);
-                let mut writer =
-                    HctWriter::new(output_file, CompressionAlgorithm::Zstd, dtype, shape.clone())
-                        .with_block_size(config.block_size);
+                let mut writer = HctWriter::new(
+                    output_file,
+                    CompressionAlgorithm::Zstd,
+                    dtype,
+                    shape.clone(),
+                )
+                .with_block_size(config.block_size);
                 writer
                     .compress_data(tensor_data, &compressor)
                     .map_err(|e| format!("Compression failed: {}", e))?;
@@ -265,9 +268,7 @@ fn main() {
                 i += 2;
             }
             "--block-size" | "-b" => {
-                block_size = args[i + 1]
-                    .parse()
-                    .expect("Invalid block size");
+                block_size = args[i + 1].parse().expect("Invalid block size");
                 i += 2;
             }
             "--help" | "-h" => {
@@ -278,7 +279,9 @@ fn main() {
                 println!("Options:");
                 println!("  -i, --input <FILE>       Input safetensors file");
                 println!("  -o, --output-dir <DIR>   Output directory for .hct files");
-                println!("  -a, --algorithm <ALG>    Compression algorithm (lz4, zstd) [default: zstd]");
+                println!(
+                    "  -a, --algorithm <ALG>    Compression algorithm (lz4, zstd) [default: zstd]"
+                );
                 println!("  -l, --level <LEVEL>      Compression level (fast, default, best)");
                 println!("  -b, --block-size <SIZE>  Block size in bytes [default: 16384]");
                 println!("  -h, --help               Show this help");
@@ -319,8 +322,9 @@ fn main() {
         Ok(stats) => {
             let overall_ratio =
                 stats.total_original_bytes as f64 / stats.total_compressed_bytes as f64;
-            let throughput =
-                stats.total_original_bytes as f64 / (stats.elapsed_ms as f64 / 1000.0) / 1_000_000.0;
+            let throughput = stats.total_original_bytes as f64
+                / (stats.elapsed_ms as f64 / 1000.0)
+                / 1_000_000.0;
 
             println!("\n=== Summary ===");
             println!("Tensors: {}", stats.total_tensors);

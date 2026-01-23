@@ -3,7 +3,7 @@
 //! The literals section contains raw byte data that is copied to the output.
 
 use crate::fse::BitReader;
-use crate::huffman::{HuffmanDecoder, build_table_from_weights, parse_huffman_weights};
+use crate::huffman::{build_table_from_weights, parse_huffman_weights, HuffmanDecoder};
 use haagenti_core::{Error, Result};
 
 /// Literals block type.
@@ -226,11 +226,8 @@ impl LiteralsSection {
         }
 
         // Decode Huffman-compressed literals
-        let data = Self::decode_huffman_literals(
-            compressed_data,
-            regenerated_size,
-            is_single_stream,
-        )?;
+        let data =
+            Self::decode_huffman_literals(compressed_data, regenerated_size, is_single_stream)?;
 
         let total_size = header_size + compressed_size;
 
@@ -321,7 +318,9 @@ impl LiteralsSection {
 
         // Validate boundaries
         if stream2_start > data.len() || stream3_start > data.len() || stream4_start > data.len() {
-            return Err(Error::corrupted("Invalid stream boundaries in 4-stream literals"));
+            return Err(Error::corrupted(
+                "Invalid stream boundaries in 4-stream literals",
+            ));
         }
 
         // Calculate output size per stream (regenerated_size split into 4)
@@ -349,7 +348,10 @@ impl LiteralsSection {
             if start >= end {
                 // Empty stream
                 if sizes[i] > 0 {
-                    return Err(Error::corrupted(format!("Stream {} is empty but expects {} symbols", i, sizes[i])));
+                    return Err(Error::corrupted(format!(
+                        "Stream {} is empty but expects {} symbols",
+                        i, sizes[i]
+                    )));
                 }
                 continue;
             }
@@ -380,8 +382,14 @@ mod tests {
     fn test_literals_block_type_parsing() {
         assert_eq!(LiteralsBlockType::from_field(0), LiteralsBlockType::Raw);
         assert_eq!(LiteralsBlockType::from_field(1), LiteralsBlockType::Rle);
-        assert_eq!(LiteralsBlockType::from_field(2), LiteralsBlockType::Compressed);
-        assert_eq!(LiteralsBlockType::from_field(3), LiteralsBlockType::Treeless);
+        assert_eq!(
+            LiteralsBlockType::from_field(2),
+            LiteralsBlockType::Compressed
+        );
+        assert_eq!(
+            LiteralsBlockType::from_field(3),
+            LiteralsBlockType::Treeless
+        );
     }
 
     #[test]
@@ -481,8 +489,11 @@ mod tests {
         assert!(result.is_err());
         if let Err(e) = result {
             let msg = format!("{:?}", e);
-            assert!(msg.contains("previous table") || msg.contains("Treeless"),
-                "Expected 'previous table' or 'Treeless' error, got: {}", msg);
+            assert!(
+                msg.contains("previous table") || msg.contains("Treeless"),
+                "Expected 'previous table' or 'Treeless' error, got: {}",
+                msg
+            );
         }
     }
 

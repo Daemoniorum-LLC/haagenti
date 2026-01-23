@@ -1,9 +1,9 @@
 //! Test with exactly 2 sequences
 
 use haagenti_core::{CompressionLevel, Compressor};
-use haagenti_zstd::ZstdCompressor;
 use haagenti_zstd::compress::block::matches_to_sequences;
 use haagenti_zstd::compress::MatchFinder;
+use haagenti_zstd::ZstdCompressor;
 use std::io::Cursor;
 
 fn test_pattern(name: &str, data: &[u8]) {
@@ -20,11 +20,20 @@ fn test_pattern(name: &str, data: &[u8]) {
         Err(e) => format!("FAILED"),
     };
 
-    println!("{:40} matches={}, seqs={}, result={}", name, matches.len(), sequences.len(), result);
+    println!(
+        "{:40} matches={}, seqs={}, result={}",
+        name,
+        matches.len(),
+        sequences.len(),
+        result
+    );
 }
 
 fn main() {
-    println!("{:40} {:>8} {:>5} {:>10}", "Pattern", "matches", "seqs", "result");
+    println!(
+        "{:40} {:>8} {:>5} {:>10}",
+        "Pattern", "matches", "seqs", "result"
+    );
     println!("{:-<70}", "");
 
     // Need to craft patterns with exact number of matches
@@ -32,7 +41,10 @@ fn main() {
     test_pattern("2 matches: abcdabcdXYZabcd", b"abcdabcdXYZabcd");
 
     // Pattern with 2 matches different lengths
-    test_pattern("2 matches: abcdefghXabcdefghYabcd", b"abcdefghXabcdefghYabcd");
+    test_pattern(
+        "2 matches: abcdefghXabcdefghYabcd",
+        b"abcdefghXabcdefghYabcd",
+    );
 
     // Try progressively more matches
     for n in 1..=5 {
@@ -43,7 +55,7 @@ fn main() {
                 data.push(b'0' + i as u8);
             }
         }
-        test_pattern(&format!("{} repeats of PATTERN", n+1), &data);
+        test_pattern(&format!("{} repeats of PATTERN", n + 1), &data);
     }
 
     // Try pattern that we know works with 1 match

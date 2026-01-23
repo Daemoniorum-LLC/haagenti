@@ -51,7 +51,10 @@ fn main() {
     }
 
     if let Some(idx) = first_diff {
-        println!("\n=== First difference at offset 0x{:04x} ({}) ===", idx, idx);
+        println!(
+            "\n=== First difference at offset 0x{:04x} ({}) ===",
+            idx, idx
+        );
 
         // Context around the diff
         let start = idx.saturating_sub(5);

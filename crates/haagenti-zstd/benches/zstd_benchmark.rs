@@ -3,8 +3,8 @@
 //! Compares haagenti-zstd native Rust implementation against
 //! the reference zstd C library.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use haagenti_core::{Compressor, Decompressor, CompressionLevel};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use haagenti_core::{CompressionLevel, Compressor, Decompressor};
 use haagenti_zstd::{ZstdCompressor, ZstdDecompressor};
 
 // ============================================================================
@@ -40,8 +40,8 @@ fn generate_llm_weights(size: usize) -> Vec<u8> {
 
     // Generate a repeating pattern of f16 values near zero
     let values: [f32; 16] = [
-        0.0, 0.001, -0.001, 0.01, -0.01, 0.1, -0.1, 0.5,
-        -0.5, 0.001, 0.002, -0.002, 0.0, 0.0, 0.003, -0.003,
+        0.0, 0.001, -0.001, 0.01, -0.01, 0.1, -0.1, 0.5, -0.5, 0.001, 0.002, -0.002, 0.0, 0.0,
+        0.003, -0.003,
     ];
 
     while data.len() < size {
@@ -85,9 +85,7 @@ fn bench_compression(c: &mut Criterion) {
             &text_data,
             |b, data| {
                 let compressor = ZstdCompressor::new();
-                b.iter(|| {
-                    compressor.compress(black_box(data)).unwrap()
-                })
+                b.iter(|| compressor.compress(black_box(data)).unwrap())
             },
         );
 
@@ -96,9 +94,7 @@ fn bench_compression(c: &mut Criterion) {
             &binary_data,
             |b, data| {
                 let compressor = ZstdCompressor::new();
-                b.iter(|| {
-                    compressor.compress(black_box(data)).unwrap()
-                })
+                b.iter(|| compressor.compress(black_box(data)).unwrap())
             },
         );
 
@@ -107,9 +103,7 @@ fn bench_compression(c: &mut Criterion) {
             &llm_data,
             |b, data| {
                 let compressor = ZstdCompressor::new();
-                b.iter(|| {
-                    compressor.compress(black_box(data)).unwrap()
-                })
+                b.iter(|| compressor.compress(black_box(data)).unwrap())
             },
         );
 
@@ -117,31 +111,19 @@ fn bench_compression(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("zstd_ref/text", size),
             &text_data,
-            |b, data| {
-                b.iter(|| {
-                    zstd::encode_all(black_box(data.as_slice()), 3).unwrap()
-                })
-            },
+            |b, data| b.iter(|| zstd::encode_all(black_box(data.as_slice()), 3).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("zstd_ref/binary", size),
             &binary_data,
-            |b, data| {
-                b.iter(|| {
-                    zstd::encode_all(black_box(data.as_slice()), 3).unwrap()
-                })
-            },
+            |b, data| b.iter(|| zstd::encode_all(black_box(data.as_slice()), 3).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("zstd_ref/llm_weights", size),
             &llm_data,
-            |b, data| {
-                b.iter(|| {
-                    zstd::encode_all(black_box(data.as_slice()), 3).unwrap()
-                })
-            },
+            |b, data| b.iter(|| zstd::encode_all(black_box(data.as_slice()), 3).unwrap()),
         );
     }
 
@@ -174,9 +156,7 @@ fn bench_decompression(c: &mut Criterion) {
             &haagenti_text,
             |b, data| {
                 let decompressor = ZstdDecompressor::new();
-                b.iter(|| {
-                    decompressor.decompress(black_box(data)).unwrap()
-                })
+                b.iter(|| decompressor.decompress(black_box(data)).unwrap())
             },
         );
 
@@ -185,9 +165,7 @@ fn bench_decompression(c: &mut Criterion) {
             &haagenti_llm,
             |b, data| {
                 let decompressor = ZstdDecompressor::new();
-                b.iter(|| {
-                    decompressor.decompress(black_box(data)).unwrap()
-                })
+                b.iter(|| decompressor.decompress(black_box(data)).unwrap())
             },
         );
 
@@ -195,21 +173,13 @@ fn bench_decompression(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("zstd_ref/text", size),
             &zstd_text,
-            |b, data| {
-                b.iter(|| {
-                    zstd::decode_all(black_box(data.as_slice())).unwrap()
-                })
-            },
+            |b, data| b.iter(|| zstd::decode_all(black_box(data.as_slice())).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("zstd_ref/llm_weights", size),
             &zstd_llm,
-            |b, data| {
-                b.iter(|| {
-                    zstd::decode_all(black_box(data.as_slice())).unwrap()
-                })
-            },
+            |b, data| b.iter(|| zstd::decode_all(black_box(data.as_slice())).unwrap()),
         );
     }
 
@@ -241,27 +211,21 @@ fn bench_compression_ratio(c: &mut Criterion) {
     for (name, data) in &datasets {
         let compressor = ZstdCompressor::new();
 
-        group.bench_function(
-            BenchmarkId::new("haagenti", *name),
-            |b| {
-                b.iter(|| {
-                    let compressed = compressor.compress(black_box(data)).unwrap();
-                    let ratio = data.len() as f64 / compressed.len() as f64;
-                    black_box(ratio)
-                })
-            },
-        );
+        group.bench_function(BenchmarkId::new("haagenti", *name), |b| {
+            b.iter(|| {
+                let compressed = compressor.compress(black_box(data)).unwrap();
+                let ratio = data.len() as f64 / compressed.len() as f64;
+                black_box(ratio)
+            })
+        });
 
-        group.bench_function(
-            BenchmarkId::new("zstd_ref", *name),
-            |b| {
-                b.iter(|| {
-                    let compressed = zstd::encode_all(black_box(data.as_slice()), 3).unwrap();
-                    let ratio = data.len() as f64 / compressed.len() as f64;
-                    black_box(ratio)
-                })
-            },
-        );
+        group.bench_function(BenchmarkId::new("zstd_ref", *name), |b| {
+            b.iter(|| {
+                let compressed = zstd::encode_all(black_box(data.as_slice()), 3).unwrap();
+                let ratio = data.len() as f64 / compressed.len() as f64;
+                black_box(ratio)
+            })
+        });
     }
 
     group.finish();
@@ -282,30 +246,22 @@ fn bench_roundtrip(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         // Haagenti roundtrip
-        group.bench_with_input(
-            BenchmarkId::new("haagenti", size),
-            &data,
-            |b, data| {
-                let compressor = ZstdCompressor::new();
-                let decompressor = ZstdDecompressor::new();
-                b.iter(|| {
-                    let compressed = compressor.compress(black_box(data)).unwrap();
-                    decompressor.decompress(&compressed).unwrap()
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("haagenti", size), &data, |b, data| {
+            let compressor = ZstdCompressor::new();
+            let decompressor = ZstdDecompressor::new();
+            b.iter(|| {
+                let compressed = compressor.compress(black_box(data)).unwrap();
+                decompressor.decompress(&compressed).unwrap()
+            })
+        });
 
         // Reference zstd roundtrip
-        group.bench_with_input(
-            BenchmarkId::new("zstd_ref", size),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let compressed = zstd::encode_all(black_box(data.as_slice()), 3).unwrap();
-                    zstd::decode_all(compressed.as_slice()).unwrap()
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("zstd_ref", size), &data, |b, data| {
+            b.iter(|| {
+                let compressed = zstd::encode_all(black_box(data.as_slice()), 3).unwrap();
+                zstd::decode_all(compressed.as_slice()).unwrap()
+            })
+        });
     }
 
     group.finish();
@@ -327,27 +283,17 @@ fn bench_compression_levels(c: &mut Criterion) {
     ];
 
     for (name, level) in &levels {
-        group.bench_function(
-            BenchmarkId::new("haagenti", *name),
-            |b| {
-                let compressor = ZstdCompressor::with_level(*level);
-                b.iter(|| {
-                    compressor.compress(black_box(&data)).unwrap()
-                })
-            },
-        );
+        group.bench_function(BenchmarkId::new("haagenti", *name), |b| {
+            let compressor = ZstdCompressor::with_level(*level);
+            b.iter(|| compressor.compress(black_box(&data)).unwrap())
+        });
     }
 
     // Reference zstd levels
     for (name, zstd_level) in [("fast", 1), ("default", 3), ("best", 19)] {
-        group.bench_function(
-            BenchmarkId::new("zstd_ref", name),
-            |b| {
-                b.iter(|| {
-                    zstd::encode_all(black_box(data.as_slice()), zstd_level).unwrap()
-                })
-            },
-        );
+        group.bench_function(BenchmarkId::new("zstd_ref", name), |b| {
+            b.iter(|| zstd::encode_all(black_box(data.as_slice()), zstd_level).unwrap())
+        });
     }
 
     group.finish();
@@ -375,15 +321,11 @@ fn bench_dictionary_training(c: &mut Criterion) {
     let sample_refs: Vec<&[u8]> = samples.iter().map(|s| s.as_slice()).collect();
 
     group.bench_function("train_dict_1kb", |b| {
-        b.iter(|| {
-            haagenti_zstd::ZstdDictionary::train(black_box(&sample_refs), 1024).unwrap()
-        })
+        b.iter(|| haagenti_zstd::ZstdDictionary::train(black_box(&sample_refs), 1024).unwrap())
     });
 
     group.bench_function("train_dict_16kb", |b| {
-        b.iter(|| {
-            haagenti_zstd::ZstdDictionary::train(black_box(&sample_refs), 16384).unwrap()
-        })
+        b.iter(|| haagenti_zstd::ZstdDictionary::train(black_box(&sample_refs), 16384).unwrap())
     });
 
     // Test dictionary compression vs regular
@@ -392,16 +334,12 @@ fn bench_dictionary_training(c: &mut Criterion) {
 
     group.bench_function("compress_with_dict", |b| {
         let compressor = haagenti_zstd::ZstdDictCompressor::new(dict.clone());
-        b.iter(|| {
-            compressor.compress(black_box(&test_data)).unwrap()
-        })
+        b.iter(|| compressor.compress(black_box(&test_data)).unwrap())
     });
 
     group.bench_function("compress_without_dict", |b| {
         let compressor = ZstdCompressor::new();
-        b.iter(|| {
-            compressor.compress(black_box(&test_data)).unwrap()
-        })
+        b.iter(|| compressor.compress(black_box(&test_data)).unwrap())
     });
 
     group.finish();

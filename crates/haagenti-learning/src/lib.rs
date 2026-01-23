@@ -15,11 +15,11 @@ mod error;
 mod scheduler;
 mod trainer;
 
-pub use adapter::{LoraAdapter, LoraConfig, AdapterRegistry};
-pub use buffer::{ReplayBuffer, BufferConfig, Experience};
-pub use consolidation::{EwcRegularizer, EwcConfig, FisherInfo};
+pub use adapter::{AdapterRegistry, LoraAdapter, LoraConfig};
+pub use buffer::{BufferConfig, Experience, ReplayBuffer, ReservoirBuffer};
+pub use consolidation::{EwcConfig, EwcRegularizer, FisherInfo, SynapticIntelligence};
 pub use error::{LearningError, Result};
-pub use scheduler::{LearningRateScheduler, SchedulerConfig, WarmupScheduler};
+pub use scheduler::{LearningRateScheduler, ParamGroupScheduler, SchedulerConfig, WarmupScheduler};
 pub use trainer::{OnlineTrainer, TrainerConfig, TrainingStats};
 
 /// Learning strategies

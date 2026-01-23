@@ -1,6 +1,6 @@
 //! Preview scheduling strategies
 
-use crate::{PreviewQuality, Result};
+use crate::PreviewQuality;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -109,7 +109,9 @@ impl PreviewScheduler {
 
         match self.mode {
             ScheduleMode::EveryStep => true,
-            ScheduleMode::Interval { steps } => step % steps == 0 || step == self.total_steps,
+            ScheduleMode::Interval { steps } => {
+                step.is_multiple_of(steps) || step == self.total_steps
+            }
             ScheduleMode::Fixed => self.fixed_steps.contains(&step),
             ScheduleMode::Adaptive => self.adaptive_check(step),
             ScheduleMode::ThumbnailOnly => true,
@@ -130,7 +132,7 @@ impl PreviewScheduler {
             3 // Late: every 3 steps (details matter)
         };
 
-        step % interval == 0 || step == self.total_steps
+        step.is_multiple_of(interval) || step == self.total_steps
     }
 
     /// Get the quality for a step
@@ -312,7 +314,10 @@ mod tests {
 
         // Late steps: higher quality
         let late_quality = scheduler.quality_for_step(18);
-        assert!(matches!(late_quality, PreviewQuality::Medium | PreviewQuality::Full));
+        assert!(matches!(
+            late_quality,
+            PreviewQuality::Medium | PreviewQuality::Full
+        ));
     }
 
     #[test]

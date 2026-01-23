@@ -130,15 +130,13 @@ impl ShardReader {
         let path = path.as_ref();
 
         // Open file for memory mapping
-        let file = File::open(path).map_err(|e| {
-            Error::io(format!("failed to open shard {}: {}", path.display(), e))
-        })?;
+        let file = File::open(path)
+            .map_err(|e| Error::io(format!("failed to open shard {}: {}", path.display(), e)))?;
 
         // Create memory map
         let mmap = unsafe {
-            Mmap::map(&file).map_err(|e| {
-                Error::io(format!("failed to mmap shard {}: {}", path.display(), e))
-            })?
+            Mmap::map(&file)
+                .map_err(|e| Error::io(format!("failed to mmap shard {}: {}", path.display(), e)))?
         };
 
         // Parse header
@@ -154,14 +152,11 @@ impl ShardReader {
         }
 
         // Parse JSON header
-        let header_json = std::str::from_utf8(&mmap[8..header_end]).map_err(|e| {
-            Error::corrupted(format!("invalid UTF-8 in header: {}", e))
-        })?;
+        let header_json = std::str::from_utf8(&mmap[8..header_end])
+            .map_err(|e| Error::corrupted(format!("invalid UTF-8 in header: {}", e)))?;
 
-        let raw_tensors: HashMap<String, RawTensorInfo> =
-            serde_json::from_str(header_json).map_err(|e| {
-                Error::corrupted(format!("invalid JSON header: {}", e))
-            })?;
+        let raw_tensors: HashMap<String, RawTensorInfo> = serde_json::from_str(header_json)
+            .map_err(|e| Error::corrupted(format!("invalid JSON header: {}", e)))?;
 
         // Convert to TensorEntry, skipping __metadata__ and any entries without required fields
         let mut tensors: Vec<TensorEntry> = raw_tensors
@@ -236,9 +231,9 @@ impl ShardReader {
     ///
     /// This returns a view into the memory-mapped file without copying.
     pub fn tensor_bytes(&self, name: &str) -> Result<&[u8]> {
-        let entry = self.get(name).ok_or_else(|| {
-            Error::corrupted(format!("tensor '{}' not found in shard", name))
-        })?;
+        let entry = self
+            .get(name)
+            .ok_or_else(|| Error::corrupted(format!("tensor '{}' not found in shard", name)))?;
 
         let start = self.data_offset + entry.offset;
         let end = start + entry.size;
@@ -257,9 +252,9 @@ impl ShardReader {
     ///
     /// Handles F32, F16, and BF16 input types.
     pub fn tensor_f32(&self, name: &str) -> Result<Vec<f32>> {
-        let entry = self.get(name).ok_or_else(|| {
-            Error::corrupted(format!("tensor '{}' not found", name))
-        })?;
+        let entry = self
+            .get(name)
+            .ok_or_else(|| Error::corrupted(format!("tensor '{}' not found", name)))?;
         let bytes = self.tensor_bytes(name)?;
 
         match entry.dtype {
@@ -317,7 +312,7 @@ impl ShardReader {
 /// - `model-00001-of-00100.safetensors` (multi-shard)
 pub fn discover_shards(model_path: &Path) -> Result<Vec<PathBuf>> {
     // If it's a file, return just that
-    if model_path.is_file() && model_path.extension().map_or(false, |e| e == "safetensors") {
+    if model_path.is_file() && model_path.extension().is_some_and(|e| e == "safetensors") {
         return Ok(vec![model_path.to_path_buf()]);
     }
 
@@ -327,9 +322,7 @@ pub fn discover_shards(model_path: &Path) -> Result<Vec<PathBuf>> {
             .map_err(|e| Error::io(format!("failed to read model directory: {}", e)))?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
-            .filter(|path| {
-                path.extension().map_or(false, |e| e == "safetensors")
-            })
+            .filter(|path| path.extension().is_some_and(|e| e == "safetensors"))
             .collect();
 
         if shards.is_empty() {
@@ -397,7 +390,7 @@ fn find_in_hf_cache(model_id: &Path) -> Result<Option<Vec<PathBuf>>> {
         .map_err(|e| Error::io(format!("failed to read snapshot: {}", e)))?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |e| e == "safetensors"))
+        .filter(|p| p.extension().is_some_and(|e| e == "safetensors"))
         .collect();
 
     if shards.is_empty() {

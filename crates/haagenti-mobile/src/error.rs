@@ -31,10 +31,7 @@ pub enum MobileError {
 
     /// Thermal throttling
     #[error("Thermal throttling active: {state:?}, temperature: {temp_celsius}°C")]
-    ThermalThrottling {
-        state: String,
-        temp_celsius: f32,
-    },
+    ThermalThrottling { state: String, temp_celsius: f32 },
 
     /// Out of memory
     #[error("Out of memory: requested {requested_mb}MB, available {available_mb}MB")]

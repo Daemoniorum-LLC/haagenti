@@ -1,6 +1,5 @@
 //! Elastic Weight Consolidation (EWC) for catastrophic forgetting prevention
 
-use crate::{LearningError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -84,7 +83,12 @@ impl FisherInfo {
         }
 
         let mut penalty = 0.0;
-        for ((f, opt), curr) in self.fisher.iter().zip(&self.optimal_params).zip(current_params) {
+        for ((f, opt), curr) in self
+            .fisher
+            .iter()
+            .zip(&self.optimal_params)
+            .zip(current_params)
+        {
             let diff = curr - opt;
             penalty += f * diff * diff;
         }
@@ -168,7 +172,10 @@ impl EwcRegularizer {
     }
 
     /// Compute EWC gradient
-    pub fn compute_gradient(&self, current_params: &HashMap<String, Vec<f32>>) -> HashMap<String, Vec<f32>> {
+    pub fn compute_gradient(
+        &self,
+        current_params: &HashMap<String, Vec<f32>>,
+    ) -> HashMap<String, Vec<f32>> {
         let mut gradients = HashMap::new();
 
         for (name, params) in current_params {
@@ -263,17 +270,11 @@ impl SynapticIntelligence {
         gradients: &HashMap<String, Vec<f32>>,
     ) {
         for (name, grad) in gradients {
-            if let (Some(running), Some(prev)) = (
-                self.running_omega.get_mut(name),
-                self.prev_params.get(name),
-            ) {
+            if let (Some(running), Some(prev)) =
+                (self.running_omega.get_mut(name), self.prev_params.get(name))
+            {
                 if let Some(curr) = params.get(name) {
-                    for (((r, g), p), c) in running
-                        .iter_mut()
-                        .zip(grad)
-                        .zip(prev)
-                        .zip(curr)
-                    {
+                    for (((r, g), p), c) in running.iter_mut().zip(grad).zip(prev).zip(curr) {
                         *r += -g * (c - p);
                     }
                 }
@@ -289,12 +290,7 @@ impl SynapticIntelligence {
                 self.prev_params.get(name),
                 params.get(name),
             ) {
-                for (((o, r), p), c) in omega
-                    .iter_mut()
-                    .zip(running)
-                    .zip(prev)
-                    .zip(curr)
-                {
+                for (((o, r), p), c) in omega.iter_mut().zip(running).zip(prev).zip(curr) {
                     let delta = (c - p).abs() + self.damping;
                     *o += r / delta;
                 }
@@ -315,10 +311,8 @@ impl SynapticIntelligence {
         let mut total = 0.0;
 
         for (name, omega) in &self.omega {
-            if let (Some(prev), Some(curr)) = (
-                self.prev_params.get(name),
-                current_params.get(name),
-            ) {
+            if let (Some(prev), Some(curr)) = (self.prev_params.get(name), current_params.get(name))
+            {
                 for ((o, p), c) in omega.iter().zip(prev).zip(curr) {
                     let diff = c - p;
                     total += o * diff * diff;

@@ -118,8 +118,7 @@ impl FragmentSignature {
                 hasher_input.extend_from_slice(chunk);
 
                 let hash = Blake3::hash(&hasher_input);
-                let hash_val =
-                    u32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]);
+                let hash_val = u32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]);
 
                 *min = (*min).min(hash_val);
             }
@@ -163,7 +162,8 @@ impl FragmentSignature {
         let sum: f32 = values.iter().sum();
         let mean = sum / values.len() as f32;
 
-        let variance: f32 = values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / values.len() as f32;
+        let variance: f32 =
+            values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / values.len() as f32;
         let std_dev = variance.sqrt();
 
         let min_val = values.iter().cloned().fold(f32::INFINITY, f32::min);
@@ -246,8 +246,19 @@ impl FragmentSignature {
             .zip(other.histogram.iter())
             .map(|(&a, &b)| a as f32 * b as f32)
             .sum();
-        let mag_a: f32 = self.stats.histogram.iter().map(|&x| (x as f32).powi(2)).sum::<f32>().sqrt();
-        let mag_b: f32 = other.histogram.iter().map(|&x| (x as f32).powi(2)).sum::<f32>().sqrt();
+        let mag_a: f32 = self
+            .stats
+            .histogram
+            .iter()
+            .map(|&x| (x as f32).powi(2))
+            .sum::<f32>()
+            .sqrt();
+        let mag_b: f32 = other
+            .histogram
+            .iter()
+            .map(|&x| (x as f32).powi(2))
+            .sum::<f32>()
+            .sqrt();
         let hist_sim = if mag_a > 0.0 && mag_b > 0.0 {
             dot / (mag_a * mag_b)
         } else {

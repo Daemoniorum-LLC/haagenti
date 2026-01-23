@@ -81,10 +81,10 @@
 //!
 //! ## Components
 //!
-//! - [`analysis`]: Compressibility fingerprinting and strategy selection
-//! - [`match_finder`]: LZ77 match finding using hash chains
-//! - [`sequences`]: RLE-first sequence encoding with FSE fallback
-//! - [`block`]: Block-level encoding (literals + sequences)
+//! - `analysis`: Compressibility fingerprinting and strategy selection
+//! - `match_finder`: LZ77 match finding using hash chains
+//! - `sequences`: RLE-first sequence encoding with FSE fallback
+//! - `block`: Block-level encoding (literals + sequences)
 //!
 //! ## Strategy Selection
 //!
@@ -99,25 +99,33 @@
 
 mod analysis;
 mod arena;
+pub mod block;
 mod match_finder;
 mod repeat_offset_finder;
 mod sequences;
-pub mod block;
 pub mod speculative;
 
 pub use analysis::{
-    CompressibilityFingerprint, PatternType, CompressionStrategy,
     // Phase 3: Ultra-fast entropy fingerprinting
-    fast_entropy_estimate, fast_should_compress, fast_predict_block_type, FastBlockType,
+    fast_entropy_estimate,
+    fast_predict_block_type,
+    fast_should_compress,
+    CompressibilityFingerprint,
+    CompressionStrategy,
+    FastBlockType,
+    PatternType,
 };
 pub use arena::{Arena, ArenaVec, DEFAULT_ARENA_SIZE};
-pub use match_finder::{MatchFinder, LazyMatchFinder, Match, CacheAligned};
+pub use block::{encode_block, BlockEncoder};
+pub use match_finder::{CacheAligned, LazyMatchFinder, Match, MatchFinder};
 pub use repeat_offset_finder::RepeatOffsetMatchFinder;
-pub use sequences::{analyze_for_rle, encode_sequences_rle, encode_sequences_fse, encode_sequences_fse_with_encoded, encode_sequences_with_custom_tables, RleSuitability, EncodedSequence};
-pub use block::{BlockEncoder, encode_block};
+pub use sequences::{
+    analyze_for_rle, encode_sequences_fse, encode_sequences_fse_with_encoded, encode_sequences_rle,
+    encode_sequences_with_custom_tables, EncodedSequence, RleSuitability,
+};
 pub use speculative::{SpeculativeCompressor, SpeculativeStrategy};
 
-use crate::frame::{ZSTD_MAGIC, xxhash64};
+use crate::frame::{xxhash64, ZSTD_MAGIC};
 use crate::{CustomFseTables, CustomHuffmanTable};
 use haagenti_core::{CompressionLevel, Result};
 
@@ -175,10 +183,10 @@ impl CompressContext {
         // afford moderate depth without excessive slowdown.
         let search_depth = match level {
             CompressionLevel::None => 1,
-            CompressionLevel::Fast => 8,      // Balanced for speed
-            CompressionLevel::Default => 24,  // Good balance
-            CompressionLevel::Best => 48,     // Favor ratio
-            CompressionLevel::Ultra => 128,   // Maximum quality
+            CompressionLevel::Fast => 8,     // Balanced for speed
+            CompressionLevel::Default => 24, // Good balance
+            CompressionLevel::Best => 48,    // Favor ratio
+            CompressionLevel::Ultra => 128,  // Maximum quality
             CompressionLevel::Custom(n) => n.min(255) as usize,
         };
 
@@ -187,15 +195,11 @@ impl CompressContext {
         // - Fast/Default: Lazy for good ratio/speed balance
         // - Best/Ultra: RepeatAware for best compression (exploits repeat offsets)
         let match_finder = match level {
-            CompressionLevel::None => {
-                MatchFinderVariant::Greedy(MatchFinder::new(search_depth))
-            }
+            CompressionLevel::None => MatchFinderVariant::Greedy(MatchFinder::new(search_depth)),
             CompressionLevel::Best | CompressionLevel::Ultra => {
                 MatchFinderVariant::RepeatAware(RepeatOffsetMatchFinder::new(search_depth))
             }
-            _ => {
-                MatchFinderVariant::Lazy(LazyMatchFinder::new(search_depth))
-            }
+            _ => MatchFinderVariant::Lazy(LazyMatchFinder::new(search_depth)),
         };
 
         Self {
@@ -373,7 +377,12 @@ impl CompressContext {
     /// Matches reference zstd's level 1 behavior:
     /// - Uses window descriptor mode (not single_segment) for better compatibility
     /// - No FCS for small frames
-    fn write_frame_header(&self, content_size: usize, include_checksum: bool, output: &mut Vec<u8>) -> Result<()> {
+    fn write_frame_header(
+        &self,
+        content_size: usize,
+        include_checksum: bool,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
         // Frame descriptor layout:
         // FHD: FCS_Field_Size[7:6], Single_Segment[5], Unused[4], Reserved[3], Checksum[2], Dict_ID[1:0]
         let checksum_flag = if include_checksum { 0x04 } else { 0x00 };
@@ -389,10 +398,10 @@ impl CompressContext {
         // Use minimum 19 (512KB) to match reference zstd behavior at level 1
         // This provides better cross-decoder compatibility
         let window_log = if content_size == 0 {
-            19u8  // 512KB default
+            19u8 // 512KB default
         } else {
             let log = (content_size as f64).log2().ceil() as u8;
-            log.max(19).min(30)  // minimum 512KB window
+            log.clamp(19, 30) // minimum 512KB window
         };
 
         // Use FCS for larger content (>128KB), skip for typical block sizes
@@ -403,7 +412,7 @@ impl CompressContext {
         } else {
             // No FCS (FCS_Field_Size=00, Single_Segment=0)
             // Decoder will use window size as max content size
-            (0, 0x00u8 | checksum_flag)
+            (0, checksum_flag)
         };
 
         output.push(descriptor);
@@ -449,7 +458,12 @@ impl CompressContext {
     }
 
     /// Encode a single block.
-    fn encode_single_block(&mut self, input: &[u8], is_last: bool, output: &mut Vec<u8>) -> Result<()> {
+    fn encode_single_block(
+        &mut self,
+        input: &[u8],
+        is_last: bool,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
         // Try to find the best encoding strategy
         let (block_type, encoded) = self.select_block_encoding(input)?;
 
@@ -458,9 +472,9 @@ impl CompressContext {
         header |= (block_type as u32) << 1;
 
         let size = match block_type {
-            0 => input.len(),      // Raw: decompressed size
-            1 => input.len(),      // RLE: decompressed size
-            2 => encoded.len(),    // Compressed: compressed size
+            0 => input.len(),   // Raw: decompressed size
+            1 => input.len(),   // RLE: decompressed size
+            2 => encoded.len(), // Compressed: compressed size
             _ => unreachable!(),
         };
 
@@ -510,9 +524,7 @@ impl CompressContext {
 
         // Choose encoding based on refined strategy
         match fingerprint.strategy {
-            CompressionStrategy::RleBlock => {
-                Ok((1, vec![input[0]]))
-            }
+            CompressionStrategy::RleBlock => Ok((1, vec![input[0]])),
             CompressionStrategy::RawBlock => {
                 let compressed = self.encode_literals_only(input)?;
                 if compressed.len() < input.len() {
@@ -657,7 +669,11 @@ mod tests {
 
         // Should have magic (4) + header (2: descriptor + 1-byte FCS) + empty block (3)
         // Note: compress() does NOT include checksum by default
-        assert!(result.len() >= 4 + 2 + 3, "expected at least 9 bytes, got {}", result.len());
+        assert!(
+            result.len() >= 4 + 2 + 3,
+            "expected at least 9 bytes, got {}",
+            result.len()
+        );
 
         // Verify magic
         assert_eq!(&result[0..4], &[0x28, 0xB5, 0x2F, 0xFD]);
@@ -685,7 +701,11 @@ mod tests {
 
     #[test]
     fn test_compression_levels() {
-        for level in [CompressionLevel::Fast, CompressionLevel::Default, CompressionLevel::Best] {
+        for level in [
+            CompressionLevel::Fast,
+            CompressionLevel::Default,
+            CompressionLevel::Best,
+        ] {
             let mut ctx = CompressContext::new(level);
             let input = b"Test compression with different levels";
             let result = ctx.compress(input);
@@ -980,7 +1000,10 @@ mod tests {
         let text_data = b"The quick brown fox. ".repeat(100);
         let fp_text = analysis::CompressibilityFingerprint::analyze(&text_data);
         assert!(
-            matches!(fp_text.pattern, PatternType::TextLike | PatternType::Periodic { .. } | PatternType::LowEntropy),
+            matches!(
+                fp_text.pattern,
+                PatternType::TextLike | PatternType::Periodic { .. } | PatternType::LowEntropy
+            ),
             "Should detect text-like or periodic pattern, got {:?}",
             fp_text.pattern
         );

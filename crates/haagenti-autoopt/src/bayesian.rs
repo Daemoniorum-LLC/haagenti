@@ -1,8 +1,7 @@
 //! Bayesian optimization for hyperparameter tuning
 
-use crate::{OptError, Result};
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -267,9 +266,7 @@ impl BayesianOptimizer {
                 // Simplified EI approximation
                 std * (z * normal_cdf(z) + normal_pdf(z))
             }
-            AcquisitionFunction::UpperConfidenceBound => {
-                mean + self.config.exploration * std
-            }
+            AcquisitionFunction::UpperConfidenceBound => mean + self.config.exploration * std,
             AcquisitionFunction::ProbabilityOfImprovement => {
                 let z = if std > 1e-8 {
                     (mean - best_obj - self.config.exploration) / std
@@ -327,14 +324,26 @@ impl BayesianOptimizer {
         for param in &self.parameters {
             if let (Some(va), Some(vb)) = (a.get(&param.name), b.get(&param.name)) {
                 let d = match (&param.param_type, va, vb) {
-                    (ParameterType::Continuous { low, high }, ParameterValue::Float(fa), ParameterValue::Float(fb)) => {
-                        ((fa - fb) / (high - low)).powi(2)
-                    }
-                    (ParameterType::Integer { low, high }, ParameterValue::Int(ia), ParameterValue::Int(ib)) => {
-                        ((ia - ib) as f32 / (high - low) as f32).powi(2)
-                    }
-                    (ParameterType::Categorical { .. }, ParameterValue::String(sa), ParameterValue::String(sb)) => {
-                        if sa == sb { 0.0 } else { 1.0 }
+                    (
+                        ParameterType::Continuous { low, high },
+                        ParameterValue::Float(fa),
+                        ParameterValue::Float(fb),
+                    ) => ((fa - fb) / (high - low)).powi(2),
+                    (
+                        ParameterType::Integer { low, high },
+                        ParameterValue::Int(ia),
+                        ParameterValue::Int(ib),
+                    ) => ((ia - ib) as f32 / (high - low) as f32).powi(2),
+                    (
+                        ParameterType::Categorical { .. },
+                        ParameterValue::String(sa),
+                        ParameterValue::String(sb),
+                    ) => {
+                        if sa == sb {
+                            0.0
+                        } else {
+                            1.0
+                        }
                     }
                     _ => 0.0,
                 };

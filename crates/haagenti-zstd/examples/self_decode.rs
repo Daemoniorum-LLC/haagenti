@@ -5,7 +5,11 @@ use haagenti_zstd::{ZstdCompressor, ZstdDecompressor};
 
 fn main() {
     let input = b"ABCDABCDABCDABCD";
-    println!("Input: {:?} ({} bytes)", String::from_utf8_lossy(input), input.len());
+    println!(
+        "Input: {:?} ({} bytes)",
+        String::from_utf8_lossy(input),
+        input.len()
+    );
 
     let compressor = ZstdCompressor::new();
     let compressed = compressor.compress(input).unwrap();

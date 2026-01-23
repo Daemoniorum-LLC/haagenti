@@ -90,6 +90,8 @@ pub struct DecompressionPipeline {
     config: PipelineConfig,
 
     // Streams for overlapping operations
+    /// Transfer stream (kept for future pipelined H2D transfers)
+    #[allow(dead_code)]
     transfer_stream: CudaStream,
     compute_stream: CudaStream,
 
@@ -123,11 +125,7 @@ pub struct PipelineStats {
 
 impl DecompressionPipeline {
     /// Create a new decompression pipeline.
-    pub fn new(
-        device: Arc<CudaDevice>,
-        pool: MemoryPool,
-        config: PipelineConfig,
-    ) -> Result<Self> {
+    pub fn new(device: Arc<CudaDevice>, pool: MemoryPool, config: PipelineConfig) -> Result<Self> {
         // Create streams for overlapping operations
         let transfer_stream = device.fork_default_stream()?;
         let compute_stream = device.fork_default_stream()?;
@@ -170,7 +168,8 @@ impl DecompressionPipeline {
     /// Submit a block for decompression.
     pub fn submit_block(&mut self, info: BlockInfo, data: &[u8]) -> Result<()> {
         // Find a free staging buffer
-        let staging_idx = self.buffer_in_use
+        let staging_idx = self
+            .buffer_in_use
             .iter()
             .position(|&in_use| !in_use)
             .ok_or_else(|| CudaError::PoolExhausted("No free staging buffers".into()))?;
@@ -204,9 +203,8 @@ impl DecompressionPipeline {
                     if let (Some(staging_idx), Some(gpu_idx)) =
                         (block.staging_buffer_idx, block.gpu_buffer_idx)
                     {
-                        self.gpu_staging[gpu_idx].copy_from_pinned(
-                            &self.pinned_buffers[staging_idx],
-                        )?;
+                        self.gpu_staging[gpu_idx]
+                            .copy_from_pinned(&self.pinned_buffers[staging_idx])?;
                         block.state = BlockState::Transferring;
                         made_progress = true;
                     }
@@ -216,9 +214,7 @@ impl DecompressionPipeline {
                     // In a real impl, we'd use events to check completion
                     self.device.synchronize()?;
 
-                    if let (Some(gpu_idx), Some(output)) =
-                        (block.gpu_buffer_idx, &self.output)
-                    {
+                    if let (Some(gpu_idx), Some(output)) = (block.gpu_buffer_idx, &self.output) {
                         self.lz4.decompress(
                             &self.gpu_staging[gpu_idx],
                             output,
@@ -321,7 +317,9 @@ pub fn decompress_hct_file(
     pipeline.finish()?;
 
     // Return output
-    pipeline.take_output().ok_or(CudaError::InvalidData("No output".into()))
+    pipeline
+        .take_output()
+        .ok_or(CudaError::InvalidData("No output".into()))
 }
 
 #[cfg(test)]

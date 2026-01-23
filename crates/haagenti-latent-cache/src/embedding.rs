@@ -1,7 +1,6 @@
 //! Embedding providers for semantic similarity
 
-use arcanum_primitives::prelude::Blake3;
-use crate::{CacheError, Result};
+use crate::Result;
 use serde::{Deserialize, Serialize};
 
 /// CLIP embedding (768 dimensions)
@@ -79,109 +78,53 @@ pub trait EmbeddingProvider: Send + Sync {
 }
 
 /// Mock embedding provider for testing
+#[cfg(test)]
 pub struct MockEmbeddingProvider {
-    dimension: usize,
+    dim: usize,
 }
 
+#[cfg(test)]
 impl MockEmbeddingProvider {
-    /// Create a new mock provider
-    pub fn new(dimension: usize) -> Self {
-        Self { dimension }
-    }
-
-    /// Create a deterministic embedding from text
-    fn hash_embed(&self, text: &str) -> Vec<f32> {
-        let hash = Blake3::hash(text.as_bytes());
-        let bytes = &hash;
-
-        (0..self.dimension)
-            .map(|i| {
-                let byte = bytes[i % 32];
-                (byte as f32 / 255.0) * 2.0 - 1.0
-            })
-            .collect()
+    /// Create a mock provider with given embedding dimension
+    pub fn new(dim: usize) -> Self {
+        Self { dim }
     }
 }
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl EmbeddingProvider for MockEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<ClipEmbedding> {
-        Ok(ClipEmbedding::new(self.hash_embed(text)))
-    }
+        // Create deterministic embedding based on text hash
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
-    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<ClipEmbedding>> {
-        Ok(texts.iter().map(|t| ClipEmbedding::new(self.hash_embed(t))).collect())
-    }
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let hash = hasher.finish();
 
-    fn dimension(&self) -> usize {
-        self.dimension
-    }
-}
+        let mut rng_state = hash;
+        let vector: Vec<f32> = (0..self.dim)
+            .map(|_| {
+                // Simple LCG random number generator
+                rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                (rng_state as f32 / u64::MAX as f32) * 2.0 - 1.0
+            })
+            .collect();
 
-/// Cached embedding provider (wraps another provider)
-pub struct CachedEmbeddingProvider<P: EmbeddingProvider> {
-    inner: P,
-    cache: dashmap::DashMap<String, ClipEmbedding>,
-    max_cache_size: usize,
-}
-
-impl<P: EmbeddingProvider> CachedEmbeddingProvider<P> {
-    /// Create a new cached provider
-    pub fn new(inner: P, max_cache_size: usize) -> Self {
-        Self {
-            inner,
-            cache: dashmap::DashMap::new(),
-            max_cache_size,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl<P: EmbeddingProvider> EmbeddingProvider for CachedEmbeddingProvider<P> {
-    async fn embed(&self, text: &str) -> Result<ClipEmbedding> {
-        if let Some(cached) = self.cache.get(text) {
-            return Ok(cached.clone());
-        }
-
-        let embedding = self.inner.embed(text).await?;
-
-        if self.cache.len() < self.max_cache_size {
-            self.cache.insert(text.to_string(), embedding.clone());
-        }
-
-        Ok(embedding)
+        Ok(ClipEmbedding::new(vector))
     }
 
     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<ClipEmbedding>> {
         let mut results = Vec::with_capacity(texts.len());
-        let mut to_embed = Vec::new();
-        let mut to_embed_indices = Vec::new();
-
-        for (i, text) in texts.iter().enumerate() {
-            if let Some(cached) = self.cache.get(*text) {
-                results.push(Some(cached.clone()));
-            } else {
-                results.push(None);
-                to_embed.push(*text);
-                to_embed_indices.push(i);
-            }
+        for text in texts {
+            results.push(self.embed(text).await?);
         }
-
-        if !to_embed.is_empty() {
-            let embeddings = self.inner.embed_batch(&to_embed).await?;
-            for (embed_idx, (original_idx, embedding)) in to_embed_indices.iter().copied().zip(embeddings).enumerate() {
-                if self.cache.len() < self.max_cache_size {
-                    self.cache.insert(to_embed[embed_idx].to_string(), embedding.clone());
-                }
-                results[original_idx] = Some(embedding);
-            }
-        }
-
-        Ok(results.into_iter().map(|o| o.unwrap()).collect())
+        Ok(results)
     }
 
     fn dimension(&self) -> usize {
-        self.inner.dimension()
+        self.dim
     }
 }
 

@@ -1,3 +1,6 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(clippy::useless_vec))]
+
 //! Model merging techniques
 //!
 //! This crate provides advanced model merging capabilities:
@@ -21,7 +24,7 @@ pub use evolutionary::{EvolutionaryConfig, EvolutionaryMerger, Genome};
 pub use linear::{LinearConfig, LinearMerger};
 pub use slerp::{SlerpConfig, SlerpMerger};
 pub use ties::{TiesConfig, TiesMerger};
-pub use weights::{WeightDelta, WeightTensor, ModelWeights};
+pub use weights::{ModelWeights, WeightDelta, WeightTensor};
 
 /// Merge strategy
 #[derive(Debug, Clone)]

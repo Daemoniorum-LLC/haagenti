@@ -1,3 +1,10 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(clippy::assertions_on_constants))]
+#![cfg_attr(test, allow(clippy::needless_range_loop))]
+#![cfg_attr(test, allow(clippy::op_ref))]
+#![cfg_attr(test, allow(unused_variables))]
+#![cfg_attr(test, allow(unused_mut))]
+
 //! # Haagenti Compressed Tensor (HCT) Format
 //!
 //! High-performance compressed tensor storage for neural network weights,
@@ -70,8 +77,14 @@
 //!
 //! - `lz4` - LZ4 compression for base blocks
 //! - `zstd` - Zstd compression for better ratios
-//! - `simd` - SIMD-accelerated primitives
 //! - `full` - All features (default)
+
+// Allow various lints in experimental holotensor code
+#![allow(clippy::needless_range_loop)]
+
+// Local modules (implementations owned by haagenti-hct)
+pub mod holotensor;
+pub mod tensor;
 
 // Re-export core error types
 pub use haagenti_core::{Error, Result};
@@ -79,102 +92,83 @@ pub use haagenti_core::{Error, Result};
 // ==================== HCT Tensor Format ====================
 
 // Format constants
-pub use haagenti::tensor::{
-    HCT_MAGIC, HCT_VERSION, HCT_VERSION_V2, DEFAULT_BLOCK_SIZE,
-    FLAG_HEADER_CHECKSUM, FLAG_BLOCK_CHECKSUMS, FLAG_QUANTIZATION,
-    FLAG_TENSOR_NAME, FLAG_HOLOGRAPHIC,
+pub use tensor::{
+    DEFAULT_BLOCK_SIZE, FLAG_BLOCK_CHECKSUMS, FLAG_HEADER_CHECKSUM, FLAG_HOLOGRAPHIC,
+    FLAG_QUANTIZATION, FLAG_TENSOR_NAME, HCT_MAGIC, HCT_VERSION, HCT_VERSION_V2,
 };
 
 // Core types
-pub use haagenti::tensor::{
-    CompressionAlgorithm, DType, HctHeader, BlockIndex,
-};
+pub use tensor::{BlockIndex, CompressionAlgorithm, DType, HctHeader};
 
 // V2 types (with quantization support)
-pub use haagenti::tensor::{
-    QuantizationScheme, QuantizationMetadata, BlockIndexV2,
-};
+pub use tensor::{BlockIndexV2, QuantizationMetadata, QuantizationScheme};
 
 // Reader/Writer
-pub use haagenti::tensor::{
-    HctReader, HctWriter, HctReaderV2, HctWriterV2,
-};
+pub use tensor::{HctReader, HctReaderV2, HctWriter, HctWriterV2};
 
 // Utilities
-pub use haagenti::tensor::{
-    compress_file, ChecksumError,
-    CompressionStats as HctCompressionStats,
-};
+pub use tensor::{compress_file, ChecksumError, CompressionStats as HctCompressionStats};
 
 // ==================== HoloTensor Holographic Compression ====================
 
 // Format constants
-pub use haagenti::holotensor::{
-    HOLO_MAGIC, HOLO_VERSION,
-    HOLO_FLAG_HEADER_CHECKSUM, HOLO_FLAG_FRAGMENT_CHECKSUMS,
-    HOLO_FLAG_QUANTIZATION, HOLO_FLAG_QUALITY_CURVE,
-    HOLO_FLAG_ESSENTIAL_FIRST, HOLO_FLAG_INTERLEAVED,
+pub use holotensor::{
+    HOLO_FLAG_ESSENTIAL_FIRST, HOLO_FLAG_FRAGMENT_CHECKSUMS, HOLO_FLAG_HEADER_CHECKSUM,
+    HOLO_FLAG_INTERLEAVED, HOLO_FLAG_QUALITY_CURVE, HOLO_FLAG_QUANTIZATION, HOLO_MAGIC,
+    HOLO_VERSION,
 };
 
 // Core types
-pub use haagenti::holotensor::{
-    HolographicEncoding, QualityCurve, HoloFragment, FragmentIndexEntry,
-};
+pub use holotensor::{FragmentIndexEntry, HoloFragment, HolographicEncoding, QualityCurve};
 
 // Header
-pub use haagenti::holotensor::HoloTensorHeader;
+pub use holotensor::HoloTensorHeader;
 
 // DCT primitives (for advanced use)
-pub use haagenti::holotensor::{dct_1d, idct_1d, dct_2d, idct_2d};
+pub use holotensor::{dct_1d, dct_2d, idct_1d, idct_2d};
 
 // Seeded RNG (for reproducible random projections)
-pub use haagenti::holotensor::SeededRng;
+pub use holotensor::SeededRng;
 
 // Spectral (DCT-based) encoder/decoder
-pub use haagenti::holotensor::{SpectralEncoder, SpectralDecoder};
+pub use holotensor::{SpectralDecoder, SpectralEncoder};
 
 // Random Projection (JL-based) encoder/decoder
-pub use haagenti::holotensor::{RphEncoder, RphDecoder};
+pub use holotensor::{RphDecoder, RphEncoder};
 
 // Low-Rank Distributed (SVD-based) encoder/decoder
-pub use haagenti::holotensor::{LrdfEncoder, LrdfDecoder};
+pub use holotensor::{LrdfDecoder, LrdfEncoder};
 
 // Unified encoder/decoder API
-pub use haagenti::holotensor::{HoloTensorEncoder, HoloTensorDecoder};
+pub use holotensor::{HoloTensorDecoder, HoloTensorEncoder};
 
 // File I/O
-pub use haagenti::holotensor::{HoloTensorWriter, HoloTensorReader};
+pub use holotensor::{HoloTensorReader, HoloTensorWriter};
 
 // Convenience functions
-pub use haagenti::holotensor::{
-    write_holotensor, read_holotensor, open_holotensor,
-    encode_to_file, decode_from_file, decode_from_file_progressive,
+pub use holotensor::{
+    decode_from_file, decode_from_file_progressive, encode_to_file, open_holotensor,
+    read_holotensor, write_holotensor,
 };
 
 /// Prelude module for common imports.
+///
+/// Convenient imports for common HCT operations.
+///
+/// ```ignore
+/// use haagenti_hct::prelude::*;
+/// ```
 pub mod prelude {
-    //! Convenient imports for common HCT operations.
-    //!
-    //! ```ignore
-    //! use haagenti_hct::prelude::*;
-    //! ```
-
     // Error handling
     pub use crate::{Error, Result};
 
     // Core HCT types
-    pub use crate::{
-        CompressionAlgorithm, DType,
-        HctReader, HctWriter,
-        HctReaderV2, HctWriterV2,
-    };
+    pub use crate::{CompressionAlgorithm, DType, HctReader, HctReaderV2, HctWriter, HctWriterV2};
 
     // HoloTensor types
     pub use crate::{
-        HolographicEncoding, QualityCurve,
-        HoloFragment, HoloTensorHeader,
-        HoloTensorEncoder, HoloTensorDecoder,
-        HoloTensorWriter, HoloTensorReader,
+        HoloFragment, HoloTensorDecoder, HoloTensorEncoder, HoloTensorHeader, HoloTensorReader,
+        HoloTensorWriter, HolographicEncoding, QualityCurve,
     };
 }
 
@@ -207,8 +201,14 @@ mod tests {
     #[test]
     fn test_holographic_encoding_names() {
         assert_eq!(HolographicEncoding::Spectral.name(), "Spectral (DCT)");
-        assert_eq!(HolographicEncoding::RandomProjection.name(), "Random Projection (JL)");
-        assert_eq!(HolographicEncoding::LowRankDistributed.name(), "Low-Rank Distributed (SVD)");
+        assert_eq!(
+            HolographicEncoding::RandomProjection.name(),
+            "Random Projection (JL)"
+        );
+        assert_eq!(
+            HolographicEncoding::LowRankDistributed.name(),
+            "Low-Rank Distributed (SVD)"
+        );
     }
 
     #[test]
@@ -286,10 +286,7 @@ mod tests {
     #[test]
     fn test_dct_roundtrip_2d() {
         let data = vec![
-            1.0, 2.0, 3.0, 4.0,
-            5.0, 6.0, 7.0, 8.0,
-            9.0, 10.0, 11.0, 12.0,
-            13.0, 14.0, 15.0, 16.0,
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
         ];
         let mut dct_output = vec![0.0f32; 16];
         dct_2d(&data, &mut dct_output, 4, 4);
@@ -321,10 +318,12 @@ mod tests {
         assert_eq!(reconstructed.len(), 64);
 
         // Should reconstruct with high quality from all fragments
-        let mse: f32 = data.iter()
+        let mse: f32 = data
+            .iter()
             .zip(reconstructed.iter())
             .map(|(a, b)| (a - b).powi(2))
-            .sum::<f32>() / data.len() as f32;
+            .sum::<f32>()
+            / data.len() as f32;
 
         assert!(mse < 1.0, "MSE too high: {}", mse);
     }
@@ -348,7 +347,8 @@ mod tests {
         assert_eq!(reconstructed.len(), 32);
 
         // RPH provides approximate reconstruction
-        let correlation: f32 = data.iter()
+        let correlation: f32 = data
+            .iter()
             .zip(reconstructed.iter())
             .map(|(a, b)| a * b)
             .sum::<f32>();
@@ -365,7 +365,7 @@ mod tests {
         // Create small test matrix with low-rank structure
         let data: Vec<f32> = (0..64).map(|i| ((i / 8) + (i % 8)) as f32).collect();
 
-        let encoder = LrdfEncoder::new(4, 42);
+        let encoder = LrdfEncoder::new(4);
         let fragments = encoder.encode_2d(&data, 8, 8).expect("encode failed");
 
         assert_eq!(fragments.len(), 4);
@@ -379,10 +379,12 @@ mod tests {
         assert_eq!(reconstructed.len(), 64);
 
         // Should reconstruct low-rank matrix well
-        let mse: f32 = data.iter()
+        let mse: f32 = data
+            .iter()
             .zip(reconstructed.iter())
             .map(|(a, b)| (a - b).powi(2))
-            .sum::<f32>() / data.len() as f32;
+            .sum::<f32>()
+            / data.len() as f32;
 
         assert!(mse < 10.0, "MSE too high: {}", mse);
     }
@@ -478,7 +480,8 @@ mod tests {
         assert_eq!(partial.len(), 256);
 
         // Partial reconstruction should have some similarity
-        let correlation: f32 = data.iter()
+        let correlation: f32 = data
+            .iter()
             .zip(partial.iter())
             .map(|(a, b)| a * b)
             .sum::<f32>();
@@ -488,6 +491,10 @@ mod tests {
 
         let cos_sim = correlation / (norm_orig * norm_partial + 1e-10);
         // With essential coefficients replicated, should have decent similarity
-        assert!(cos_sim > 0.3, "Cosine similarity from partial reconstruction too low: {}", cos_sim);
+        assert!(
+            cos_sim > 0.3,
+            "Cosine similarity from partial reconstruction too low: {}",
+            cos_sim
+        );
     }
 }

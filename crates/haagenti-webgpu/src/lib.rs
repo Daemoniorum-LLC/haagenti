@@ -42,10 +42,10 @@ mod error;
 mod pipeline;
 mod shader;
 
-pub use buffer::{GpuBuffer, BufferUsage, BufferPool};
-pub use cache::{FragmentCache, CacheConfig, CacheEntry};
-pub use context::{WebGpuContext, ContextConfig, DeviceCapabilities};
-pub use error::{WebGpuError, Result};
+pub use buffer::{BufferPool, BufferUsage, GpuBuffer};
+pub use cache::{CacheConfig, CacheEntry, FragmentCache};
+pub use context::{ContextConfig, DeviceCapabilities, WebGpuContext};
+pub use error::{Result, WebGpuError};
 pub use pipeline::{ComputePipeline, PipelineConfig};
 pub use shader::{ShaderModule, WgslSource};
 
@@ -57,7 +57,5 @@ pub const STORAGE_QUOTA_MB: u64 = 500;
 
 /// Prelude for common imports
 pub mod prelude {
-    pub use super::{
-        WebGpuContext, ComputePipeline, GpuBuffer, FragmentCache, Result,
-    };
+    pub use super::{ComputePipeline, FragmentCache, GpuBuffer, Result, WebGpuContext};
 }

@@ -80,7 +80,12 @@ impl WeightTensor {
     /// Element-wise add
     pub fn add(&self, other: &Self) -> Result<Self> {
         self.check_compatible(other)?;
-        let data: Vec<f32> = self.data.iter().zip(&other.data).map(|(a, b)| a + b).collect();
+        let data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(&other.data)
+            .map(|(a, b)| a + b)
+            .collect();
         Ok(Self {
             name: self.name.clone(),
             shape: self.shape.clone(),
@@ -92,7 +97,12 @@ impl WeightTensor {
     /// Element-wise subtract
     pub fn sub(&self, other: &Self) -> Result<Self> {
         self.check_compatible(other)?;
-        let data: Vec<f32> = self.data.iter().zip(&other.data).map(|(a, b)| a - b).collect();
+        let data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(&other.data)
+            .map(|(a, b)| a - b)
+            .collect();
         Ok(Self {
             name: self.name.clone(),
             shape: self.shape.clone(),
@@ -114,7 +124,12 @@ impl WeightTensor {
     /// Element-wise multiply (Hadamard product)
     pub fn mul(&self, other: &Self) -> Result<Self> {
         self.check_compatible(other)?;
-        let data: Vec<f32> = self.data.iter().zip(&other.data).map(|(a, b)| a * b).collect();
+        let data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(&other.data)
+            .map(|(a, b)| a * b)
+            .collect();
         Ok(Self {
             name: self.name.clone(),
             shape: self.shape.clone(),
@@ -145,7 +160,11 @@ impl WeightTensor {
         Self {
             name: self.name.clone(),
             shape: self.shape.clone(),
-            data: self.data.iter().map(|x| x.signum()).collect(),
+            data: self
+                .data
+                .iter()
+                .map(|x| if *x == 0.0 { 0.0 } else { x.signum() })
+                .collect(),
             dtype: self.dtype,
         }
     }
@@ -282,16 +301,12 @@ impl ModelWeights {
         let mut deltas = HashMap::new();
 
         for (name, tensor) in &self.layers {
-            let base_tensor = base.layers.get(name).ok_or_else(|| {
-                MergeError::MissingLayer(name.clone())
-            })?;
+            let base_tensor = base
+                .layers
+                .get(name)
+                .ok_or_else(|| MergeError::MissingLayer(name.clone()))?;
 
-            let delta = WeightDelta::from_models(
-                base_tensor,
-                tensor,
-                &self.name,
-                "finetuned",
-            )?;
+            let delta = WeightDelta::from_models(base_tensor, tensor, &self.name, "finetuned")?;
 
             deltas.insert(name.clone(), delta);
         }
@@ -306,8 +321,8 @@ mod tests {
 
     #[test]
     fn test_weight_tensor() {
-        let tensor = WeightTensor::new("test", vec![2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-            .unwrap();
+        let tensor =
+            WeightTensor::new("test", vec![2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
 
         assert_eq!(tensor.numel(), 6);
         assert_eq!(tensor.shape, vec![2, 3]);

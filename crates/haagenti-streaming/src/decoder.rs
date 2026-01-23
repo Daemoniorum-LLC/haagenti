@@ -1,6 +1,6 @@
 //! Streaming VAE decoder for latent to image conversion
 
-use crate::{PreviewData, PreviewFrame, PreviewQuality, Result, StreamError};
+use crate::{PreviewData, PreviewFrame, PreviewQuality, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
@@ -241,7 +241,12 @@ impl StreamDecoder {
     }
 
     /// Upscale a decoded frame
-    pub fn upscale(&self, frame: &DecodedFrame, target_width: u32, target_height: u32) -> DecodedFrame {
+    pub fn upscale(
+        &self,
+        frame: &DecodedFrame,
+        target_width: u32,
+        target_height: u32,
+    ) -> DecodedFrame {
         if frame.width == target_width && frame.height == target_height {
             return frame.clone();
         }
@@ -311,7 +316,9 @@ mod tests {
         let decoder = StreamDecoder::new(DecoderConfig::default());
         let latent: Vec<f32> = (0..16384).map(|i| (i as f32 / 16384.0) - 0.5).collect();
 
-        let frame = decoder.decode_latent(&latent, PreviewQuality::Thumbnail).unwrap();
+        let frame = decoder
+            .decode_latent(&latent, PreviewQuality::Thumbnail)
+            .unwrap();
 
         assert_eq!(frame.width, 64);
         assert_eq!(frame.height, 64);
@@ -376,10 +383,14 @@ mod tests {
         let decoder = StreamDecoder::new(DecoderConfig::default());
 
         // Test VAE decode simulation with full latent
-        let latent: Vec<f32> = (0..16384).map(|i| (i as f32 / 16384.0) * 2.0 - 1.0).collect();
+        let latent: Vec<f32> = (0..16384)
+            .map(|i| (i as f32 / 16384.0) * 2.0 - 1.0)
+            .collect();
 
         // Decode at different quality levels
-        let thumb = decoder.decode_latent(&latent, PreviewQuality::Thumbnail).unwrap();
+        let thumb = decoder
+            .decode_latent(&latent, PreviewQuality::Thumbnail)
+            .unwrap();
         assert_eq!(thumb.width, 64);
         assert_eq!(thumb.height, 64);
         assert_eq!(thumb.pixels.len(), 64 * 64 * 4);
@@ -389,12 +400,16 @@ mod tests {
         assert_eq!(low.height, 256);
         assert_eq!(low.pixels.len(), 256 * 256 * 4);
 
-        let medium = decoder.decode_latent(&latent, PreviewQuality::Medium).unwrap();
+        let medium = decoder
+            .decode_latent(&latent, PreviewQuality::Medium)
+            .unwrap();
         assert_eq!(medium.width, 512);
         assert_eq!(medium.height, 512);
         assert_eq!(medium.pixels.len(), 512 * 512 * 4);
 
-        let full = decoder.decode_latent(&latent, PreviewQuality::Full).unwrap();
+        let full = decoder
+            .decode_latent(&latent, PreviewQuality::Full)
+            .unwrap();
         assert_eq!(full.width, 1024);
         assert_eq!(full.height, 1024);
         assert_eq!(full.pixels.len(), 1024 * 1024 * 4);
@@ -449,12 +464,8 @@ mod tests {
 
         // Test decoding Latent data
         let latent_data: Vec<f32> = (0..16384).map(|i| (i as f32 / 16384.0) - 0.5).collect();
-        let latent_frame = PreviewFrame::from_latent(
-            10,
-            20,
-            latent_data,
-            PreviewQuality::Thumbnail,
-        );
+        let latent_frame =
+            PreviewFrame::from_latent(10, 20, latent_data, PreviewQuality::Thumbnail);
         let decoded_latent = decoder.decode_frame(&latent_frame).unwrap();
         assert_eq!(decoded_latent.step, 10);
         assert_eq!(decoded_latent.width, 64);
@@ -478,7 +489,9 @@ mod tests {
 
         // Test with smaller-than-expected latent (triggers synthetic preview)
         let small_latent: Vec<f32> = (0..100).map(|i| (i as f32 / 100.0) - 0.5).collect();
-        let result = decoder.decode_latent(&small_latent, PreviewQuality::Thumbnail).unwrap();
+        let result = decoder
+            .decode_latent(&small_latent, PreviewQuality::Thumbnail)
+            .unwrap();
 
         // Should still produce valid frame
         assert_eq!(result.width, 64);

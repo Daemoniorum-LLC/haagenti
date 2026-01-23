@@ -1,8 +1,8 @@
 //! Minimal test case for FSE encoding failure with non-uniform sequences
 
 use haagenti_core::Compressor;
+use haagenti_zstd::compress::{analyze_for_rle, block, EncodedSequence, LazyMatchFinder};
 use haagenti_zstd::ZstdCompressor;
-use haagenti_zstd::compress::{LazyMatchFinder, block, analyze_for_rle, EncodedSequence};
 
 fn main() {
     // Create data that produces NON-uniform sequences
@@ -28,7 +28,10 @@ fn main() {
     println!("Matches: {}", matches.len());
 
     for (i, m) in matches.iter().enumerate() {
-        println!("  Match {}: pos={}, offset={}, len={}", i, m.position, m.offset, m.length);
+        println!(
+            "  Match {}: pos={}, offset={}, len={}",
+            i, m.position, m.offset, m.length
+        );
     }
 
     // Convert to sequences
@@ -38,17 +41,27 @@ fn main() {
 
     for (i, s) in seqs.iter().enumerate() {
         let enc = EncodedSequence::from_sequence(s);
-        println!("  Seq {}: ll={}, offset={}, ml={} -> ll_code={}, of_code={}, ml_code={}",
-                 i, s.literal_length, s.offset, s.match_length,
-                 enc.ll_code, enc.of_code, enc.ml_code);
+        println!(
+            "  Seq {}: ll={}, offset={}, ml={} -> ll_code={}, of_code={}, ml_code={}",
+            i, s.literal_length, s.offset, s.match_length, enc.ll_code, enc.of_code, enc.ml_code
+        );
     }
 
     // Check uniformity
     let suitability = analyze_for_rle(&seqs);
     println!("\nRLE suitability:");
-    println!("  LL uniform: {} (code {})", suitability.ll_uniform, suitability.ll_code);
-    println!("  OF uniform: {} (code {})", suitability.of_uniform, suitability.of_code);
-    println!("  ML uniform: {} (code {})", suitability.ml_uniform, suitability.ml_code);
+    println!(
+        "  LL uniform: {} (code {})",
+        suitability.ll_uniform, suitability.ll_code
+    );
+    println!(
+        "  OF uniform: {} (code {})",
+        suitability.of_uniform, suitability.of_code
+    );
+    println!(
+        "  ML uniform: {} (code {})",
+        suitability.ml_uniform, suitability.ml_code
+    );
     println!("  All uniform: {}", suitability.all_uniform());
 
     // Compress

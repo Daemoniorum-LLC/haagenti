@@ -54,13 +54,13 @@ mod scorer;
 pub use analyzer::{PromptAnalyzer, PromptFeatures, SemanticCategory};
 pub use error::{ImportanceError, Result};
 pub use history::{FragmentUsage, UsageHistory, UsageStats};
-pub use predictor::{QualityPredictor, QualitySensitivity, LayerProfile};
-pub use scorer::{ImportanceScore, ImportanceScorer, ScorerConfig, AdaptiveScorer};
+pub use predictor::{LayerProfile, QualityPredictor, QualitySensitivity};
+pub use scorer::{AdaptiveScorer, ImportanceScore, ImportanceScorer, ScorerConfig};
 
 /// Prelude for common imports
 pub mod prelude {
     pub use super::{
-        ImportanceScore, ImportanceScorer, PromptAnalyzer, PromptFeatures,
-        QualityPredictor, Result, UsageHistory,
+        ImportanceScore, ImportanceScorer, PromptAnalyzer, PromptFeatures, QualityPredictor,
+        Result, UsageHistory,
     };
 }

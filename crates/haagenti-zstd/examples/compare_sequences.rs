@@ -1,6 +1,6 @@
 //! Compare sequences between passing and failing patterns
 
-use haagenti_zstd::compress::{LazyMatchFinder, block};
+use haagenti_zstd::compress::{block, LazyMatchFinder};
 
 fn analyze(name: &str, data: &[u8]) {
     let mut mf = LazyMatchFinder::new(8);
@@ -8,13 +8,20 @@ fn analyze(name: &str, data: &[u8]) {
     let (literals, sequences) = block::matches_to_sequences(data, &matches);
 
     println!("\n=== {} ===", name);
-    println!("Input: {} bytes, Matches: {}, Literals: {}, Sequences: {}",
-             data.len(), matches.len(), literals.len(), sequences.len());
+    println!(
+        "Input: {} bytes, Matches: {}, Literals: {}, Sequences: {}",
+        data.len(),
+        matches.len(),
+        literals.len(),
+        sequences.len()
+    );
 
     // Show first few sequences
     for (i, seq) in sequences.iter().take(5).enumerate() {
-        println!("  Seq {}: ll={}, offset={}, ml={}", i,
-                 seq.literal_length, seq.offset, seq.match_length);
+        println!(
+            "  Seq {}: ll={}, offset={}, ml={}",
+            i, seq.literal_length, seq.offset, seq.match_length
+        );
     }
     if sequences.len() > 5 {
         println!("  ... ({} more)", sequences.len() - 5);
@@ -22,9 +29,14 @@ fn analyze(name: &str, data: &[u8]) {
 
     // Check for patterns
     let all_offset_1 = sequences.iter().all(|s| s.offset == 1);
-    let all_same_ll = sequences.windows(2).all(|w| w[0].literal_length == w[1].literal_length);
+    let all_same_ll = sequences
+        .windows(2)
+        .all(|w| w[0].literal_length == w[1].literal_length);
 
-    println!("  All offset=1: {}, All same LL: {}", all_offset_1, all_same_ll);
+    println!(
+        "  All offset=1: {}, All same LL: {}",
+        all_offset_1, all_same_ll
+    );
 }
 
 fn main() {

@@ -1,11 +1,11 @@
 [package]
 name = "haagenti-python"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.85"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Python bindings for Haagenti tensor compression library"
-license = "MIT"
-authors = ["Daemoniorum LLC"]
+license.workspace = true
+authors.workspace = true
 keywords = ["python", "tensor", "compression", "machine-learning"]
 
 [lib]

@@ -99,7 +99,11 @@ impl GpuBuffer {
     ///
     /// This is an alias for copy_from_pinned that ignores the stream parameter
     /// since cudarc 0.12 uses synchronous copies.
-    pub fn copy_from_pinned_stream(&mut self, pinned: &PinnedBuffer, _stream: &CudaStream) -> Result<()> {
+    pub fn copy_from_pinned_stream(
+        &mut self,
+        pinned: &PinnedBuffer,
+        _stream: &CudaStream,
+    ) -> Result<()> {
         self.copy_from_pinned(pinned)
     }
 

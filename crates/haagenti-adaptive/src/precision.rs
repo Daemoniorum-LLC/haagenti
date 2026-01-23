@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Precision levels for inference
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 pub enum Precision {
     /// 4-bit integer (most aggressive compression)
     INT4,
@@ -12,6 +14,7 @@ pub enum Precision {
     /// 16-bit floating point (brain float)
     BF16,
     /// 16-bit floating point
+    #[default]
     FP16,
     /// 32-bit floating point (full precision)
     FP32,
@@ -67,22 +70,24 @@ impl Precision {
         matches!(self, Precision::FP32 | Precision::FP16 | Precision::BF16)
     }
 
-    /// Parse from string
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_uppercase().as_str() {
-            "INT4" | "I4" | "4BIT" => Some(Precision::INT4),
-            "INT8" | "I8" | "8BIT" => Some(Precision::INT8),
-            "BF16" | "BFLOAT16" => Some(Precision::BF16),
-            "FP16" | "FLOAT16" | "F16" | "HALF" => Some(Precision::FP16),
-            "FP32" | "FLOAT32" | "F32" | "FULL" => Some(Precision::FP32),
-            _ => None,
-        }
+    /// Parse from string (returns None on failure)
+    pub fn parse(s: &str) -> Option<Self> {
+        s.parse().ok()
     }
 }
 
-impl Default for Precision {
-    fn default() -> Self {
-        Precision::FP16
+impl std::str::FromStr for Precision {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "INT4" | "I4" | "4BIT" => Ok(Precision::INT4),
+            "INT8" | "I8" | "8BIT" => Ok(Precision::INT8),
+            "BF16" | "BFLOAT16" => Ok(Precision::BF16),
+            "FP16" | "FLOAT16" | "F16" | "HALF" => Ok(Precision::FP16),
+            "FP32" | "FLOAT32" | "F32" | "FULL" => Ok(Precision::FP32),
+            _ => Err(()),
+        }
     }
 }
 

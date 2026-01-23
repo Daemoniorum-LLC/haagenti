@@ -124,7 +124,10 @@ impl TensorStatus {
     /// Returns true if this tensor needs processing.
     #[must_use]
     pub fn is_pending(&self) -> bool {
-        matches!(self, TensorStatus::Pending { .. } | TensorStatus::InProgress { .. })
+        matches!(
+            self,
+            TensorStatus::Pending { .. } | TensorStatus::InProgress { .. }
+        )
     }
 
     /// Returns true if this tensor is done (completed, failed, or skipped).
@@ -232,7 +235,8 @@ impl CompressionCheckpoint {
 
     /// Registers a tensor as pending.
     pub fn register_tensor(&mut self, name: impl Into<String>, shard: usize) {
-        self.tensors.insert(name.into(), TensorStatus::Pending { shard });
+        self.tensors
+            .insert(name.into(), TensorStatus::Pending { shard });
     }
 
     /// Marks a tensor as in-progress.
@@ -361,31 +365,26 @@ impl CompressionCheckpoint {
         let temp_path = path.with_extension("tmp");
 
         // Write to temp file
-        let file = File::create(&temp_path).map_err(|e| {
-            Error::io(format!("failed to create checkpoint temp file: {}", e))
-        })?;
+        let file = File::create(&temp_path)
+            .map_err(|e| Error::io(format!("failed to create checkpoint temp file: {}", e)))?;
         let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, self).map_err(|e| {
-            Error::io(format!("failed to serialize checkpoint: {}", e))
-        })?;
+        serde_json::to_writer_pretty(writer, self)
+            .map_err(|e| Error::io(format!("failed to serialize checkpoint: {}", e)))?;
 
         // Atomic rename
-        fs::rename(&temp_path, path).map_err(|e| {
-            Error::io(format!("failed to rename checkpoint: {}", e))
-        })?;
+        fs::rename(&temp_path, path)
+            .map_err(|e| Error::io(format!("failed to rename checkpoint: {}", e)))?;
 
         Ok(())
     }
 
     /// Loads checkpoint from file.
     pub fn load(path: &Path) -> Result<Self> {
-        let file = File::open(path).map_err(|e| {
-            Error::io(format!("failed to open checkpoint: {}", e))
-        })?;
+        let file =
+            File::open(path).map_err(|e| Error::io(format!("failed to open checkpoint: {}", e)))?;
         let reader = BufReader::new(file);
-        let checkpoint: Self = serde_json::from_reader(reader).map_err(|e| {
-            Error::corrupted(format!("failed to parse checkpoint: {}", e))
-        })?;
+        let checkpoint: Self = serde_json::from_reader(reader)
+            .map_err(|e| Error::corrupted(format!("failed to parse checkpoint: {}", e)))?;
 
         if checkpoint.version != Self::VERSION {
             return Err(Error::corrupted(format!(
@@ -482,16 +481,14 @@ impl ProgressInfo {
 
     /// Saves to a file.
     pub fn save(&self, path: &Path) -> Result<()> {
-        let file = File::create(path).map_err(|e| {
-            Error::io(format!("failed to create progress file: {}", e))
-        })?;
+        let file = File::create(path)
+            .map_err(|e| Error::io(format!("failed to create progress file: {}", e)))?;
         let mut writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, self).map_err(|e| {
-            Error::io(format!("failed to write progress: {}", e))
-        })?;
-        writer.flush().map_err(|e| {
-            Error::io(format!("failed to flush progress: {}", e))
-        })?;
+        serde_json::to_writer_pretty(&mut writer, self)
+            .map_err(|e| Error::io(format!("failed to write progress: {}", e)))?;
+        writer
+            .flush()
+            .map_err(|e| Error::io(format!("failed to flush progress: {}", e)))?;
         Ok(())
     }
 }
@@ -522,6 +519,7 @@ mod system_time_serde {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use std::io::Read;
     use tempfile::tempdir;
 
@@ -551,7 +549,11 @@ mod tests {
         checkpoint.add_shard(PathBuf::from("shard-0.safetensors"), 10);
         checkpoint.register_tensor("layer.0.weight", 0);
 
-        assert!(checkpoint.tensors.get("layer.0.weight").unwrap().is_pending());
+        assert!(checkpoint
+            .tensors
+            .get("layer.0.weight")
+            .unwrap()
+            .is_pending());
 
         // Start processing
         checkpoint.start_tensor("layer.0.weight");

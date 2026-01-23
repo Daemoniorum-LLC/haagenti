@@ -1,21 +1,27 @@
 //! Test if RLE mode works for the failing patterns
 
-use haagenti_zstd::compress::{analyze_for_rle, encode_sequences_rle};
 use haagenti_zstd::block::Sequence;
+use haagenti_zstd::compress::{analyze_for_rle, encode_sequences_rle};
 
 fn main() {
     // The failing sequences
-    let sequences = vec![
-        Sequence::new(1, 1, 99),
-        Sequence::new(1, 1, 99),
-    ];
+    let sequences = vec![Sequence::new(1, 1, 99), Sequence::new(1, 1, 99)];
 
     let suitability = analyze_for_rle(&sequences);
 
     println!("RLE Analysis:");
-    println!("  LL uniform: {} (code {})", suitability.ll_uniform, suitability.ll_code);
-    println!("  OF uniform: {} (code {})", suitability.of_uniform, suitability.of_code);
-    println!("  ML uniform: {} (code {})", suitability.ml_uniform, suitability.ml_code);
+    println!(
+        "  LL uniform: {} (code {})",
+        suitability.ll_uniform, suitability.ll_code
+    );
+    println!(
+        "  OF uniform: {} (code {})",
+        suitability.of_uniform, suitability.of_code
+    );
+    println!(
+        "  ML uniform: {} (code {})",
+        suitability.ml_uniform, suitability.ml_code
+    );
     println!("  All uniform: {}", suitability.all_uniform());
 
     if suitability.all_uniform() {

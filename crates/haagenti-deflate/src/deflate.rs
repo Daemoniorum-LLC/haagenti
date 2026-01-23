@@ -118,7 +118,13 @@ fn deflate_fast(input: &[u8]) -> Result<Vec<u8>> {
 
         if best_len >= MIN_MATCH {
             // Emit length/distance pair
-            emit_match(&mut writer, &lit_encoder, &dist_encoder, best_len, best_dist);
+            emit_match(
+                &mut writer,
+                &lit_encoder,
+                &dist_encoder,
+                best_len,
+                best_dist,
+            );
 
             // Update hash for skipped positions
             for i in 1..best_len {
@@ -237,7 +243,13 @@ fn deflate_default(input: &[u8]) -> Result<Vec<u8>> {
             }
 
             // Emit length/distance pair
-            emit_match(&mut writer, &lit_encoder, &dist_encoder, best_len, best_dist);
+            emit_match(
+                &mut writer,
+                &lit_encoder,
+                &dist_encoder,
+                best_len,
+                best_dist,
+            );
 
             // Update hash for skipped positions
             for i in 1..best_len {

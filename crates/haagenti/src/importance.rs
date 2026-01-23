@@ -167,12 +167,14 @@ impl ImportanceMap {
     /// Parse importance map from JSON string.
     pub fn parse(json: &str) -> Result<Self> {
         let value: serde_json::Value = serde_json::from_str(json)
-            .map_err(|e| Error::corrupted(&format!("invalid JSON: {}", e)))?;
+            .map_err(|e| Error::corrupted(format!("invalid JSON: {}", e)))?;
 
-        let obj = value.as_object()
+        let obj = value
+            .as_object()
             .ok_or_else(|| Error::corrupted("expected JSON object"))?;
 
-        let source = obj.get("source")
+        let source = obj
+            .get("source")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
@@ -182,21 +184,26 @@ impl ImportanceMap {
         if let Some(tensors_obj) = obj.get("tensors").and_then(|v| v.as_object()) {
             for (name, info) in tensors_obj {
                 if let Some(info_obj) = info.as_object() {
-                    let importance = info_obj.get("importance")
+                    let importance = info_obj
+                        .get("importance")
                         .and_then(|v| v.as_f64())
                         .map(|v| v as f32)
                         .unwrap_or(0.5);
 
-                    let sensitivity = info_obj.get("sensitivity")
+                    let sensitivity = info_obj
+                        .get("sensitivity")
                         .and_then(|v| v.as_str())
                         .map(Sensitivity::from_str)
                         .unwrap_or(Sensitivity::Medium);
 
-                    tensors.insert(name.clone(), TensorImportance {
-                        importance,
-                        sensitivity,
-                        coefficient_weights: None,
-                    });
+                    tensors.insert(
+                        name.clone(),
+                        TensorImportance {
+                            importance,
+                            sensitivity,
+                            coefficient_weights: None,
+                        },
+                    );
                 }
             }
         }
@@ -233,11 +240,16 @@ impl ImportanceMap {
         let name_lower = name.to_lowercase();
 
         // === Critical layers: Full sensitivity ===
-        if name_lower.contains("layernorm") || name_lower.contains("layer_norm") ||
-           name_lower.contains("ln_") || name_lower.contains("_ln") ||
-           name_lower.contains("norm.weight") || name_lower.contains("rms_norm") ||
-           name_lower.contains("input_layernorm") || name_lower.contains("final_layernorm") ||
-           name_lower.contains("post_attention_layernorm") {
+        if name_lower.contains("layernorm")
+            || name_lower.contains("layer_norm")
+            || name_lower.contains("ln_")
+            || name_lower.contains("_ln")
+            || name_lower.contains("norm.weight")
+            || name_lower.contains("rms_norm")
+            || name_lower.contains("input_layernorm")
+            || name_lower.contains("final_layernorm")
+            || name_lower.contains("post_attention_layernorm")
+        {
             return TensorImportance {
                 importance: 1.0,
                 sensitivity: Sensitivity::Full,
@@ -255,9 +267,12 @@ impl ImportanceMap {
         }
 
         // Embeddings - vocabulary precision
-        if name_lower.contains("embed_tokens") || name_lower.contains("wte") ||
-           name_lower.contains("word_embed") || name_lower.contains("token_embed") ||
-           name_lower.contains("embed.weight") {
+        if name_lower.contains("embed_tokens")
+            || name_lower.contains("wte")
+            || name_lower.contains("word_embed")
+            || name_lower.contains("token_embed")
+            || name_lower.contains("embed.weight")
+        {
             return TensorImportance {
                 importance: 0.95,
                 sensitivity: Sensitivity::Full,
@@ -276,9 +291,13 @@ impl ImportanceMap {
 
         // === Attention layers ===
         // Q/K projections: important for attention patterns
-        if name_lower.contains("q_proj") || name_lower.contains("k_proj") ||
-           name_lower.contains(".wq.") || name_lower.contains(".wk.") ||
-           name_lower.contains("query") || name_lower.contains("key") {
+        if name_lower.contains("q_proj")
+            || name_lower.contains("k_proj")
+            || name_lower.contains(".wq.")
+            || name_lower.contains(".wk.")
+            || name_lower.contains("query")
+            || name_lower.contains("key")
+        {
             return TensorImportance {
                 importance: 0.75,
                 sensitivity: Sensitivity::Medium,
@@ -287,9 +306,13 @@ impl ImportanceMap {
         }
 
         // V/O projections: high sensitivity for output quality
-        if name_lower.contains("v_proj") || name_lower.contains("o_proj") ||
-           name_lower.contains(".wv.") || name_lower.contains(".wo.") ||
-           name_lower.contains("value") || name_lower.contains("dense") {
+        if name_lower.contains("v_proj")
+            || name_lower.contains("o_proj")
+            || name_lower.contains(".wv.")
+            || name_lower.contains(".wo.")
+            || name_lower.contains("value")
+            || name_lower.contains("dense")
+        {
             return TensorImportance {
                 importance: 0.80,
                 sensitivity: Sensitivity::High,
@@ -307,11 +330,18 @@ impl ImportanceMap {
         }
 
         // === FFN/MLP layers: Most compressible ===
-        if name_lower.contains("mlp.") || name_lower.contains("feed_forward") ||
-           name_lower.contains("ffn") || name_lower.contains(".fc1") || name_lower.contains(".fc2") ||
-           name_lower.contains("up_proj") || name_lower.contains("down_proj") ||
-           name_lower.contains("gate_proj") || name_lower.contains("w1.") ||
-           name_lower.contains("w2.") || name_lower.contains("w3.") {
+        if name_lower.contains("mlp.")
+            || name_lower.contains("feed_forward")
+            || name_lower.contains("ffn")
+            || name_lower.contains(".fc1")
+            || name_lower.contains(".fc2")
+            || name_lower.contains("up_proj")
+            || name_lower.contains("down_proj")
+            || name_lower.contains("gate_proj")
+            || name_lower.contains("w1.")
+            || name_lower.contains("w2.")
+            || name_lower.contains("w3.")
+        {
             return TensorImportance {
                 importance: 0.50,
                 sensitivity: Sensitivity::Low,
@@ -374,7 +404,11 @@ impl ImportanceCompressedWeight {
     pub fn compression_ratio(&self) -> f32 {
         let orig = self.original_bytes();
         let compressed = self.storage_bytes();
-        if compressed == 0 { 0.0 } else { orig as f32 / compressed as f32 }
+        if compressed == 0 {
+            0.0
+        } else {
+            orig as f32 / compressed as f32
+        }
     }
 }
 
@@ -466,7 +500,8 @@ impl ImportanceGuidedEncoder {
         // Sort coefficients by magnitude (or by importance weights if available)
         let mut indexed: Vec<(usize, f32, f32)> = if let Some(weights) = &info.coefficient_weights {
             // Weight by importance
-            dct_coeffs.iter()
+            dct_coeffs
+                .iter()
                 .enumerate()
                 .map(|(i, &c)| {
                     let w = weights.get(i).copied().unwrap_or(1.0);
@@ -475,7 +510,8 @@ impl ImportanceGuidedEncoder {
                 .collect()
         } else {
             // Pure magnitude-based
-            dct_coeffs.iter()
+            dct_coeffs
+                .iter()
                 .enumerate()
                 .map(|(i, &c)| (i, c, c.abs()))
                 .collect()
@@ -485,7 +521,8 @@ impl ImportanceGuidedEncoder {
         indexed.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
         // Take top retain_count coefficients
-        let retained: Vec<(usize, f32)> = indexed.into_iter()
+        let retained: Vec<(usize, f32)> = indexed
+            .into_iter()
             .take(retain_count)
             .map(|(i, c, _)| (i, c))
             .collect();
@@ -560,9 +597,16 @@ fn dct_1d(input: &[f32]) -> Vec<f32> {
     for k in 0..n {
         let mut sum = 0.0f32;
         for i in 0..n {
-            sum += input[i] * (std::f32::consts::PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
+            sum +=
+                input[i] * (std::f32::consts::PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
         }
-        output[k] = sum * scale * if k == 0 { 1.0 / std::f32::consts::SQRT_2 } else { 1.0 };
+        output[k] = sum
+            * scale
+            * if k == 0 {
+                1.0 / std::f32::consts::SQRT_2
+            } else {
+                1.0
+            };
     }
 
     output
@@ -580,7 +624,12 @@ fn idct_1d(input: &[f32]) -> Vec<f32> {
     for i in 0..n {
         let mut sum = 0.0f32;
         for k in 0..n {
-            let coeff = input[k] * if k == 0 { 1.0 / std::f32::consts::SQRT_2 } else { 1.0 };
+            let coeff = input[k]
+                * if k == 0 {
+                    1.0 / std::f32::consts::SQRT_2
+                } else {
+                    1.0
+                };
             sum += coeff * (std::f32::consts::PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
         }
         output[i] = sum * scale;
@@ -762,7 +811,12 @@ mod tests {
         // High importance (embedding) should get higher retention
         let embed_ret = encoder.effective_retention("model.embed_tokens.weight");
 
-        assert!(mlp_ret < embed_ret, "MLP {} should be < embedding {}", mlp_ret, embed_ret);
+        assert!(
+            mlp_ret < embed_ret,
+            "MLP {} should be < embedding {}",
+            mlp_ret,
+            embed_ret
+        );
     }
 
     #[test]
@@ -804,14 +858,19 @@ mod tests {
         let data: Vec<f32> = (0..256).map(|i| (i as f32 * 0.05).sin()).collect();
 
         // Compress same data with different "tensor names" (different importance)
-        let mlp_compressed = encoder.encode(&data, 16, 16, "model.layers.0.mlp.gate_proj.weight").unwrap();
-        let norm_compressed = encoder.encode(&data, 16, 16, "model.layers.0.input_layernorm.weight").unwrap();
+        let mlp_compressed = encoder
+            .encode(&data, 16, 16, "model.layers.0.mlp.gate_proj.weight")
+            .unwrap();
+        let norm_compressed = encoder
+            .encode(&data, 16, 16, "model.layers.0.input_layernorm.weight")
+            .unwrap();
 
         // LayerNorm should have more retained coefficients
         assert!(
             norm_compressed.retained_count > mlp_compressed.retained_count,
             "LayerNorm ({}) should retain more than MLP ({})",
-            norm_compressed.retained_count, mlp_compressed.retained_count
+            norm_compressed.retained_count,
+            mlp_compressed.retained_count
         );
     }
 
@@ -825,7 +884,11 @@ mod tests {
         let compressed = encoder.encode(&data, 32, 32, "test.weight").unwrap();
 
         let ratio = compressed.compression_ratio();
-        assert!(ratio > 1.0, "Expected compression ratio > 1.0, got {}", ratio);
+        assert!(
+            ratio > 1.0,
+            "Expected compression ratio > 1.0, got {}",
+            ratio
+        );
     }
 
     #[test]
@@ -839,7 +902,10 @@ mod tests {
         // Test different layer types
         let layers = [
             ("model.layers.0.mlp.gate_proj.weight", Sensitivity::Low),
-            ("model.layers.0.self_attn.q_proj.weight", Sensitivity::Medium),
+            (
+                "model.layers.0.self_attn.q_proj.weight",
+                Sensitivity::Medium,
+            ),
             ("model.layers.0.input_layernorm.weight", Sensitivity::Full),
         ];
 

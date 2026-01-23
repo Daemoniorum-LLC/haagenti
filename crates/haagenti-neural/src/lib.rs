@@ -54,11 +54,11 @@ mod residual;
 mod training;
 
 pub use codebook::{Codebook, CodebookConfig, CodebookStats, LayerCodebook, LayerType};
-pub use decoder::{NeuralDecoder, DecoderConfig};
-pub use encoder::{NeuralEncoder, EncoderConfig, EncodedTensor};
+pub use decoder::{DecoderConfig, GpuDecoder, NeuralDecoder};
+pub use encoder::{EncodedTensor, EncoderConfig, NeuralEncoder};
 pub use error::{NeuralError, Result};
 pub use format::{NctFile, NctHeader, NctMetadata};
-pub use residual::{ResidualRefiner, RefinerConfig};
+pub use residual::{RefinerConfig, ResidualRefiner};
 pub use training::{CodebookTrainer, TrainingConfig};
 
 /// File extension for neural compressed tensors
@@ -72,7 +72,5 @@ pub const DEFAULT_COMPRESSION_RATIO: f32 = 10.0;
 
 /// Prelude for common imports
 pub mod prelude {
-    pub use super::{
-        Codebook, NeuralDecoder, NeuralEncoder, NctFile, Result,
-    };
+    pub use super::{Codebook, NctFile, NeuralDecoder, NeuralEncoder, Result};
 }

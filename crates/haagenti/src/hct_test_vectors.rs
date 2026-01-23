@@ -56,8 +56,16 @@ pub fn reference_dct_2d(input: &[f32], rows: usize, cols: usize) -> Vec<f32> {
             }
 
             // Normalization factors
-            let alpha_u = if u == 0 { (1.0 / rows as f32).sqrt() } else { (2.0 / rows as f32).sqrt() };
-            let alpha_v = if v == 0 { (1.0 / cols as f32).sqrt() } else { (2.0 / cols as f32).sqrt() };
+            let alpha_u = if u == 0 {
+                (1.0 / rows as f32).sqrt()
+            } else {
+                (2.0 / rows as f32).sqrt()
+            };
+            let alpha_v = if v == 0 {
+                (1.0 / cols as f32).sqrt()
+            } else {
+                (2.0 / cols as f32).sqrt()
+            };
 
             output[u * cols + v] = alpha_u * alpha_v * sum;
         }
@@ -76,8 +84,16 @@ pub fn reference_idct_2d(input: &[f32], rows: usize, cols: usize) -> Vec<f32> {
             for u in 0..rows {
                 for v in 0..cols {
                     let idx = u * cols + v;
-                    let alpha_u = if u == 0 { (1.0 / rows as f32).sqrt() } else { (2.0 / rows as f32).sqrt() };
-                    let alpha_v = if v == 0 { (1.0 / cols as f32).sqrt() } else { (2.0 / cols as f32).sqrt() };
+                    let alpha_u = if u == 0 {
+                        (1.0 / rows as f32).sqrt()
+                    } else {
+                        (2.0 / rows as f32).sqrt()
+                    };
+                    let alpha_v = if v == 0 {
+                        (1.0 / cols as f32).sqrt()
+                    } else {
+                        (2.0 / cols as f32).sqrt()
+                    };
                     let cos_i = ((2 * i + 1) as f32 * u as f32 * PI / (2.0 * rows as f32)).cos();
                     let cos_j = ((2 * j + 1) as f32 * v as f32 * PI / (2.0 * cols as f32)).cos();
                     sum += alpha_u * alpha_v * input[idx] * cos_i * cos_j;
@@ -99,7 +115,11 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
 
     if norm_a == 0.0 || norm_b == 0.0 {
-        if norm_a == 0.0 && norm_b == 0.0 { 1.0 } else { 0.0 }
+        if norm_a == 0.0 && norm_b == 0.0 {
+            1.0
+        } else {
+            0.0
+        }
     } else {
         dot / (norm_a * norm_b)
     }
@@ -228,8 +248,10 @@ pub fn test_vector_gaussian_8x8() -> HctTestVector {
 /// Simulates attention weight matrices which are often low-rank
 pub fn test_vector_low_rank_8x8() -> HctTestVector {
     // Create rank-2 matrix: outer product of two vectors
-    let u = vec![1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125];
-    let v = vec![1.0, -0.5, 0.25, -0.125, 0.0625, -0.03125, 0.015625, -0.0078125];
+    let u = [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125];
+    let v = [
+        1.0, -0.5, 0.25, -0.125, 0.0625, -0.03125, 0.015625, -0.0078125,
+    ];
 
     let mut input = vec![0.0f32; 64];
     for i in 0..8 {
@@ -565,7 +587,9 @@ pub fn print_test_vector_for_spec(tv: &HctTestVector) {
     for (i, chunk) in tv.input.chunks(cols).enumerate() {
         print!("  Row {}: [", i);
         for (j, v) in chunk.iter().enumerate() {
-            if j > 0 { print!(", "); }
+            if j > 0 {
+                print!(", ");
+            }
             print!("{:.6}", v);
         }
         println!("]");
@@ -585,8 +609,12 @@ pub fn print_test_vector_for_spec(tv: &HctTestVector) {
     println!("```");
     println!();
 
-    println!("**Retained Coefficients**: {} of {} ({:.0}%)",
-             tv.retained_indices.len(), tv.input.len(), tv.retention * 100.0);
+    println!(
+        "**Retained Coefficients**: {} of {} ({:.0}%)",
+        tv.retained_indices.len(),
+        tv.input.len(),
+        tv.retention * 100.0
+    );
     println!();
 
     println!("**Reconstructed** (row-major):");
@@ -594,7 +622,9 @@ pub fn print_test_vector_for_spec(tv: &HctTestVector) {
     for (i, chunk) in tv.reconstructed.chunks(cols).enumerate() {
         print!("  Row {}: [", i);
         for (j, v) in chunk.iter().enumerate() {
-            if j > 0 { print!(", "); }
+            if j > 0 {
+                print!(", ");
+            }
             print!("{:.6}", v);
         }
         println!("]");
@@ -602,7 +632,10 @@ pub fn print_test_vector_for_spec(tv: &HctTestVector) {
     println!("```");
     println!();
 
-    println!("**Quality**: cosine_similarity = {:.6}", tv.expected_cosine_similarity);
+    println!(
+        "**Quality**: cosine_similarity = {:.6}",
+        tv.expected_cosine_similarity
+    );
     println!();
     println!("---");
     println!();
@@ -619,7 +652,11 @@ mod tests {
         let reconstructed = reference_idct_2d(&dct, 4, 4);
 
         let cosine = cosine_similarity(&input, &reconstructed);
-        assert!(cosine > 0.999999, "DCT/IDCT roundtrip should be near-perfect: {}", cosine);
+        assert!(
+            cosine > 0.999999,
+            "DCT/IDCT roundtrip should be near-perfect: {}",
+            cosine
+        );
     }
 
     #[test]
@@ -628,7 +665,10 @@ mod tests {
         assert_eq!(vectors.len(), 6);
 
         for tv in &vectors {
-            println!("Test vector '{}': cosine = {:.6}", tv.name, tv.expected_cosine_similarity);
+            println!(
+                "Test vector '{}': cosine = {:.6}",
+                tv.name, tv.expected_cosine_similarity
+            );
             assert!(tv.expected_cosine_similarity >= 0.0);
             assert!(tv.expected_cosine_similarity <= 1.0 + tv.cosine_tolerance);
         }
@@ -640,18 +680,22 @@ mod tests {
         // Low-rank matrices achieve decent similarity at 30% retention
         // Note: DCT doesn't perfectly align with rank-1 structure, so we get ~0.93
         // This is still better than random data which would be ~0.85 at 30%
-        assert!(tv.expected_cosine_similarity > 0.90,
-                "Low-rank matrix at 30% retention should have >0.90 cosine sim: {}",
-                tv.expected_cosine_similarity);
+        assert!(
+            tv.expected_cosine_similarity > 0.90,
+            "Low-rank matrix at 30% retention should have >0.90 cosine sim: {}",
+            tv.expected_cosine_similarity
+        );
     }
 
     #[test]
     fn test_constant_perfect_reconstruction() {
         let tv = test_vector_constant_4x4();
         // Constant matrix only needs DC - should be perfect
-        assert!(tv.expected_cosine_similarity > 0.9999,
-                "Constant matrix should reconstruct perfectly: {}",
-                tv.expected_cosine_similarity);
+        assert!(
+            tv.expected_cosine_similarity > 0.9999,
+            "Constant matrix should reconstruct perfectly: {}",
+            tv.expected_cosine_similarity
+        );
     }
 
     #[test]
@@ -672,24 +716,35 @@ mod tests {
         assert_eq!(vectors.len(), 7);
 
         for tv in &vectors {
-            println!("Stress vector '{}': cosine = {:.6}, tolerance = {:.4}",
-                     tv.name, tv.expected_cosine_similarity, tv.cosine_tolerance);
+            println!(
+                "Stress vector '{}': cosine = {:.6}, tolerance = {:.4}",
+                tv.name, tv.expected_cosine_similarity, tv.cosine_tolerance
+            );
 
             // Cosine similarity should be valid (handle NaN from zeros/zeros case)
             assert!(
-                tv.expected_cosine_similarity.is_nan() ||
-                (tv.expected_cosine_similarity >= -1.0 - tv.cosine_tolerance &&
-                 tv.expected_cosine_similarity <= 1.0 + tv.cosine_tolerance),
+                tv.expected_cosine_similarity.is_nan()
+                    || (tv.expected_cosine_similarity >= -1.0 - tv.cosine_tolerance
+                        && tv.expected_cosine_similarity <= 1.0 + tv.cosine_tolerance),
                 "Stress vector '{}' has invalid cosine: {}",
-                tv.name, tv.expected_cosine_similarity
+                tv.name,
+                tv.expected_cosine_similarity
             );
 
             // Shape should match data
             let expected_len: usize = tv.shape.iter().product();
-            assert_eq!(tv.input.len(), expected_len,
-                       "Stress vector '{}' input length mismatch", tv.name);
-            assert_eq!(tv.reconstructed.len(), expected_len,
-                       "Stress vector '{}' reconstructed length mismatch", tv.name);
+            assert_eq!(
+                tv.input.len(),
+                expected_len,
+                "Stress vector '{}' input length mismatch",
+                tv.name
+            );
+            assert_eq!(
+                tv.reconstructed.len(),
+                expected_len,
+                "Stress vector '{}' reconstructed length mismatch",
+                tv.name
+            );
         }
     }
 
@@ -697,16 +752,22 @@ mod tests {
     fn test_stress_large_values() {
         let tv = stress_vector_large_values_4x4();
         // Large values should still compress reasonably
-        assert!(tv.expected_cosine_similarity > 0.95,
-                "Large values should compress well: {}", tv.expected_cosine_similarity);
+        assert!(
+            tv.expected_cosine_similarity > 0.95,
+            "Large values should compress well: {}",
+            tv.expected_cosine_similarity
+        );
     }
 
     #[test]
     fn test_stress_tiny_values() {
         let tv = stress_vector_tiny_values_4x4();
         // Tiny values should compress just as well as normal values
-        assert!(tv.expected_cosine_similarity > 0.95,
-                "Tiny values should compress well: {}", tv.expected_cosine_similarity);
+        assert!(
+            tv.expected_cosine_similarity > 0.95,
+            "Tiny values should compress well: {}",
+            tv.expected_cosine_similarity
+        );
     }
 
     #[test]
@@ -715,10 +776,16 @@ mod tests {
         let tall = stress_vector_tall_32x2();
 
         // Both should compress reasonably despite extreme aspect ratios
-        assert!(wide.expected_cosine_similarity > 0.90,
-                "Wide matrix (2x32) should compress: {}", wide.expected_cosine_similarity);
-        assert!(tall.expected_cosine_similarity > 0.90,
-                "Tall matrix (32x2) should compress: {}", tall.expected_cosine_similarity);
+        assert!(
+            wide.expected_cosine_similarity > 0.90,
+            "Wide matrix (2x32) should compress: {}",
+            wide.expected_cosine_similarity
+        );
+        assert!(
+            tall.expected_cosine_similarity > 0.90,
+            "Tall matrix (32x2) should compress: {}",
+            tall.expected_cosine_similarity
+        );
     }
 
     #[test]
@@ -726,7 +793,10 @@ mod tests {
         let tv = stress_vector_checkerboard_8x8();
         // Checkerboard is worst-case for DCT (all energy in highest frequency)
         // At 30% retention, we expect poor reconstruction
-        println!("Checkerboard cosine similarity: {}", tv.expected_cosine_similarity);
+        println!(
+            "Checkerboard cosine similarity: {}",
+            tv.expected_cosine_similarity
+        );
         // Just verify it runs without error - checkerboard truly is worst case
     }
 
@@ -734,7 +804,10 @@ mod tests {
     fn test_stress_spike() {
         let tv = stress_vector_spike_8x8();
         // Single spike spreads energy - moderate reconstruction expected
-        assert!(tv.expected_cosine_similarity > 0.70,
-                "Spike should achieve moderate reconstruction: {}", tv.expected_cosine_similarity);
+        assert!(
+            tv.expected_cosine_similarity > 0.70,
+            "Spike should achieve moderate reconstruction: {}",
+            tv.expected_cosine_similarity
+        );
     }
 }

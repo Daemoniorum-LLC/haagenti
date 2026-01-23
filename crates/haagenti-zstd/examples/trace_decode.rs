@@ -37,22 +37,42 @@ fn main() {
 
     // The bitstream after sentinel (read MSB first):
     let after_sentinel = bits_u32 & ((1 << sentinel_pos) - 1);
-    println!("After sentinel: {:0width$b}", after_sentinel, width = sentinel_pos as usize);
+    println!(
+        "After sentinel: {:0width$b}",
+        after_sentinel,
+        width = sentinel_pos as usize
+    );
 
     // LL state (6 bits) - highest bits after sentinel
     let ll_bits = 6u32;
     let ll_state = (after_sentinel >> (sentinel_pos - ll_bits)) & ((1 << ll_bits) - 1);
-    println!("LL initial state: {} (bits {}..{})", ll_state, sentinel_pos - 1, sentinel_pos - ll_bits);
+    println!(
+        "LL initial state: {} (bits {}..{})",
+        ll_state,
+        sentinel_pos - 1,
+        sentinel_pos - ll_bits
+    );
 
     // OF state (5 bits) - next
     let of_bits = 5u32;
     let of_state = (after_sentinel >> (sentinel_pos - ll_bits - of_bits)) & ((1 << of_bits) - 1);
-    println!("OF initial state: {} (bits {}..{})", of_state, sentinel_pos - ll_bits - 1, sentinel_pos - ll_bits - of_bits);
+    println!(
+        "OF initial state: {} (bits {}..{})",
+        of_state,
+        sentinel_pos - ll_bits - 1,
+        sentinel_pos - ll_bits - of_bits
+    );
 
     // ML state (6 bits) - next
     let ml_bits = 6u32;
-    let ml_state = (after_sentinel >> (sentinel_pos - ll_bits - of_bits - ml_bits)) & ((1 << ml_bits) - 1);
-    println!("ML initial state: {} (bits {}..{})", ml_state, sentinel_pos - ll_bits - of_bits - 1, sentinel_pos - ll_bits - of_bits - ml_bits);
+    let ml_state =
+        (after_sentinel >> (sentinel_pos - ll_bits - of_bits - ml_bits)) & ((1 << ml_bits) - 1);
+    println!(
+        "ML initial state: {} (bits {}..{})",
+        ml_state,
+        sentinel_pos - ll_bits - of_bits - 1,
+        sentinel_pos - ll_bits - of_bits - ml_bits
+    );
 
     // What ML code is at state 42?
     println!("\n=== ML State Analysis ===");
@@ -62,8 +82,10 @@ fn main() {
 
     for state in [ml_state, 42, 43, 44] {
         let entry = ml_table.decode(state as usize);
-        println!("ML State {} -> symbol={}, seq_base={}, seq_extra_bits={}",
-                 state, entry.symbol, entry.seq_base, entry.seq_extra_bits);
+        println!(
+            "ML State {} -> symbol={}, seq_base={}, seq_extra_bits={}",
+            state, entry.symbol, entry.seq_base, entry.seq_extra_bits
+        );
     }
 
     // Expected: For 500 bytes with 4 literals + 496 match:
@@ -76,10 +98,18 @@ fn main() {
     // What's at the LSB side (extra bits)?
     println!("\n=== Extra Bits Analysis ===");
     let remaining_bits = sentinel_pos - ll_bits - of_bits - ml_bits;
-    println!("Remaining bits after states: {} (bits 0..{})", remaining_bits, remaining_bits);
+    println!(
+        "Remaining bits after states: {} (bits 0..{})",
+        remaining_bits, remaining_bits
+    );
 
     let extra_region = after_sentinel & ((1 << remaining_bits) - 1);
-    println!("Extra region value: {} = {:0width$b}", extra_region, extra_region, width = remaining_bits as usize);
+    println!(
+        "Extra region value: {} = {:0width$b}",
+        extra_region,
+        extra_region,
+        width = remaining_bits as usize
+    );
 
     // The extra bits are: LL extra, ML extra, OF extra (in that order from LSB)
     // For this sequence: LL=4 (code 1, 0 extra bits), OF=2 (repeat, 0 extra bits), ML=496 (8 extra bits)

@@ -1,3 +1,6 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(clippy::manual_range_contains))]
+
 //! Real-Time Streaming Generation
 //!
 //! Display progressively improving images during generation with
@@ -50,12 +53,12 @@ mod scheduler;
 mod stream;
 
 pub use adaptive::{AdaptiveStreamManager, NetworkConditions, QualityPolicy, RecommendedQuality};
-pub use controller::{StreamController, ControlCommand, ControlResponse};
-pub use decoder::{StreamDecoder, DecoderConfig, DecodedFrame};
-pub use error::{StreamError, Result};
-pub use preview::{PreviewConfig, PreviewData, PreviewFrame, PreviewQuality};
-pub use protocol::{StreamMessage, StreamProtocol, MessageType};
-pub use scheduler::{PreviewScheduler, ScheduleMode, PreviewEvent};
+pub use controller::{CommandHandler, ControlCommand, ControlResponse, StreamController};
+pub use decoder::{DecodedFrame, DecoderConfig, StreamDecoder};
+pub use error::{Result, StreamError};
+pub use preview::{PreviewBuffer, PreviewConfig, PreviewData, PreviewFrame, PreviewQuality};
+pub use protocol::{DataFormat, MessageType, StreamMessage, StreamProtocol};
+pub use scheduler::{PreviewEvent, PreviewScheduler, ScheduleMode, ScheduleStats};
 pub use stream::{GenerationStream, StreamConfig, StreamState};
 
 /// Default preview frequency (every N steps)
@@ -70,7 +73,7 @@ pub const MAX_PREVIEW_LATENCY_MS: u32 = 100;
 /// Prelude for common imports
 pub mod prelude {
     pub use super::{
-        GenerationStream, PreviewFrame, PreviewScheduler, ScheduleMode,
-        StreamConfig, StreamController, Result,
+        GenerationStream, PreviewFrame, PreviewScheduler, Result, ScheduleMode, StreamConfig,
+        StreamController,
     };
 }

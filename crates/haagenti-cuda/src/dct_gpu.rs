@@ -17,8 +17,8 @@
 //! 1. 1D DCT on all rows (each thread computes one output coefficient)
 //! 2. 1D DCT on all columns (each thread computes one output coefficient)
 //!
-//! DCT-II formula: X[k] = sum_n x[n] * cos(π(2n+1)k / 2N)
-//! DCT-III (IDCT): x[n] = sum_k X[k] * cos(π(2n+1)k / 2N) (with normalization)
+//! DCT-II formula: `X[k] = sum_n x[n] * cos(π(2n+1)k / 2N)`
+//! DCT-III (IDCT): `x[n] = sum_k X[k] * cos(π(2n+1)k / 2N)` (with normalization)
 //!
 //! ## Algorithm Complexity
 //!
@@ -66,7 +66,10 @@ fn get_cache_dir() -> PathBuf {
     if let Some(cache_dir) = dirs::cache_dir() {
         cache_dir.join("haagenti").join("ptx")
     } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".cache").join("haagenti").join("ptx")
+        PathBuf::from(home)
+            .join(".cache")
+            .join("haagenti")
+            .join("ptx")
     } else {
         PathBuf::from("/tmp/haagenti/ptx")
     }
@@ -1180,7 +1183,7 @@ impl GpuDctContext {
         let d_output: CudaSlice<f32> = self.device.alloc_zeros(size)?;
 
         // Launch IDCT on rows: coeffs -> temp
-        let blocks_x = (width as u32 + self.block_size - 1) / self.block_size;
+        let blocks_x = (width as u32).div_ceil(self.block_size);
         let row_config = LaunchConfig {
             block_dim: (self.block_size, 1, 1),
             grid_dim: (blocks_x, height as u32, 1),
@@ -1199,7 +1202,7 @@ impl GpuDctContext {
         self.device.synchronize()?;
 
         // Launch IDCT on columns: temp -> output
-        let blocks_y = (height as u32 + self.block_size - 1) / self.block_size;
+        let blocks_y = (height as u32).div_ceil(self.block_size);
         let col_config = LaunchConfig {
             block_dim: (1, self.block_size, 1),
             grid_dim: (width as u32, blocks_y, 1),
@@ -1212,7 +1215,10 @@ impl GpuDctContext {
             .ok_or_else(|| CudaError::KernelLoad("idct_1d_cols not found".to_string()))?;
 
         unsafe {
-            col_func.launch(col_config, (&d_temp, &d_output, width as u32, height as u32))?;
+            col_func.launch(
+                col_config,
+                (&d_temp, &d_output, width as u32, height as u32),
+            )?;
         }
 
         self.device.synchronize()?;
@@ -1251,7 +1257,7 @@ impl GpuDctContext {
         let d_output: CudaSlice<f32> = self.device.alloc_zeros(size)?;
 
         // DCT rows: data -> temp
-        let blocks_x = (width as u32 + self.block_size - 1) / self.block_size;
+        let blocks_x = (width as u32).div_ceil(self.block_size);
         let row_config = LaunchConfig {
             block_dim: (self.block_size, 1, 1),
             grid_dim: (blocks_x, height as u32, 1),
@@ -1270,7 +1276,7 @@ impl GpuDctContext {
         self.device.synchronize()?;
 
         // DCT columns: temp -> output
-        let blocks_y = (height as u32 + self.block_size - 1) / self.block_size;
+        let blocks_y = (height as u32).div_ceil(self.block_size);
         let col_config = LaunchConfig {
             block_dim: (1, self.block_size, 1),
             grid_dim: (width as u32, blocks_y, 1),
@@ -1283,7 +1289,10 @@ impl GpuDctContext {
             .ok_or_else(|| CudaError::KernelLoad("dct_1d_cols not found".to_string()))?;
 
         unsafe {
-            col_func.launch(col_config, (&d_temp, &d_output, width as u32, height as u32))?;
+            col_func.launch(
+                col_config,
+                (&d_temp, &d_output, width as u32, height as u32),
+            )?;
         }
 
         self.device.synchronize()?;
@@ -1322,7 +1331,10 @@ impl GpuDctContext {
             .map_err(|e| CudaError::KernelLoad(format!("NVRTC compilation failed: {}", e)))?;
 
             let elapsed = start.elapsed();
-            tracing::info!("Kernel compilation took {:.1}ms", elapsed.as_secs_f64() * 1000.0);
+            tracing::info!(
+                "Kernel compilation took {:.1}ms",
+                elapsed.as_secs_f64() * 1000.0
+            );
 
             // Save to cache for next time
             // Note: cudarc's Ptx type wraps the PTX string but doesn't expose it publicly
@@ -1342,12 +1354,11 @@ impl GpuDctContext {
 
         // Load the compiled PTX
         self.device
-            .load_ptx(ptx, "dct_kernels", &[
-                "dct_1d_rows",
-                "dct_1d_cols",
-                "idct_1d_rows",
-                "idct_1d_cols",
-            ])
+            .load_ptx(
+                ptx,
+                "dct_kernels",
+                &["dct_1d_rows", "dct_1d_cols", "idct_1d_rows", "idct_1d_cols"],
+            )
             .map_err(|e| CudaError::KernelLoad(format!("Failed to load DCT kernels: {}", e)))?;
 
         self.kernels_loaded = true;
@@ -1528,7 +1539,12 @@ impl GpuDctContext {
             Ok(result) => Ok(result),
             Err(e) => {
                 // Fall back to CPU if GPU fails
-                tracing::debug!("GPU DCT failed for {}x{}: {:?}, falling back to CPU", width, height, e);
+                tracing::debug!(
+                    "GPU DCT failed for {}x{}: {:?}, falling back to CPU",
+                    width,
+                    height,
+                    e
+                );
                 self.cpu_fallback_2d(data, width, height, mode)
             }
         }
@@ -1557,7 +1573,7 @@ impl GpuDctContext {
         };
 
         // Launch config for row-wise operation
-        let blocks_x = (width as u32 + self.block_size - 1) / self.block_size;
+        let blocks_x = (width as u32).div_ceil(self.block_size);
         let row_config = LaunchConfig {
             block_dim: (self.block_size, 1, 1),
             grid_dim: (blocks_x, height as u32, 1),
@@ -1571,16 +1587,13 @@ impl GpuDctContext {
             .ok_or_else(|| CudaError::KernelLoad(format!("Kernel {} not found", row_kernel)))?;
 
         unsafe {
-            row_func.launch(
-                row_config,
-                (&d_input, &d_temp, width as u32, height as u32),
-            )?;
+            row_func.launch(row_config, (&d_input, &d_temp, width as u32, height as u32))?;
         }
 
         self.device.synchronize()?;
 
         // Launch config for column-wise operation
-        let blocks_y = (height as u32 + self.block_size - 1) / self.block_size;
+        let blocks_y = (height as u32).div_ceil(self.block_size);
         let col_config = LaunchConfig {
             block_dim: (1, self.block_size, 1),
             grid_dim: (width as u32, blocks_y, 1),
@@ -2020,7 +2033,11 @@ mod tests {
                 .sum::<f32>()
                 / data.len() as f32;
 
-            assert!(mse < 1e-2, "Large tensor DCT roundtrip MSE too high: {}", mse);
+            assert!(
+                mse < 1e-2,
+                "Large tensor DCT roundtrip MSE too high: {}",
+                mse
+            );
         }
     }
 }

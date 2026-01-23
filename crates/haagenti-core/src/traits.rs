@@ -143,7 +143,8 @@ pub trait StreamingDecompressor {
     ///
     /// # Returns
     /// Tuple of (bytes_read, bytes_written, is_finished).
-    fn decompress_chunk(&mut self, input: &[u8], output: &mut [u8]) -> Result<(usize, usize, bool)>;
+    fn decompress_chunk(&mut self, input: &[u8], output: &mut [u8])
+        -> Result<(usize, usize, bool)>;
 
     /// Check if decompression is complete.
     fn is_finished(&self) -> bool;

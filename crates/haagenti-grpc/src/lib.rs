@@ -25,11 +25,11 @@ pub mod proto {
     tonic::include_proto!("haagenti.compression.v1");
 }
 
-pub mod service;
 pub mod config;
 pub mod metrics;
+pub mod service;
 pub mod tls;
 
-pub use service::CompressionServiceImpl;
 pub use config::ServerConfig;
+pub use service::CompressionServiceImpl;
 pub use tls::{TlsConfig, TlsConfigBuilder, TlsError, TlsResult};

@@ -219,15 +219,15 @@ impl FseTable {
             .collect();
 
         // Iterate FORWARD to match Zstd's algorithm
-        for state in 0..table_size {
-            let symbol = entries[state].symbol as usize;
+        for entry in entries.iter_mut() {
+            let symbol = entry.symbol as usize;
             let freq = normalized_freqs.get(symbol).copied().unwrap_or(0);
 
             if freq == -1 {
                 // Less-than-1 probability: use full accuracy_log bits
                 // These were already placed at high_threshold in step 1
-                entries[state].num_bits = accuracy_log;
-                entries[state].baseline = 0;
+                entry.num_bits = accuracy_log;
+                entry.baseline = 0;
             } else if freq > 0 && symbol < symbol_next.len() {
                 // Get current value then increment (post-increment semantics)
                 let next_state = symbol_next[symbol];
@@ -242,8 +242,8 @@ impl FseTable {
                 // Zstd formula: newState = (nextState << nbBits) - tableSize
                 let baseline = ((next_state << nb_bits) as i32 - table_size as i32).max(0) as u16;
 
-                entries[state].num_bits = nb_bits;
-                entries[state].baseline = baseline;
+                entry.num_bits = nb_bits;
+                entry.baseline = baseline;
             }
         }
 
@@ -431,7 +431,7 @@ impl FseTable {
         }
 
         // Calculate bytes consumed (round up bits to bytes)
-        let bytes_consumed = (bit_pos + 7) / 8;
+        let bytes_consumed = bit_pos.div_ceil(8);
 
         let table = Self::build(&probabilities, accuracy_log, max_symbol)?;
         Ok((table, bytes_consumed))
@@ -516,7 +516,7 @@ impl FseTable {
 
         // Choose accuracy_log based on symbol count and total frequency
         // Higher accuracy = better compression but larger table
-        let accuracy_log = min_accuracy_log.max(5).min(FSE_MAX_ACCURACY_LOG);
+        let accuracy_log = min_accuracy_log.clamp(5, FSE_MAX_ACCURACY_LOG);
         let table_size = 1u32 << accuracy_log;
 
         // Normalize frequencies to sum to table_size
@@ -606,7 +606,7 @@ impl FseTable {
             return Err(Error::corrupted("No symbols to encode"));
         }
 
-        let accuracy_log = min_accuracy_log.max(5).min(FSE_MAX_ACCURACY_LOG);
+        let accuracy_log = min_accuracy_log.clamp(5, FSE_MAX_ACCURACY_LOG);
         let table_size = 1u32 << accuracy_log;
 
         // First, do standard normalization
@@ -664,8 +664,8 @@ impl FseTable {
         // For each gap, we reduce a donor symbol by 1 to compensate.
         let mut gaps_to_fill = Vec::new();
         let mut in_gap = false;
-        for i in 0..normalized.len() {
-            if normalized[i] == 0 {
+        for (i, &norm_val) in normalized.iter().enumerate() {
+            if norm_val == 0 {
                 if !in_gap {
                     gaps_to_fill.push(i);
                     in_gap = true;
@@ -1008,6 +1008,7 @@ const ML_BASELINE_TABLE: [(u8, u32); 53] = [
 ///
 /// Maps zstd's (baseValue, nbAddBits) pairs to ML codes 0-52.
 /// This uses zstd's predefined values which differ from RFC at code 43+.
+#[allow(dead_code)]
 fn ml_code_from_direct(seq_base: u32, seq_extra_bits: u8) -> u8 {
     // First try exact match against ML_BASELINE_TABLE (which uses zstd values)
     for (code, &(bits, baseline)) in ML_BASELINE_TABLE.iter().enumerate() {
@@ -1017,7 +1018,7 @@ fn ml_code_from_direct(seq_base: u32, seq_extra_bits: u8) -> u8 {
     }
 
     // For codes 0-31, seq_base maps directly to code = seq_base - 3
-    if seq_extra_bits == 0 && seq_base >= 3 && seq_base <= 34 {
+    if seq_extra_bits == 0 && (3..=34).contains(&seq_base) {
         return (seq_base - 3) as u8;
     }
 

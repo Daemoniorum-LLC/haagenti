@@ -1,6 +1,6 @@
 //! Neural decoder for decompressing model weights
 
-use crate::{Codebook, EncodedTensor, LayerCodebook, LayerType, NeuralError, Result};
+use crate::{EncodedTensor, LayerCodebook, LayerType, NeuralError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for the decoder
@@ -70,9 +70,10 @@ impl NeuralDecoder {
     pub fn decode_tensor(&self, encoded: &EncodedTensor) -> Result<DecodedTensor> {
         let start = std::time::Instant::now();
 
-        let codebook = self.codebooks.get(encoded.layer_type).ok_or_else(|| {
-            NeuralError::CodebookNotFound(format!("{:?}", encoded.layer_type))
-        })?;
+        let codebook = self
+            .codebooks
+            .get(encoded.layer_type)
+            .ok_or_else(|| NeuralError::CodebookNotFound(format!("{:?}", encoded.layer_type)))?;
 
         // Decode indices to vectors
         let lookup_start = std::time::Instant::now();
@@ -125,34 +126,42 @@ impl NeuralDecoder {
     ) -> impl Iterator<Item = Result<Vec<f32>>> + 'a {
         let codebook = self.codebooks.get(encoded.layer_type);
 
-        encoded.indices.chunks(chunk_size).enumerate().map(move |(i, chunk)| {
-            let cb = codebook.ok_or_else(|| {
-                NeuralError::CodebookNotFound(format!("{:?}", encoded.layer_type))
-            })?;
+        encoded
+            .indices
+            .chunks(chunk_size)
+            .enumerate()
+            .map(move |(i, chunk)| {
+                let cb = codebook.ok_or_else(|| {
+                    NeuralError::CodebookNotFound(format!("{:?}", encoded.layer_type))
+                })?;
 
-            let mut data: Vec<f32> = chunk
-                .iter()
-                .flat_map(|&idx| {
-                    cb.get_centroid(idx as usize)
-                        .map(|c| c.to_vec())
-                        .unwrap_or_else(|| vec![0.0; cb.config.centroid_dim])
-                })
-                .collect();
+                let mut data: Vec<f32> = chunk
+                    .iter()
+                    .flat_map(|&idx| {
+                        cb.get_centroid(idx as usize)
+                            .map(|c| c.to_vec())
+                            .unwrap_or_else(|| vec![0.0; cb.config.centroid_dim])
+                    })
+                    .collect();
 
-            // Apply residuals for this chunk
-            if self.config.apply_residuals {
-                if let Some(residuals) = encoded.residuals.as_ref() {
-                    let dim = cb.config.centroid_dim;
-                    let start = i * chunk_size * dim;
-                    let end = (start + data.len()).min(residuals.len());
-                    if start < residuals.len() {
-                        self.apply_residuals(&mut data[..end - start], &residuals[start..end], encoded.residual_scale);
+                // Apply residuals for this chunk
+                if self.config.apply_residuals {
+                    if let Some(residuals) = encoded.residuals.as_ref() {
+                        let dim = cb.config.centroid_dim;
+                        let start = i * chunk_size * dim;
+                        let end = (start + data.len()).min(residuals.len());
+                        if start < residuals.len() {
+                            self.apply_residuals(
+                                &mut data[..end - start],
+                                &residuals[start..end],
+                                encoded.residual_scale,
+                            );
+                        }
                     }
                 }
-            }
 
-            Ok(data)
-        })
+                Ok(data)
+            })
     }
 
     /// Get decoder configuration
@@ -206,6 +215,17 @@ impl GpuDecoder {
     pub fn decode_gpu(&self, _indices: &[u16], _layer_type: LayerType) -> Result<Vec<f32>> {
         // Placeholder - would launch CUDA kernel
         Err(NeuralError::DecodingError("GPU not available".into()))
+    }
+
+    /// Get total GPU memory allocated (in bytes)
+    pub fn gpu_memory_usage(&self) -> usize {
+        let codebook_mem: usize = self.codebook_buffers.iter().map(|b| b.size).sum();
+        codebook_mem + self.output_buffer.size
+    }
+
+    /// Check if GPU is available
+    pub fn is_available(&self) -> bool {
+        self.output_buffer.device_ptr != 0
     }
 }
 
@@ -273,5 +293,15 @@ mod tests {
         assert!((data[1] - 1.9).abs() < 0.001);
         assert!((data[2] - 3.2).abs() < 0.001);
         assert!((data[3] - 3.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_gpu_decoder_construction() {
+        let codebooks = LayerCodebook::with_defaults("test");
+        let decoder = GpuDecoder::new(&codebooks).unwrap();
+
+        // GPU decode should fail gracefully when no GPU is available
+        let result = decoder.decode_gpu(&[0, 1, 2], LayerType::AttentionQK);
+        assert!(result.is_err());
     }
 }

@@ -1,8 +1,8 @@
 //! Evolutionary model merging using genetic algorithms
 
-use crate::{MergeError, Result, WeightTensor, ModelWeights};
-use rand::{Rng, SeedableRng};
+use crate::{MergeError, ModelWeights, Result, WeightTensor};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -61,9 +61,7 @@ pub struct Genome {
 impl Genome {
     /// Create random genome
     pub fn random(num_models: usize, rng: &mut StdRng) -> Self {
-        let model_weights: Vec<f32> = (0..num_models)
-            .map(|_| rng.gen::<f32>())
-            .collect();
+        let model_weights: Vec<f32> = (0..num_models).map(|_| rng.gen::<f32>()).collect();
 
         // Normalize
         let sum: f32 = model_weights.iter().sum();
@@ -179,7 +177,8 @@ impl EvolutionaryMerger {
         self.population.clear();
 
         for _ in 0..self.config.population_size {
-            self.population.push(Genome::random(num_models, &mut self.rng));
+            self.population
+                .push(Genome::random(num_models, &mut self.rng));
         }
     }
 
@@ -213,7 +212,9 @@ impl EvolutionaryMerger {
 
         // Sort by fitness (descending)
         self.population.sort_by(|a, b| {
-            b.fitness.partial_cmp(&a.fitness).unwrap_or(std::cmp::Ordering::Equal)
+            b.fitness
+                .partial_cmp(&a.fitness)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Update best
@@ -272,7 +273,7 @@ impl EvolutionaryMerger {
         let mut no_improvement = 0;
         let mut best_so_far = f32::NEG_INFINITY;
 
-        for gen in 0..self.config.generations {
+        for _gen in 0..self.config.generations {
             let fitness = self.evolve(&fitness_fn)?;
 
             if fitness > best_so_far {
@@ -288,9 +289,9 @@ impl EvolutionaryMerger {
             }
         }
 
-        self.best_genome.clone().ok_or_else(|| {
-            MergeError::EvolutionFailed("No best genome found".into())
-        })
+        self.best_genome
+            .clone()
+            .ok_or_else(|| MergeError::EvolutionFailed("No best genome found".into()))
     }
 
     /// Apply best genome to merge models
@@ -361,7 +362,10 @@ impl std::fmt::Debug for EvolutionaryMerger {
         f.debug_struct("EvolutionaryMerger")
             .field("config", &self.config)
             .field("population_size", &self.population.len())
-            .field("best_fitness", &self.best_genome.as_ref().map(|g| g.fitness))
+            .field(
+                "best_fitness",
+                &self.best_genome.as_ref().map(|g| g.fitness),
+            )
             .finish()
     }
 }

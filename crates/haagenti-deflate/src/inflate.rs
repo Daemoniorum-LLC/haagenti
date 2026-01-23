@@ -5,8 +5,8 @@
 use haagenti_core::{Error, Result};
 
 use crate::huffman::{
-    BitReader, HuffmanDecoder, DISTANCE_BASE, DISTANCE_EXTRA_BITS, FIXED_DIST_LENGTHS,
-    FIXED_LIT_LENGTHS, LENGTH_BASE, LENGTH_EXTRA_BITS, CL_CODE_ORDER,
+    BitReader, HuffmanDecoder, CL_CODE_ORDER, DISTANCE_BASE, DISTANCE_EXTRA_BITS,
+    FIXED_DIST_LENGTHS, FIXED_LIT_LENGTHS, LENGTH_BASE, LENGTH_EXTRA_BITS,
 };
 
 /// Maximum back-reference distance.
@@ -243,8 +243,8 @@ mod tests {
         // Stored block: BFINAL=1, BTYPE=00, LEN=5, NLEN=~5, "Hello"
         let data = [
             0b00000001, // BFINAL=1, BTYPE=00
-            5, 0,       // LEN = 5
-            250, 255,   // NLEN = !5
+            5, 0, // LEN = 5
+            250, 255, // NLEN = !5
             b'H', b'e', b'l', b'l', b'o',
         ];
 
@@ -261,7 +261,8 @@ mod tests {
 
         // This is a minimal valid DEFLATE stream created by a reference encoder
         let compressed: Vec<u8> = {
-            let mut c = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            let mut c =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
             std::io::Write::write_all(&mut c, b"A").unwrap();
             c.finish().unwrap()
         };
@@ -278,7 +279,8 @@ mod tests {
         let input = b"AAAAAAAAAAAAAAAAAAAA"; // 20 A's
 
         let compressed: Vec<u8> = {
-            let mut c = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            let mut c =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
             std::io::Write::write_all(&mut c, input).unwrap();
             c.finish().unwrap()
         };
@@ -293,7 +295,8 @@ mod tests {
         let input = b"Hello, World! This is a test of DEFLATE compression.";
 
         let compressed: Vec<u8> = {
-            let mut c = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            let mut c =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
             std::io::Write::write_all(&mut c, input).unwrap();
             c.finish().unwrap()
         };

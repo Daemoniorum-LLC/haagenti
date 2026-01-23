@@ -19,9 +19,9 @@ use crate::compressive::CompressiveSpectralEncoder;
 use crate::{Error, Result};
 
 #[cfg(feature = "zstd")]
-use haagenti_zstd::compress::CompressContext as ZstdCompressor;
-#[cfg(feature = "zstd")]
 use haagenti_core::CompressionLevel;
+#[cfg(feature = "zstd")]
+use haagenti_zstd::compress::CompressContext as ZstdCompressor;
 
 /// Pipeline configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,9 +133,8 @@ impl CompressionPipeline {
     /// Creates a new pipeline or resumes from checkpoint.
     pub fn new_or_resume(config: PipelineConfig) -> Result<Self> {
         // Ensure output directory exists
-        std::fs::create_dir_all(&config.output_dir).map_err(|e| {
-            Error::io(format!("failed to create output directory: {}", e))
-        })?;
+        std::fs::create_dir_all(&config.output_dir)
+            .map_err(|e| Error::io(format!("failed to create output directory: {}", e)))?;
 
         let checkpoint_path = config.output_dir.join("checkpoint.json");
         let output_path = config.output_dir.join("model.safetensors");
@@ -190,11 +189,10 @@ impl CompressionPipeline {
         };
 
         // Create encoder
-        let encoder =
-            CompressiveSpectralEncoder::new(config.num_fragments, config.retention);
+        let encoder = CompressiveSpectralEncoder::new(config.num_fragments, config.retention);
 
         // Create sampler
-        let sampler = QualitySampler::new(config.quality_sample_rate, 42);
+        let sampler = QualitySampler::new(config.quality_sample_rate);
 
         Ok(Self {
             config,
@@ -436,9 +434,8 @@ impl CompressionPipeline {
         #[cfg(feature = "zstd")]
         let final_data = {
             let mut zstd = ZstdCompressor::new(CompressionLevel::Fast);
-            zstd.compress(&compressed_data).map_err(|e| {
-                Error::corrupted(format!("zstd compression failed: {}", e))
-            })?
+            zstd.compress(&compressed_data)
+                .map_err(|e| Error::corrupted(format!("zstd compression failed: {}", e)))?
         };
         #[cfg(not(feature = "zstd"))]
         let final_data = compressed_data;

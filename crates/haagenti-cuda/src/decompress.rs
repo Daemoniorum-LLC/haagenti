@@ -41,7 +41,7 @@ use crate::dct_gpu::GpuDctContext;
 use crate::{CudaError, Result};
 
 /// Configuration for HCT decompression.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DecompressConfig {
     /// GPU device ID.
     pub device_id: usize,
@@ -49,16 +49,6 @@ pub struct DecompressConfig {
     pub verify_checksums: bool,
     /// Output precision (f32 or f16).
     pub output_f16: bool,
-}
-
-impl Default for DecompressConfig {
-    fn default() -> Self {
-        Self {
-            device_id: 0,
-            verify_checksums: false, // Skip for performance
-            output_f16: false,
-        }
-    }
 }
 
 /// Statistics from batch decompression.
@@ -215,10 +205,7 @@ impl GpuDecompressor {
     /// Batch decompress multiple tensors.
     ///
     /// More efficient than calling decompress() multiple times.
-    pub fn decompress_batch(
-        &mut self,
-        tensors: &[(&[u8], &[usize])],
-    ) -> Result<Vec<Vec<f32>>> {
+    pub fn decompress_batch(&mut self, tensors: &[(&[u8], &[usize])]) -> Result<Vec<Vec<f32>>> {
         let mut results = Vec::with_capacity(tensors.len());
 
         for (compressed, shape) in tensors {
@@ -243,8 +230,10 @@ impl GpuDecompressor {
         tensors: &[(&[u8], &[usize])],
     ) -> Result<(Vec<Vec<f32>>, DecompressStats)> {
         let start = Instant::now();
-        let mut stats = DecompressStats::default();
-        stats.num_tensors = tensors.len();
+        let mut stats = DecompressStats {
+            num_tensors: tensors.len(),
+            ..Default::default()
+        };
 
         // Pre-parse all tensors to get coefficient matrices (CPU work)
         let parse_start = Instant::now();
@@ -306,14 +295,21 @@ impl GpuDecompressor {
     /// Try to decompress zstd wrapper.
     fn try_zstd_decompress(&self, data: &[u8]) -> Result<Option<Vec<u8>>> {
         // Check for zstd magic number (0x28B52FFD)
-        if data.len() >= 4 && data[0] == 0x28 && data[1] == 0xB5 && data[2] == 0x2F && data[3] == 0xFD {
+        if data.len() >= 4
+            && data[0] == 0x28
+            && data[1] == 0xB5
+            && data[2] == 0x2F
+            && data[3] == 0xFD
+        {
             // Try zstd decompression, but fall back to raw parsing if it fails
             // (haagenti-zstd may produce non-standard frames)
             match zstd::decode_all(data) {
                 Ok(decompressed) => Ok(Some(decompressed)),
                 Err(_) => {
                     // Zstd magic present but decompression failed - treat as raw HCT
-                    tracing::debug!("Zstd magic present but decompression failed, treating as raw HCT");
+                    tracing::debug!(
+                        "Zstd magic present but decompression failed, treating as raw HCT"
+                    );
                     Ok(None)
                 }
             }
@@ -345,12 +341,21 @@ impl GpuDecompressor {
             let flags = u16::from_le_bytes([data[offset], data[offset + 1]]);
             offset += 2;
             let checksum = u64::from_le_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-                data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
             ]);
             offset += 8;
             let data_len = u32::from_le_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
             ]) as usize;
             offset += 4;
 
@@ -369,11 +374,10 @@ impl GpuDecompressor {
                 continue;
             }
 
-            let num_coefficients = u32::from_le_bytes([
-                frag_data[0], frag_data[1], frag_data[2], frag_data[3],
-            ]);
+            let num_coefficients =
+                u32::from_le_bytes([frag_data[0], frag_data[1], frag_data[2], frag_data[3]]);
 
-            let bitmap_size = (total_elements + 7) / 8;
+            let bitmap_size = total_elements.div_ceil(8);
             if frag_data.len() < 4 + bitmap_size {
                 continue;
             }
@@ -422,11 +426,9 @@ impl GpuDecompressor {
                         break;
                     }
 
-                    if (byte >> bit) & 1 == 1 {
-                        if coeff_idx < fragment.coefficients.len() {
-                            coefficients[element_idx] = fragment.coefficients[coeff_idx];
-                            coeff_idx += 1;
-                        }
+                    if (byte >> bit) & 1 == 1 && coeff_idx < fragment.coefficients.len() {
+                        coefficients[element_idx] = fragment.coefficients[coeff_idx];
+                        coeff_idx += 1;
                     }
                 }
             }
@@ -501,7 +503,10 @@ pub fn decompress_cpu(compressed: &[u8], shape: &[usize]) -> Result<Vec<f32>> {
         offset += 2; // flags
         offset += 8; // checksum
         let data_len = u32::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
         ]) as usize;
         offset += 4;
 
@@ -516,7 +521,7 @@ pub fn decompress_cpu(compressed: &[u8], shape: &[usize]) -> Result<Vec<f32>> {
             continue;
         }
 
-        let bitmap_size = (total_elements + 7) / 8;
+        let bitmap_size = total_elements.div_ceil(8);
         if frag_data.len() < 4 + bitmap_size {
             continue;
         }
@@ -533,15 +538,13 @@ pub fn decompress_cpu(compressed: &[u8], shape: &[usize]) -> Result<Vec<f32>> {
                     break;
                 }
 
-                if (byte >> bit) & 1 == 1 {
-                    if coeff_idx * 2 + 1 < coeff_data.len() {
-                        let bits = u16::from_le_bytes([
-                            coeff_data[coeff_idx * 2],
-                            coeff_data[coeff_idx * 2 + 1],
-                        ]);
-                        coefficients[element_idx] = half::f16::from_bits(bits).to_f32();
-                        coeff_idx += 1;
-                    }
+                if (byte >> bit) & 1 == 1 && coeff_idx * 2 + 1 < coeff_data.len() {
+                    let bits = u16::from_le_bytes([
+                        coeff_data[coeff_idx * 2],
+                        coeff_data[coeff_idx * 2 + 1],
+                    ]);
+                    coefficients[element_idx] = half::f16::from_bits(bits).to_f32();
+                    coeff_idx += 1;
                 }
             }
         }

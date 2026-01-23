@@ -9,23 +9,34 @@ fn main() {
     ];
 
     for input in inputs {
-        println!("\n=== Testing: \"{}...\" ({} bytes) ===", 
-                 String::from_utf8_lossy(&input[..30.min(input.len())]), input.len());
+        println!(
+            "\n=== Testing: \"{}...\" ({} bytes) ===",
+            String::from_utf8_lossy(&input[..30.min(input.len())]),
+            input.len()
+        );
 
         // Get reference compression
         let ref_compressed = zstd::encode_all(&input[..], 1).unwrap();
-        
+
         // Check block type
         let fhd = ref_compressed[4];
         let single_segment = (fhd & 0x20) != 0;
         let fcs_field = if single_segment { 1 } else { 0 };
         let mut pos = 5 + fcs_field;
-        if !single_segment { pos += 1; }
+        if !single_segment {
+            pos += 1;
+        }
 
         // For single segment frames, FCS comes right after FHD
         // Skip FCS field
         let fcs_size = match fhd >> 6 {
-            0 => if single_segment { 1 } else { 0 },
+            0 => {
+                if single_segment {
+                    1
+                } else {
+                    0
+                }
+            }
             1 => 2,
             2 => 4,
             3 => 8,
@@ -42,18 +53,31 @@ fn main() {
             continue;
         }
 
-        let bh = u32::from_le_bytes([ref_compressed[pos], ref_compressed[pos+1], ref_compressed[pos+2], 0]);
+        let bh = u32::from_le_bytes([
+            ref_compressed[pos],
+            ref_compressed[pos + 1],
+            ref_compressed[pos + 2],
+            0,
+        ]);
         let block_type = (bh >> 1) & 0x3;
         let block_size = (bh >> 3) as usize;
-        let block_type_name = match block_type { 0 => "Raw", 1 => "RLE", 2 => "Compressed", _ => "Reserved" };
+        let block_type_name = match block_type {
+            0 => "Raw",
+            1 => "RLE",
+            2 => "Compressed",
+            _ => "Reserved",
+        };
 
-        println!("  Reference uses {} block ({} bytes)", block_type_name, block_size);
+        println!(
+            "  Reference uses {} block ({} bytes)",
+            block_type_name, block_size
+        );
 
         if block_type == 2 {
             // Found a Compressed block!
             println!("  FOUND Compressed block from reference!");
             println!("  Reference hex: {:02x?}", &ref_compressed[..]);
-            
+
             // Now compare with our compression
             let compressor = haagenti_zstd::compress::SpeculativeCompressor::new();
             let our_compressed = compressor.compress(input).unwrap();

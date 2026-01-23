@@ -48,7 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--workers" | "-w" => {
                 i += 1;
-                num_workers = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(num_cpus());
+                num_workers = args
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(num_cpus());
             }
             "--help" | "-h" => {
                 print_help();
@@ -120,7 +123,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Track retention distribution
     let retention_buckets: Vec<AtomicUsize> = (0..10).map(|_| AtomicUsize::new(0)).collect();
 
-    println!("Compressing {} tensors with adaptive retention...\n", total_tensors);
+    println!(
+        "Compressing {} tensors with adaptive retention...\n",
+        total_tensors
+    );
 
     // Process tensors in parallel
     all_tensors.par_iter().for_each(|(shard_idx, name, shape)| {
@@ -208,26 +214,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
         let ratio = original_size as f64 / output_size as f64;
-        println!("[{}/{}] {} - {:.1}x (retention: {:.0}%)",
-                 done, total_tensors, name, ratio, meta.retention_ratio * 100.0);
+        println!(
+            "[{}/{}] {} - {:.1}x (retention: {:.0}%)",
+            done,
+            total_tensors,
+            name,
+            ratio,
+            meta.retention_ratio * 100.0
+        );
     });
 
     let elapsed = start_time.elapsed().as_secs_f64();
     let input_gb = total_input.load(Ordering::Relaxed) as f64 / 1_000_000_000.0;
     let output_gb = total_output.load(Ordering::Relaxed) as f64 / 1_000_000_000.0;
-    let compression_ratio = if output_gb > 0.0 { input_gb / output_gb } else { 0.0 };
+    let compression_ratio = if output_gb > 0.0 {
+        input_gb / output_gb
+    } else {
+        0.0
+    };
     let completed_count = completed.load(Ordering::Relaxed);
     let failed_count = failed.load(Ordering::Relaxed);
 
     println!("\nCompression Complete!");
     println!("=====================");
     println!("Output:              {}", output_dir.display());
-    println!("Tensors:             {}/{} compressed ({} failed)", completed_count, total_tensors, failed_count);
+    println!(
+        "Tensors:             {}/{} compressed ({} failed)",
+        completed_count, total_tensors, failed_count
+    );
     println!("Input Size:          {:.2} GB", input_gb);
     println!("Output Size:         {:.2} GB", output_gb);
     println!("Compression:         {:.1}x", compression_ratio);
     println!("Time:                {:.1} seconds", elapsed);
-    println!("Throughput:          {:.1} MB/s", (input_gb * 1000.0) / elapsed);
+    println!(
+        "Throughput:          {:.1} MB/s",
+        (input_gb * 1000.0) / elapsed
+    );
 
     // Print retention distribution
     println!("\nRetention Distribution:");

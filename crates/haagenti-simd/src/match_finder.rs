@@ -34,7 +34,8 @@ pub fn find_match_length(src: &[u8], cur: &[u8], max_len: usize) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
         // Prefer AVX-512 for 2x throughput vs AVX2
-        if is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") && len >= 64 {
+        if is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") && len >= 64
+        {
             // Safety: we've checked that AVX-512 is available and len >= 64
             return unsafe { find_match_length_avx512(src, cur, len) };
         }
@@ -69,16 +70,8 @@ fn find_match_length_scalar(src: &[u8], cur: &[u8], max_len: usize) -> usize {
     // Compare 8 bytes at a time using u64
     while matched + 8 <= max_len {
         // Safety: we've verified length above
-        let src_word = u64::from_le_bytes(
-            src[matched..matched + 8]
-                .try_into()
-                .unwrap_or([0; 8]),
-        );
-        let cur_word = u64::from_le_bytes(
-            cur[matched..matched + 8]
-                .try_into()
-                .unwrap_or([0; 8]),
-        );
+        let src_word = u64::from_le_bytes(src[matched..matched + 8].try_into().unwrap_or([0; 8]));
+        let cur_word = u64::from_le_bytes(cur[matched..matched + 8].try_into().unwrap_or([0; 8]));
 
         let diff = src_word ^ cur_word;
         if diff != 0 {

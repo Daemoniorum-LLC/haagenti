@@ -41,12 +41,10 @@ mod transition;
 pub use error::{AdaptiveError, Result};
 pub use precision::{Precision, PrecisionCapabilities};
 pub use profile::{PrecisionProfile, ProfilePreset};
-pub use schedule::{PrecisionSchedule, ScheduleConfig, StepPrecision};
-pub use transition::{PrecisionTransition, TransitionStrategy};
+pub use schedule::{quick_schedule, PrecisionSchedule, ScheduleConfig, StepPrecision};
+pub use transition::{PrecisionTransition, TransitionPlanner, TransitionStrategy};
 
 /// Prelude for common imports
 pub mod prelude {
-    pub use super::{
-        Precision, PrecisionProfile, PrecisionSchedule, ProfilePreset, Result,
-    };
+    pub use super::{Precision, PrecisionProfile, PrecisionSchedule, ProfilePreset, Result};
 }

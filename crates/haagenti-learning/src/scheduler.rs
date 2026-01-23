@@ -124,7 +124,8 @@ impl LearningRateScheduler {
                 if progress < 0.4 {
                     // Increase to peak
                     let phase_progress = progress / 0.4;
-                    config.initial_lr + (config.initial_lr * 10.0 - config.initial_lr) * phase_progress
+                    config.initial_lr
+                        + (config.initial_lr * 10.0 - config.initial_lr) * phase_progress
                 } else {
                     // Decrease from peak
                     let phase_progress = (progress - 0.4) / 0.6;
@@ -341,7 +342,18 @@ mod tests {
         groups.add_group("decoder", 1.0);
 
         let base_lr = 0.001;
-        assert_eq!(groups.get_lr("encoder", base_lr), 0.0001);
-        assert_eq!(groups.get_lr("decoder", base_lr), 0.001);
+        // Use approximate comparison for floating point
+        let encoder_lr = groups.get_lr("encoder", base_lr);
+        let decoder_lr = groups.get_lr("decoder", base_lr);
+        assert!(
+            (encoder_lr - 0.0001).abs() < 1e-9,
+            "encoder lr: {}",
+            encoder_lr
+        );
+        assert!(
+            (decoder_lr - 0.001).abs() < 1e-9,
+            "decoder lr: {}",
+            decoder_lr
+        );
     }
 }

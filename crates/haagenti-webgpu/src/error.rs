@@ -31,7 +31,10 @@ pub enum WebGpuError {
 
     /// Out of GPU memory
     #[error("Out of GPU memory: requested {requested_mb}MB, available {available_mb}MB")]
-    OutOfMemory { requested_mb: u64, available_mb: u64 },
+    OutOfMemory {
+        requested_mb: u64,
+        available_mb: u64,
+    },
 
     /// Cache operation failed
     #[error("Cache error: {0}")]

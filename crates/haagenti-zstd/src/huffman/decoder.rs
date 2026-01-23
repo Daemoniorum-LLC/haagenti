@@ -117,7 +117,7 @@ fn parse_direct_weights(data: &[u8]) -> Result<(Vec<u8>, usize)> {
     }
 
     // Each byte contains two 4-bit weights
-    let num_weight_bytes = (num_symbols + 1) / 2;
+    let num_weight_bytes = num_symbols.div_ceil(2);
     let total_header_size = 1 + num_weight_bytes;
 
     if data.len() < total_header_size {
@@ -154,7 +154,7 @@ fn parse_direct_weights(data: &[u8]) -> Result<(Vec<u8>, usize)> {
 /// 2. Build an FSE decoder table for weight symbols
 /// 3. Decode weights using FSE bitstream reading (reversed stream with sentinel)
 fn decompress_huffman_weights_fse(data: &[u8]) -> Result<Vec<u8>> {
-    use crate::fse::{FseTable, FseDecoder, BitReader};
+    use crate::fse::{BitReader, FseDecoder, FseTable};
 
     if data.is_empty() {
         return Err(Error::corrupted("Empty FSE data for Huffman weights"));
@@ -168,7 +168,7 @@ fn decompress_huffman_weights_fse(data: &[u8]) -> Result<Vec<u8>> {
 
     // Verify accuracy log is valid for Huffman weights (5-7 per RFC 8878)
     let accuracy_log = table.accuracy_log();
-    if accuracy_log < 5 || accuracy_log > 7 {
+    if !(5..=7).contains(&accuracy_log) {
         return Err(Error::corrupted(format!(
             "Huffman weight FSE accuracy log {} outside valid range 5-7",
             accuracy_log
@@ -224,7 +224,9 @@ fn decompress_huffman_weights_fse(data: &[u8]) -> Result<Vec<u8>> {
     }
 
     if weights.is_empty() {
-        return Err(Error::corrupted("No Huffman weights decoded from FSE stream"));
+        return Err(Error::corrupted(
+            "No Huffman weights decoded from FSE stream",
+        ));
     }
 
     Ok(weights)
@@ -246,11 +248,7 @@ pub fn build_table_from_weights(mut weights: Vec<u8>) -> Result<HuffmanTable> {
     }
 
     // Calculate the sum of 2^weight for explicit weights
-    let weight_sum: u32 = weights
-        .iter()
-        .filter(|&&w| w > 0)
-        .map(|&w| 1u32 << w)
-        .sum();
+    let weight_sum: u32 = weights.iter().filter(|&&w| w > 0).map(|&w| 1u32 << w).sum();
 
     // Find the smallest power of 2 >= weight_sum
     let target = weight_sum.next_power_of_two();

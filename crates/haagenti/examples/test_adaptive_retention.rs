@@ -22,7 +22,7 @@ use std::io::Write as IoWrite;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use haagenti::adaptive::{AdaptiveBatchEncoder, AdaptiveSpectralEncoder, AdaptiveSpectralDecoder};
+use haagenti::adaptive::{AdaptiveBatchEncoder, AdaptiveSpectralDecoder, AdaptiveSpectralEncoder};
 use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
 use haagenti::spectral_analysis::SpectralAnalyzer;
 
@@ -289,7 +289,10 @@ fn main() {
 
     println!("Configuration:");
     println!("  Target quality: {:.1}%", target_quality * 100.0);
-    println!("  Uniform retention baseline: {:.1}%", uniform_retention * 100.0);
+    println!(
+        "  Uniform retention baseline: {:.1}%",
+        uniform_retention * 100.0
+    );
     println!("  Max tensors: {}", max_tensors);
     println!();
 
@@ -447,18 +450,36 @@ fn main() {
 
     let avg_retention = retention_sum / results.len() as f32;
     let storage_savings = 1.0 - (total_adaptive_bytes as f32 / total_uniform_bytes as f32);
-    let avg_uniform_mse: f32 = results.iter().map(|r| r.uniform_mse).sum::<f32>() / results.len() as f32;
-    let avg_adaptive_mse: f32 = results.iter().map(|r| r.adaptive_mse).sum::<f32>() / results.len() as f32;
-    let avg_uniform_cos: f32 = results.iter().map(|r| r.uniform_cosine).sum::<f32>() / results.len() as f32;
-    let avg_adaptive_cos: f32 = results.iter().map(|r| r.adaptive_cosine).sum::<f32>() / results.len() as f32;
+    let avg_uniform_mse: f32 =
+        results.iter().map(|r| r.uniform_mse).sum::<f32>() / results.len() as f32;
+    let avg_adaptive_mse: f32 =
+        results.iter().map(|r| r.adaptive_mse).sum::<f32>() / results.len() as f32;
+    let avg_uniform_cos: f32 =
+        results.iter().map(|r| r.uniform_cosine).sum::<f32>() / results.len() as f32;
+    let avg_adaptive_cos: f32 =
+        results.iter().map(|r| r.adaptive_cosine).sum::<f32>() / results.len() as f32;
 
     println!("Tensors processed: {}", results.len());
     println!();
     println!("Retention:");
     println!("  Uniform baseline: {:.1}%", uniform_retention * 100.0);
     println!("  Adaptive average: {:.1}%", avg_retention * 100.0);
-    println!("  Adaptive min:     {:.1}%", results.iter().map(|r| r.adaptive_retention).fold(f32::MAX, f32::min) * 100.0);
-    println!("  Adaptive max:     {:.1}%", results.iter().map(|r| r.adaptive_retention).fold(0.0f32, f32::max) * 100.0);
+    println!(
+        "  Adaptive min:     {:.1}%",
+        results
+            .iter()
+            .map(|r| r.adaptive_retention)
+            .fold(f32::MAX, f32::min)
+            * 100.0
+    );
+    println!(
+        "  Adaptive max:     {:.1}%",
+        results
+            .iter()
+            .map(|r| r.adaptive_retention)
+            .fold(0.0f32, f32::max)
+            * 100.0
+    );
     println!();
     println!("Storage:");
     println!("  Uniform total:  {} bytes", total_uniform_bytes);
@@ -468,7 +489,14 @@ fn main() {
     println!("Quality (MSE):");
     println!("  Uniform avg:  {:.6e}", avg_uniform_mse);
     println!("  Adaptive avg: {:.6e}", avg_adaptive_mse);
-    println!("  Improvement:  {:.2}x", if avg_adaptive_mse > 0.0 { avg_uniform_mse / avg_adaptive_mse } else { 1.0 });
+    println!(
+        "  Improvement:  {:.2}x",
+        if avg_adaptive_mse > 0.0 {
+            avg_uniform_mse / avg_adaptive_mse
+        } else {
+            1.0
+        }
+    );
     println!();
     println!("Quality (Cosine Similarity):");
     println!("  Uniform avg:  {:.6}", avg_uniform_cos);
@@ -485,28 +513,62 @@ fn main() {
     for (i, count) in buckets.iter().enumerate() {
         let pct = *count as f32 / results.len() as f32 * 100.0;
         let bar = "#".repeat((*count * 50 / results.len().max(1)).max(0));
-        println!("  {:>2}-{:>2}%: {:>3} ({:>5.1}%) {}", i * 10, (i + 1) * 10, count, pct, bar);
+        println!(
+            "  {:>2}-{:>2}%: {:>3} ({:>5.1}%) {}",
+            i * 10,
+            (i + 1) * 10,
+            count,
+            pct,
+            bar
+        );
     }
     println!();
 
     // Classification breakdown
-    let low_rank_count = results.iter().filter(|r| r.adaptive_retention < 0.3).count();
-    let medium_rank_count = results.iter().filter(|r| r.adaptive_retention >= 0.3 && r.adaptive_retention < 0.6).count();
-    let high_rank_count = results.iter().filter(|r| r.adaptive_retention >= 0.6).count();
+    let low_rank_count = results
+        .iter()
+        .filter(|r| r.adaptive_retention < 0.3)
+        .count();
+    let medium_rank_count = results
+        .iter()
+        .filter(|r| r.adaptive_retention >= 0.3 && r.adaptive_retention < 0.6)
+        .count();
+    let high_rank_count = results
+        .iter()
+        .filter(|r| r.adaptive_retention >= 0.6)
+        .count();
 
     println!("Tensor Classification:");
-    println!("  Low-rank (< 30%):     {} ({:.1}%)", low_rank_count, low_rank_count as f32 / results.len() as f32 * 100.0);
-    println!("  Medium-rank (30-60%): {} ({:.1}%)", medium_rank_count, medium_rank_count as f32 / results.len() as f32 * 100.0);
-    println!("  High-rank (> 60%):    {} ({:.1}%)", high_rank_count, high_rank_count as f32 / results.len() as f32 * 100.0);
+    println!(
+        "  Low-rank (< 30%):     {} ({:.1}%)",
+        low_rank_count,
+        low_rank_count as f32 / results.len() as f32 * 100.0
+    );
+    println!(
+        "  Medium-rank (30-60%): {} ({:.1}%)",
+        medium_rank_count,
+        medium_rank_count as f32 / results.len() as f32 * 100.0
+    );
+    println!(
+        "  High-rank (> 60%):    {} ({:.1}%)",
+        high_rank_count,
+        high_rank_count as f32 / results.len() as f32 * 100.0
+    );
     println!();
 
     // Conclusion
     if avg_adaptive_mse < avg_uniform_mse && total_adaptive_bytes < total_uniform_bytes {
         println!("RESULT: Adaptive wins on BOTH storage and quality!");
     } else if total_adaptive_bytes < total_uniform_bytes {
-        println!("RESULT: Adaptive achieves {:.1}% storage savings", storage_savings * 100.0);
+        println!(
+            "RESULT: Adaptive achieves {:.1}% storage savings",
+            storage_savings * 100.0
+        );
     } else if avg_adaptive_mse < avg_uniform_mse {
-        println!("RESULT: Adaptive achieves {:.2}x better quality", avg_uniform_mse / avg_adaptive_mse);
+        println!(
+            "RESULT: Adaptive achieves {:.2}x better quality",
+            avg_uniform_mse / avg_adaptive_mse
+        );
     } else {
         println!("RESULT: Uniform baseline is competitive for this model");
     }

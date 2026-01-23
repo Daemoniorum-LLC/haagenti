@@ -1,3 +1,10 @@
+// Test modules have minor lints that don't affect production code
+#![cfg_attr(test, allow(unused_variables))]
+#![cfg_attr(test, allow(unused_mut))]
+#![cfg_attr(test, allow(clippy::needless_range_loop))]
+#![cfg_attr(test, allow(clippy::manual_repeat_n))]
+#![cfg_attr(test, allow(clippy::useless_vec))]
+
 //! # Haagenti Core
 //!
 //! Core traits, types, and streaming API for the Haagenti compression library.
@@ -38,19 +45,19 @@
 extern crate alloc;
 
 pub mod error;
-pub mod types;
-pub mod traits;
-pub mod stream;
 pub mod stats;
+pub mod stream;
+pub mod traits;
+pub mod types;
 
 #[cfg(feature = "dct")]
 pub mod dct;
 
 pub use error::{Error, Result};
-pub use types::{Algorithm, CompressionLevel, CompressionRatio, Checksum, WindowSize};
-pub use traits::{
-    Compressor, Decompressor, Codec, StreamingCompressor, StreamingDecompressor,
-    DictionaryCompressor, DictionaryDecompressor, ParallelCompressor, SimdCompressor,
-};
-pub use stream::{Flush, StreamConfig, StreamState};
 pub use stats::{CompressionStats, Metrics};
+pub use stream::{Flush, StreamConfig, StreamState};
+pub use traits::{
+    Codec, Compressor, Decompressor, DictionaryCompressor, DictionaryDecompressor,
+    ParallelCompressor, SimdCompressor, StreamingCompressor, StreamingDecompressor,
+};
+pub use types::{Algorithm, Checksum, CompressionLevel, CompressionRatio, WindowSize};

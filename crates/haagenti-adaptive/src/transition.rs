@@ -4,9 +4,10 @@ use crate::{AdaptiveError, Precision, Result};
 use serde::{Deserialize, Serialize};
 
 /// Strategy for transitioning between precision levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TransitionStrategy {
     /// Immediate switch (most efficient)
+    #[default]
     Immediate,
     /// Gradual blend over multiple steps
     Gradual {
@@ -15,12 +16,6 @@ pub enum TransitionStrategy {
     },
     /// Adaptive based on noise level
     StepAware,
-}
-
-impl Default for TransitionStrategy {
-    fn default() -> Self {
-        TransitionStrategy::Immediate
-    }
 }
 
 /// A precision transition with blending information
@@ -55,9 +50,7 @@ impl PrecisionTransition {
 
     /// Create a gradual transition
     pub fn gradual(from: Precision, to: Precision, start_step: u32, duration: u32) -> Self {
-        let blend_factors: Vec<f32> = (0..=duration)
-            .map(|i| i as f32 / duration as f32)
-            .collect();
+        let blend_factors: Vec<f32> = (0..=duration).map(|i| i as f32 / duration as f32).collect();
 
         Self {
             from,
@@ -181,21 +174,34 @@ impl TransitionPlanner {
         }
 
         let mut transitions = Vec::new();
+        let mut last_transition_end = 0u32;
 
         for window in zones.windows(2) {
             let (_, end1, prec1) = window[0];
             let (start2, _, prec2) = window[1];
+
+            // Enforce minimum gap between transitions
+            if start2 < last_transition_end + self.min_gap {
+                continue;
+            }
 
             if prec1 == prec2 {
                 continue;
             }
 
             let transition = match self.preferred_strategy {
-                TransitionStrategy::Immediate => PrecisionTransition::immediate(prec1, prec2, start2),
+                TransitionStrategy::Immediate => {
+                    PrecisionTransition::immediate(prec1, prec2, start2)
+                }
                 TransitionStrategy::Gradual { steps } => {
                     // Ensure transition doesn't exceed zone boundaries
                     let safe_steps = steps.min(end1.saturating_sub(1));
-                    PrecisionTransition::gradual(prec1, prec2, end1.saturating_sub(safe_steps), safe_steps)
+                    PrecisionTransition::gradual(
+                        prec1,
+                        prec2,
+                        end1.saturating_sub(safe_steps),
+                        safe_steps,
+                    )
                 }
                 TransitionStrategy::StepAware => {
                     // Use 2 steps for step-aware transitions
@@ -203,17 +209,30 @@ impl TransitionPlanner {
                 }
             };
 
+            last_transition_end = transition.end_step;
             transitions.push(transition);
         }
 
         transitions
     }
 
+    /// Get available VRAM in MB
+    pub fn vram_mb(&self) -> u64 {
+        self.vram_mb
+    }
+
     /// Optimize transitions to minimize VRAM spikes
     pub fn optimize_for_vram(&self, transitions: &mut [PrecisionTransition]) {
+        // Calculate VRAM threshold based on available memory
+        let vram_threshold = if self.vram_mb < 8192 {
+            0.85 // More aggressive for low VRAM
+        } else {
+            0.9
+        };
+
         for transition in transitions {
             // If gradual transition would cause VRAM spike, make it immediate
-            if transition.peak_vram_ratio() > 0.9 {
+            if transition.peak_vram_ratio() > vram_threshold {
                 *transition = PrecisionTransition::immediate(
                     transition.from,
                     transition.to,

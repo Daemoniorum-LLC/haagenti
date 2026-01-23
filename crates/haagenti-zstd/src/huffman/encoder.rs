@@ -21,7 +21,7 @@
 //!
 //! - [RFC 8878 Section 4.2](https://datatracker.ietf.org/doc/html/rfc8878#section-4.2)
 
-use crate::fse::{FseTable, FseBitWriter};
+use crate::fse::{FseBitWriter, FseTable};
 
 /// Maximum number of symbols for Huffman encoding (256 for bytes).
 const MAX_SYMBOLS: usize = 256;
@@ -47,7 +47,11 @@ pub struct HuffmanCode {
 impl HuffmanCode {
     #[inline]
     const fn new(code: u16, num_bits: u8) -> Self {
-        Self { code, num_bits, _pad: 0 }
+        Self {
+            code,
+            num_bits,
+            _pad: 0,
+        }
     }
 }
 
@@ -85,7 +89,8 @@ impl HuffmanEncoder {
             return None; // Use RLE instead
         }
 
-        let last_symbol = freq.iter()
+        let last_symbol = freq
+            .iter()
             .enumerate()
             .filter(|&(_, &f)| f > 0)
             .map(|(i, _)| i)
@@ -146,7 +151,8 @@ impl HuffmanEncoder {
             return None; // Need at least 2 symbols
         }
 
-        let last_symbol = weights.iter()
+        let last_symbol = weights
+            .iter()
             .enumerate()
             .filter(|&(_, &w)| w > 0)
             .map(|(i, _)| i)
@@ -185,7 +191,7 @@ impl HuffmanEncoder {
         // Use SIMD-accelerated histogram when feature is enabled
         #[cfg(feature = "simd")]
         {
-            return haagenti_simd::byte_histogram(data);
+            haagenti_simd::byte_histogram(data)
         }
 
         // Optimized scalar fallback using 4-way interleaved counting
@@ -274,8 +280,12 @@ impl HuffmanEncoder {
         symbols.sort_unstable_by(|a, b| b.1.cmp(&a.1));
 
         // Calculate max_weight needed for n symbols
-        let min_exp = if n <= 2 { 0 } else { 64 - ((n - 1) as u64).leading_zeros() };
-        let max_weight = ((min_exp + 1) as u8).max(1).min(MAX_WEIGHT);
+        let min_exp = if n <= 2 {
+            0
+        } else {
+            64 - ((n - 1) as u64).leading_zeros()
+        };
+        let max_weight = ((min_exp + 1) as u8).clamp(1, MAX_WEIGHT);
 
         let mut weights = vec![0u8; MAX_SYMBOLS];
         let target = 1u64 << (max_weight + 1);
@@ -304,9 +314,7 @@ impl HuffmanEncoder {
         }
 
         // Calculate current Kraft sum - O(n)
-        let mut kraft_sum: u64 = symbols.iter()
-            .map(|(sym, _)| 1u64 << weights[*sym])
-            .sum();
+        let mut kraft_sum: u64 = symbols.iter().map(|(sym, _)| 1u64 << weights[*sym]).sum();
 
         // Phase 2: Adjust weights to satisfy Kraft inequality - O(n log n) worst case
         // Use a greedy approach: process symbols by weight (lowest first for increasing)
@@ -314,7 +322,8 @@ impl HuffmanEncoder {
         if kraft_sum < target {
             // Under capacity: increase weights for symbols (shorter codes)
             // Process from lowest weight to highest (most room to increase)
-            let mut by_weight: Vec<(usize, u8)> = symbols.iter()
+            let mut by_weight: Vec<(usize, u8)> = symbols
+                .iter()
                 .map(|&(sym, _)| (sym, weights[sym]))
                 .collect();
             by_weight.sort_unstable_by_key(|&(_, w)| w);
@@ -333,7 +342,8 @@ impl HuffmanEncoder {
         } else if kraft_sum > target {
             // Over capacity: decrease weights (longer codes)
             // Process from highest weight to lowest
-            let mut by_weight: Vec<(usize, u8)> = symbols.iter()
+            let mut by_weight: Vec<(usize, u8)> = symbols
+                .iter()
                 .map(|&(sym, _)| (sym, weights[sym]))
                 .collect();
             by_weight.sort_unstable_by_key(|&(_, w)| std::cmp::Reverse(w));
@@ -367,6 +377,7 @@ impl HuffmanEncoder {
 
     /// Fix code lengths to satisfy Kraft inequality.
     /// For a valid Huffman code: sum(2^(max_len - len)) = 2^max_len
+    #[allow(dead_code)]
     fn fix_kraft_inequality(code_lengths: &mut [u8], max_len: u8) {
         // First, check if we need a deeper tree
         // Calculate minimum required depth for this many symbols
@@ -421,6 +432,7 @@ impl HuffmanEncoder {
     }
 
     /// Fill unused Kraft capacity by shortening some code lengths.
+    #[allow(dead_code)]
     fn fill_kraft_capacity(code_lengths: &mut [u8], max_len: u8, mut spare: u64) {
         // Sort symbols by code length (longest first) to shorten long codes
         let mut syms: Vec<_> = code_lengths
@@ -447,6 +459,7 @@ impl HuffmanEncoder {
 
     /// Limit code lengths to ensure they satisfy Kraft inequality.
     /// Uses a simple algorithm to redistribute long codes.
+    #[allow(dead_code)]
     fn limit_code_lengths(code_lengths: &mut [u8], max_len: u8) {
         // Count symbols at each length
         let mut counts = vec![0u32; max_len as usize + 1];
@@ -472,9 +485,7 @@ impl HuffmanEncoder {
                 .iter()
                 .enumerate()
                 .skip(1)
-                .map(|(len, &count)| {
-                    (count as u64) << (max_len as usize - len)
-                })
+                .map(|(len, &count)| (count as u64) << (max_len as usize - len))
                 .sum();
 
             let target = 1u64 << max_len;
@@ -519,9 +530,14 @@ impl HuffmanEncoder {
         // Calculate starting codes for each length
         let mut next_code = vec![0u32; max_bits as usize + 2];
         let mut code = 0u32;
-        for bits in 1..=max_bits as usize {
+        for (bits, next_code_entry) in next_code
+            .iter_mut()
+            .enumerate()
+            .take(max_bits as usize + 1)
+            .skip(1)
+        {
             code = (code + bl_count.get(bits - 1).copied().unwrap_or(0)) << 1;
-            next_code[bits] = code;
+            *next_code_entry = code;
         }
 
         // Assign codes to symbols
@@ -529,10 +545,7 @@ impl HuffmanEncoder {
             if w > 0 && symbol < MAX_SYMBOLS {
                 let code_len = (max_bits + 1).saturating_sub(w) as usize;
                 if code_len < next_code.len() {
-                    codes[symbol] = HuffmanCode::new(
-                        next_code[code_len] as u16,
-                        code_len as u8,
-                    );
+                    codes[symbol] = HuffmanCode::new(next_code[code_len] as u16, code_len as u8);
                     next_code[code_len] += 1;
                 }
             }
@@ -558,7 +571,8 @@ impl HuffmanEncoder {
         }
 
         // Pre-allocate output with better estimate
-        let estimated_bits: usize = literals.iter()
+        let estimated_bits: usize = literals
+            .iter()
             .take(256.min(literals.len()))
             .map(|&b| self.codes[b as usize].num_bits as usize)
             .sum();
@@ -567,7 +581,7 @@ impl HuffmanEncoder {
         } else {
             estimated_bits * literals.len() / 256.min(literals.len())
         };
-        let mut output = Vec::with_capacity((avg_bits + 7) / 8 + 16);
+        let mut output = Vec::with_capacity(avg_bits.div_ceil(8) + 16);
 
         // 64-bit accumulator for efficient bit packing
         let mut accum: u64 = 0;
@@ -605,7 +619,7 @@ impl HuffmanEncoder {
             let mut i = chunk_len;
 
             // Handle tail (non-multiple of 4)
-            while i > 0 && (i % 4) != 0 {
+            while i > 0 && !i.is_multiple_of(4) {
                 i -= 1;
                 let byte = chunk[i];
                 let code = &self.codes[byte as usize];
@@ -672,7 +686,7 @@ impl HuffmanEncoder {
         bits_in_accum += 1;
 
         // Flush remaining bits (up to 5 bytes: 32 bits max + 1 sentinel)
-        let remaining_bytes = (bits_in_accum + 7) / 8;
+        let remaining_bytes = bits_in_accum.div_ceil(8);
         for _ in 0..remaining_bytes {
             output.push((accum & 0xFF) as u8);
             accum >>= 8;
@@ -699,7 +713,7 @@ impl HuffmanEncoder {
         let mut i = len;
 
         // Handle tail (last 1-3 symbols)
-        while i > 0 && (i % 4) != 0 {
+        while i > 0 && !i.is_multiple_of(4) {
             i -= 1;
             let code = &self.codes[literals[i] as usize];
             if code.num_bits > 0 {
@@ -779,7 +793,9 @@ impl HuffmanEncoder {
     /// - Followed by FSE table and compressed weights
     pub fn serialize_weights(&self) -> Vec<u8> {
         // Find last non-zero weight
-        let last_symbol = self.weights.iter()
+        let last_symbol = self
+            .weights
+            .iter()
             .enumerate()
             .filter(|&(_, w)| *w > 0)
             .map(|(i, _)| i)
@@ -789,7 +805,7 @@ impl HuffmanEncoder {
         let num_symbols = last_symbol + 1;
 
         // Calculate direct encoding size
-        let direct_size = 1 + (num_symbols + 1) / 2;
+        let direct_size = 1 + num_symbols.div_ceil(2);
 
         // Try FSE-compressed weights if beneficial
         // FSE is typically better when there are many zeros in the weight table
@@ -842,7 +858,6 @@ impl HuffmanEncoder {
     ///    - Initial decoder state (accuracy_log bits, MSB-first from end)
     ///    - Encoded symbols' bits for state transitions
     fn serialize_weights_fse(&self, num_symbols: usize) -> Vec<u8> {
-
         // Count frequency of each weight value (weights are 0-11)
         let mut weight_freq = [0i16; 13]; // 0-12 possible weight values
         for i in 0..num_symbols {
@@ -1139,8 +1154,8 @@ impl HuffmanEncoder {
         // Weight table size depends on last_symbol (highest symbol index), not unique count
         // Direct encoding uses (last_symbol + 1) symbols in the table
         let num_table_symbols = self.last_symbol + 1;
-        let weight_table_size = 1 + (num_table_symbols + 1) / 2;
-        (total_bits + 7) / 8 + weight_table_size
+        let weight_table_size = 1 + num_table_symbols.div_ceil(2);
+        total_bits.div_ceil(8) + weight_table_size
     }
 
     /// Get code for a symbol (for testing).
@@ -1161,9 +1176,15 @@ mod tests {
     #[test]
     fn test_build_simple() {
         let mut data = Vec::new();
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
-        for _ in 0..25 { data.push(b'c'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
+        for _ in 0..25 {
+            data.push(b'c');
+        }
 
         let encoder = HuffmanEncoder::build(&data);
         assert!(encoder.is_some());
@@ -1182,8 +1203,12 @@ mod tests {
     #[test]
     fn test_encode_simple() {
         let mut data = Vec::new();
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
 
         let encoder = HuffmanEncoder::build(&data);
         if let Some(enc) = encoder {
@@ -1195,9 +1220,15 @@ mod tests {
     #[test]
     fn test_encode_batch() {
         let mut data = Vec::new();
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
-        for _ in 0..25 { data.push(b'c'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
+        for _ in 0..25 {
+            data.push(b'c');
+        }
 
         let encoder = HuffmanEncoder::build(&data);
         if let Some(enc) = encoder {
@@ -1213,8 +1244,12 @@ mod tests {
     #[test]
     fn test_serialize_weights() {
         let mut data = Vec::new();
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
 
         let encoder = HuffmanEncoder::build(&data);
         if let Some(enc) = encoder {
@@ -1227,8 +1262,12 @@ mod tests {
     #[test]
     fn test_estimate_size() {
         let mut data = Vec::new();
-        for _ in 0..100 { data.push(b'a'); }
-        for _ in 0..50 { data.push(b'b'); }
+        for _ in 0..100 {
+            data.push(b'a');
+        }
+        for _ in 0..50 {
+            data.push(b'b');
+        }
 
         let encoder = HuffmanEncoder::build(&data);
         if let Some(enc) = encoder {
@@ -1274,7 +1313,10 @@ mod tests {
             let weights = enc.serialize_weights();
             assert!(!weights.is_empty(), "Should serialize weights");
             // Should use direct encoding (header >= 128)
-            assert!(weights[0] >= 128, "Should use direct format for <= 128 symbols");
+            assert!(
+                weights[0] >= 128,
+                "Should use direct format for <= 128 symbols"
+            );
         }
     }
 

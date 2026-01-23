@@ -59,11 +59,7 @@ impl AsyncDecompressor {
     }
 
     /// Decompress synchronously (for non-async contexts).
-    pub fn decompress_sync(
-        &self,
-        compressed: &[u8],
-        output_size: usize,
-    ) -> Result<GpuBuffer> {
+    pub fn decompress_sync(&self, compressed: &[u8], output_size: usize) -> Result<GpuBuffer> {
         let mut pipeline = DecompressionPipeline::new(
             self.device.clone(),
             self.pool.clone(),
@@ -121,7 +117,9 @@ impl StreamingDecoder {
         output_offset: usize,
         output_size: usize,
     ) -> Result<()> {
-        let pipeline = self.pipeline.as_mut()
+        let pipeline = self
+            .pipeline
+            .as_mut()
             .ok_or_else(|| CudaError::InvalidData("Decoder not initialized".into()))?;
 
         let block_info = crate::kernels::BlockInfo {
@@ -155,7 +153,8 @@ impl StreamingDecoder {
     pub fn finish(mut self) -> Result<GpuBuffer> {
         if let Some(mut pipeline) = self.pipeline.take() {
             pipeline.finish()?;
-            pipeline.take_output()
+            pipeline
+                .take_output()
                 .ok_or(CudaError::InvalidData("No output".into()))
         } else {
             Err(CudaError::InvalidData("Decoder not initialized".into()))
@@ -197,24 +196,30 @@ impl ChannelDecoder {
     ) -> Result<Self> {
         let (tx, mut rx) = mpsc::channel::<FragmentMessage>(16);
 
-        let handle = tokio::spawn(async move {
-            let mut decoder = StreamingDecoder::new(
-                device.clone(),
-                pool.clone(),
-                total_output_size,
-            )?;
-            decoder.init()?;
+        // Use spawn_blocking since CUDA operations are blocking and the decoder
+        // contains raw CUDA pointers that aren't Send-safe
+        let handle = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async move {
+                let mut decoder =
+                    StreamingDecoder::new(device.clone(), pool.clone(), total_output_size)?;
+                decoder.init()?;
 
-            while let Some(msg) = rx.recv().await {
-                match msg {
-                    FragmentMessage::Fragment { data, output_offset, output_size } => {
-                        decoder.feed_fragment(&data, output_offset, output_size)?;
+                while let Some(msg) = rx.recv().await {
+                    match msg {
+                        FragmentMessage::Fragment {
+                            data,
+                            output_offset,
+                            output_size,
+                        } => {
+                            decoder.feed_fragment(&data, output_offset, output_size)?;
+                        }
+                        FragmentMessage::End => break,
                     }
-                    FragmentMessage::End => break,
                 }
-            }
 
-            decoder.finish()
+                decoder.finish()
+            })
         });
 
         Ok(ChannelDecoder { tx, handle })
@@ -227,17 +232,22 @@ impl ChannelDecoder {
         output_offset: usize,
         output_size: usize,
     ) -> Result<()> {
-        self.tx.send(FragmentMessage::Fragment {
-            data,
-            output_offset,
-            output_size,
-        }).await.map_err(|_| CudaError::StreamSync("Channel closed".into()))
+        self.tx
+            .send(FragmentMessage::Fragment {
+                data,
+                output_offset,
+                output_size,
+            })
+            .await
+            .map_err(|_| CudaError::StreamSync("Channel closed".into()))
     }
 
     /// Signal end of stream and wait for result.
     pub async fn finish(self) -> Result<GpuBuffer> {
         let _ = self.tx.send(FragmentMessage::End).await;
-        self.handle.await.map_err(|e| CudaError::StreamSync(e.to_string()))?
+        self.handle
+            .await
+            .map_err(|e| CudaError::StreamSync(e.to_string()))?
     }
 }
 
@@ -292,6 +302,7 @@ impl StreamingDecoderBuilder {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]

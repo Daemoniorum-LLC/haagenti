@@ -20,11 +20,13 @@ pub const MAX_MATCH_LENGTH: usize = 131074; // Per RFC 8878
 /// 64K entries is a good balance between memory and hit rate.
 const HASH_LOG: usize = 16;
 const HASH_SIZE: usize = 1 << HASH_LOG;
+#[allow(dead_code)]
 const HASH_MASK: u32 = (HASH_SIZE - 1) as u32;
 
 /// Maximum chain depth per hash bucket.
 /// Increased from 8 to allow deeper searches for better text compression.
 /// The actual search depth is min(this, search_depth from config).
+#[allow(dead_code)]
 const MAX_CHAIN_DEPTH: usize = 256;
 
 /// Primary hash multiplier (golden ratio derived, excellent distribution).
@@ -32,7 +34,6 @@ const HASH_PRIME: u32 = 0x9E3779B9;
 
 /// Secondary hash multiplier for mixing (from MurmurHash3).
 const HASH_PRIME2: u32 = 0x85EBCA6B;
-
 
 // =============================================================================
 // Cache-Aligned Structures
@@ -101,6 +102,7 @@ impl AlignedHashTable {
 
     /// Reset all entries to zero using optimized memset.
     #[inline]
+    #[allow(dead_code)]
     fn reset(&mut self) {
         self.data.fill(0);
     }
@@ -133,7 +135,11 @@ impl Match {
     /// Create a new match.
     #[inline]
     pub fn new(position: usize, offset: usize, length: usize) -> Self {
-        Self { position, offset, length }
+        Self {
+            position,
+            offset,
+            length,
+        }
     }
 }
 
@@ -182,7 +188,10 @@ impl core::fmt::Debug for MatchFinder {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MatchFinder")
             .field("search_depth", &self.search_depth)
-            .field("hash_table", &format_args!("[AlignedHashTable; {}]", HASH_SIZE))
+            .field(
+                "hash_table",
+                &format_args!("[AlignedHashTable; {}]", HASH_SIZE),
+            )
             .field("chain_table_len", &self.chain_table.len())
             .field("input_len", &self.input_len)
             .field("predicted_offset", &self.predicted_offset)
@@ -203,7 +212,7 @@ impl MatchFinder {
     /// Create a new match finder.
     pub fn new(search_depth: usize) -> Self {
         Self {
-            search_depth: search_depth.max(1).min(128),
+            search_depth: search_depth.clamp(1, 128),
             hash_table: AlignedHashTable::new_boxed(),
             generation: 0,
             chain_table: Vec::new(),
@@ -231,10 +240,10 @@ impl MatchFinder {
     #[inline]
     pub fn early_exit_threshold(&self, position: usize) -> usize {
         match position {
-            0..=1024 => 32,       // Very early: good match to exit (was 48)
-            1025..=8192 => 24,    // Early: moderate threshold (was 32)
-            8193..=32768 => 16,   // Mid-file: lower threshold (was 24)
-            _ => 12,              // Late in file: aggressive exit (was 16)
+            0..=1024 => 32,     // Very early: good match to exit (was 48)
+            1025..=8192 => 24,  // Early: moderate threshold (was 32)
+            8193..=32768 => 16, // Mid-file: lower threshold (was 24)
+            _ => 12,            // Late in file: aggressive exit (was 16)
         }
     }
 
@@ -302,9 +311,7 @@ impl MatchFinder {
         debug_assert!(pos + 4 <= data.len());
 
         // Load 4 bytes as u32 (little-endian)
-        let bytes = unsafe {
-            std::ptr::read_unaligned(data.as_ptr().add(pos) as *const u32)
-        };
+        let bytes = unsafe { std::ptr::read_unaligned(data.as_ptr().add(pos) as *const u32) };
 
         // Single multiply hash - faster than double-mixing
         // Golden ratio prime provides good distribution
@@ -360,9 +367,8 @@ impl MatchFinder {
             };
 
             // Try predicted offsets first (fast path for repetitive patterns)
-            let cur_prefix = unsafe {
-                std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32)
-            };
+            let cur_prefix =
+                unsafe { std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32) };
 
             let mut best_match = None;
 
@@ -382,9 +388,11 @@ impl MatchFinder {
             }
 
             // Check secondary prediction if primary failed
-            if best_match.is_none() && self.predicted_offset2 > 0
-               && self.predicted_offset2 != self.predicted_offset
-               && pos >= self.predicted_offset2 as usize {
+            if best_match.is_none()
+                && self.predicted_offset2 > 0
+                && self.predicted_offset2 != self.predicted_offset
+                && pos >= self.predicted_offset2 as usize
+            {
                 let match_pos = pos - self.predicted_offset2 as usize;
                 let match_prefix = unsafe {
                     std::ptr::read_unaligned(input.as_ptr().add(match_pos) as *const u32)
@@ -519,9 +527,7 @@ impl MatchFinder {
         }
 
         // Load first 4 bytes at current position for fast rejection
-        let cur_prefix = unsafe {
-            std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32)
-        };
+        let cur_prefix = unsafe { std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32) };
 
         let mut best_match: Option<Match> = None;
         let mut best_length = MIN_MATCH_LENGTH - 1;
@@ -572,7 +578,9 @@ impl MatchFinder {
                 unsafe { std::ptr::read_unaligned(input.as_ptr().add(match_pos) as *const u32) }
             } else {
                 // Can't compare 4 bytes, follow chain
-                if next_chain == 0 { break; }
+                if next_chain == 0 {
+                    break;
+                }
                 match_pos = (next_chain - 1) as usize;
                 depth += 1;
                 continue;
@@ -580,7 +588,9 @@ impl MatchFinder {
 
             // Quick check: if first 4 bytes don't match, skip this candidate
             if match_prefix != cur_prefix {
-                if next_chain == 0 { break; }
+                if next_chain == 0 {
+                    break;
+                }
                 match_pos = (next_chain - 1) as usize;
                 depth += 1;
                 continue;
@@ -634,7 +644,9 @@ impl MatchFinder {
             return 0;
         }
 
-        let max_len = (input.len() - pos2).min(input.len() - pos1).min(MAX_MATCH_LENGTH);
+        let max_len = (input.len() - pos2)
+            .min(input.len() - pos1)
+            .min(MAX_MATCH_LENGTH);
 
         if max_len == 0 {
             return 0;
@@ -645,7 +657,7 @@ impl MatchFinder {
         {
             let src = &input[pos1..pos1 + max_len];
             let cur = &input[pos2..pos2 + max_len];
-            return haagenti_simd::find_match_length(src, cur, max_len);
+            haagenti_simd::find_match_length(src, cur, max_len)
         }
 
         // Optimized scalar fallback - compare 8 bytes at a time
@@ -717,9 +729,21 @@ impl MatchFinder {
             // This enables CPU to pipeline the computations
             let hashes: [u32; LOOKAHEAD] = [
                 self.hash4(input, pos),
-                if pos + 5 <= input.len() { self.hash4(input, pos + 1) } else { 0 },
-                if pos + 6 <= input.len() { self.hash4(input, pos + 2) } else { 0 },
-                if pos + 7 <= input.len() { self.hash4(input, pos + 3) } else { 0 },
+                if pos + 5 <= input.len() {
+                    self.hash4(input, pos + 1)
+                } else {
+                    0
+                },
+                if pos + 6 <= input.len() {
+                    self.hash4(input, pos + 2)
+                } else {
+                    0
+                },
+                if pos + 7 <= input.len() {
+                    self.hash4(input, pos + 3)
+                } else {
+                    0
+                },
             ];
 
             // Find matches at all speculative positions
@@ -745,9 +769,13 @@ impl MatchFinder {
 
             if let Some(m) = best_match {
                 // Update hash table for positions before the match
-                for i in 0..LOOKAHEAD.min(m.position - pos) {
+                for (i, &hash) in hashes
+                    .iter()
+                    .enumerate()
+                    .take(LOOKAHEAD.min(m.position - pos))
+                {
                     if pos + i + 4 <= input.len() {
-                        self.update_hash(input, pos + i, hashes[i] as usize);
+                        self.update_hash(input, pos + i, hash as usize);
                     }
                 }
 
@@ -899,30 +927,31 @@ impl LazyMatchFinder {
             };
 
             // Try prediction first (very fast for repetitive patterns)
-            let current_match = if predicted_offset > 0 && pos >= predicted_offset && pos + 4 <= input.len() {
-                let match_pos = pos - predicted_offset;
-                // Load prefixes for comparison
-                let cur_prefix = unsafe {
-                    std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32)
-                };
-                let match_prefix = unsafe {
-                    std::ptr::read_unaligned(input.as_ptr().add(match_pos) as *const u32)
-                };
+            let current_match =
+                if predicted_offset > 0 && pos >= predicted_offset && pos + 4 <= input.len() {
+                    let match_pos = pos - predicted_offset;
+                    // Load prefixes for comparison
+                    let cur_prefix =
+                        unsafe { std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32) };
+                    let match_prefix = unsafe {
+                        std::ptr::read_unaligned(input.as_ptr().add(match_pos) as *const u32)
+                    };
 
-                if cur_prefix == match_prefix {
-                    // Prediction hit - compute full match length
-                    let length = 4 + self.inner.match_length_from(input, match_pos + 4, pos + 4);
-                    if length >= MIN_MATCH_LENGTH {
-                        Some(Match::new(pos, predicted_offset, length))
+                    if cur_prefix == match_prefix {
+                        // Prediction hit - compute full match length
+                        let length =
+                            4 + self.inner.match_length_from(input, match_pos + 4, pos + 4);
+                        if length >= MIN_MATCH_LENGTH {
+                            Some(Match::new(pos, predicted_offset, length))
+                        } else {
+                            self.inner.find_best_match(input, pos, hash as usize)
+                        }
                     } else {
                         self.inner.find_best_match(input, pos, hash as usize)
                     }
                 } else {
                     self.inner.find_best_match(input, pos, hash as usize)
-                }
-            } else {
-                self.inner.find_best_match(input, pos, hash as usize)
-            };
+                };
 
             if let Some(curr) = current_match {
                 // Update prediction with current match offset
@@ -1044,11 +1073,7 @@ impl LazyMatchFinder {
 
                 // Adjust positions to be relative to original input
                 for m in chunk_matches {
-                    all_matches.push(Match::new(
-                        chunk_start + m.position,
-                        m.offset,
-                        m.length,
-                    ));
+                    all_matches.push(Match::new(chunk_start + m.position, m.offset, m.length));
                 }
             }
 
@@ -1082,9 +1107,8 @@ impl LazyMatchFinder {
         while pos <= end {
             // Compute hash (simplified, using same algorithm as main finder)
             let hash = if pos + 4 <= chunk.len() {
-                let bytes = unsafe {
-                    std::ptr::read_unaligned(chunk.as_ptr().add(pos) as *const u32)
-                };
+                let bytes =
+                    unsafe { std::ptr::read_unaligned(chunk.as_ptr().add(pos) as *const u32) };
                 let h = bytes.wrapping_mul(HASH_PRIME);
                 let h = h ^ (h >> 15);
                 let h = h.wrapping_mul(HASH_PRIME2);
@@ -1099,7 +1123,12 @@ impl LazyMatchFinder {
 
             // Find best match at this position
             let current_match = Self::find_best_match_in_chunk(
-                chunk, pos, hash as usize, hash_table, chain_table, search_depth,
+                chunk,
+                pos,
+                hash as usize,
+                hash_table,
+                chain_table,
+                search_depth,
             );
 
             // Lazy matching logic
@@ -1122,14 +1151,12 @@ impl LazyMatchFinder {
                     Self::update_chunk_hash(pos, hash as usize, hash_table, chain_table);
                     pos += 1;
                 }
+            } else if let Some(pend) = pending.take() {
+                matches.push(pend);
+                pos = pend.position + pend.length;
             } else {
-                if let Some(pend) = pending.take() {
-                    matches.push(pend);
-                    pos = pend.position + pend.length;
-                } else {
-                    Self::update_chunk_hash(pos, hash as usize, hash_table, chain_table);
-                    pos += 1;
-                }
+                Self::update_chunk_hash(pos, hash as usize, hash_table, chain_table);
+                pos += 1;
             }
         }
 
@@ -1168,9 +1195,7 @@ impl LazyMatchFinder {
             return None;
         }
 
-        let cur_prefix = unsafe {
-            std::ptr::read_unaligned(chunk.as_ptr().add(pos) as *const u32)
-        };
+        let cur_prefix = unsafe { std::ptr::read_unaligned(chunk.as_ptr().add(pos) as *const u32) };
 
         let mut best_match: Option<Match> = None;
         let mut best_length = MIN_MATCH_LENGTH - 1;
@@ -1220,7 +1245,6 @@ impl LazyMatchFinder {
 
         best_match
     }
-
 }
 
 // =============================================================================
@@ -1229,7 +1253,9 @@ impl LazyMatchFinder {
 
 /// Hash table size for the long (8-byte) hash table.
 /// Smaller than the short table since 8-byte matches are less common.
+#[allow(dead_code)]
 const LONG_HASH_LOG: usize = 14;
+#[allow(dead_code)]
 const LONG_HASH_SIZE: usize = 1 << LONG_HASH_LOG;
 
 /// Two-Tier Hash Table Match Finder.
@@ -1248,6 +1274,7 @@ const LONG_HASH_SIZE: usize = 1 << LONG_HASH_LOG;
 /// - 8-byte hash has fewer collisions → shorter chains
 /// - Long matches are found faster → earlier exit
 /// - Maintains full match finding capability via 4-byte fallback
+#[allow(dead_code)]
 pub struct TwoTierMatchFinder {
     /// Standard 4-byte hash table and chain
     short_hash: Box<AlignedHashTable>,
@@ -1264,7 +1291,10 @@ pub struct TwoTierMatchFinder {
 impl core::fmt::Debug for TwoTierMatchFinder {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TwoTierMatchFinder")
-            .field("short_hash", &format_args!("[AlignedHashTable; {}]", HASH_SIZE))
+            .field(
+                "short_hash",
+                &format_args!("[AlignedHashTable; {}]", HASH_SIZE),
+            )
             .field("short_chain_len", &self.short_chain.len())
             .field("long_hash_len", &self.long_hash.len())
             .field("long_chain_len", &self.long_chain.len())
@@ -1274,6 +1304,7 @@ impl core::fmt::Debug for TwoTierMatchFinder {
     }
 }
 
+#[allow(dead_code)]
 impl TwoTierMatchFinder {
     /// Create a new two-tier match finder.
     pub fn new(search_depth: usize) -> Self {
@@ -1282,7 +1313,7 @@ impl TwoTierMatchFinder {
             short_chain: Vec::new(),
             long_hash: vec![0u32; LONG_HASH_SIZE],
             long_chain: Vec::new(),
-            search_depth: search_depth.max(1).min(128),
+            search_depth: search_depth.clamp(1, 128),
             input_len: 0,
         }
     }
@@ -1316,9 +1347,7 @@ impl TwoTierMatchFinder {
     #[inline(always)]
     fn hash4(&self, data: &[u8], pos: usize) -> u32 {
         debug_assert!(pos + 4 <= data.len());
-        let bytes = unsafe {
-            std::ptr::read_unaligned(data.as_ptr().add(pos) as *const u32)
-        };
+        let bytes = unsafe { std::ptr::read_unaligned(data.as_ptr().add(pos) as *const u32) };
         let h = bytes.wrapping_mul(HASH_PRIME);
         let h = h ^ (h >> 15);
         let h = h.wrapping_mul(HASH_PRIME2);
@@ -1329,15 +1358,13 @@ impl TwoTierMatchFinder {
     #[inline(always)]
     fn hash8(&self, data: &[u8], pos: usize) -> u32 {
         debug_assert!(pos + 8 <= data.len());
-        let bytes = unsafe {
-            std::ptr::read_unaligned(data.as_ptr().add(pos) as *const u64)
-        };
+        let bytes = unsafe { std::ptr::read_unaligned(data.as_ptr().add(pos) as *const u64) };
         // Use a different mixing strategy for 8 bytes
         let h = (bytes as u32) ^ ((bytes >> 32) as u32);
         let h = h.wrapping_mul(HASH_PRIME);
         let h = h ^ (h >> 17);
         let h = h.wrapping_mul(HASH_PRIME2);
-        (h >> (32 - LONG_HASH_LOG as u32)) as u32
+        h >> (32 - LONG_HASH_LOG as u32)
     }
 
     /// Update both hash tables.
@@ -1427,9 +1454,7 @@ impl TwoTierMatchFinder {
         }
 
         // Load 8-byte prefix for comparison
-        let cur_prefix = unsafe {
-            std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u64)
-        };
+        let cur_prefix = unsafe { std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u64) };
 
         let mut best_match: Option<Match> = None;
         let mut best_length = 7; // Only accept matches >= 8 from this table
@@ -1495,9 +1520,7 @@ impl TwoTierMatchFinder {
             return None;
         }
 
-        let cur_prefix = unsafe {
-            std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32)
-        };
+        let cur_prefix = unsafe { std::ptr::read_unaligned(input.as_ptr().add(pos) as *const u32) };
 
         let mut best_match: Option<Match> = None;
         let mut best_length = MIN_MATCH_LENGTH - 1;
@@ -1616,7 +1639,11 @@ mod tests {
         let matches = mf.find_matches(input);
 
         // Should find matches (abcd repeats)
-        assert!(matches.len() >= 1, "Expected at least one match, got {:?}", matches);
+        assert!(
+            matches.len() >= 1,
+            "Expected at least one match, got {:?}",
+            matches
+        );
     }
 
     #[test]
@@ -1693,7 +1720,10 @@ mod tests {
 
         // Should find some matches in repetitive data
         // (count depends on match lengths - longer matches = fewer count)
-        assert!(!matches.is_empty(), "Expected to find matches in repetitive data");
+        assert!(
+            !matches.is_empty(),
+            "Expected to find matches in repetitive data"
+        );
 
         // Verify compression potential - this is the key metric
         let total_match_len: usize = matches.iter().map(|m| m.length).sum();
@@ -1895,7 +1925,8 @@ mod tests {
         assert!(
             chunked_coverage >= min_coverage,
             "Chunked coverage {} below minimum {}",
-            chunked_coverage, min_coverage
+            chunked_coverage,
+            min_coverage
         );
     }
 
@@ -1952,7 +1983,9 @@ mod tests {
         assert!(
             ratio < 20.0,
             "Chunked ({:?}) is too slow compared to standard ({:?}), ratio: {:.2}x",
-            chunked_time, standard_time, ratio
+            chunked_time,
+            standard_time,
+            ratio
         );
     }
 
@@ -1988,9 +2021,13 @@ mod tests {
             let src_start = m.position - m.offset;
             for i in 0..m.length {
                 assert_eq!(
-                    data[src_start + i], data[m.position + i],
+                    data[src_start + i],
+                    data[m.position + i],
                     "Match at {} offset {} length {} invalid at byte {}",
-                    m.position, m.offset, m.length, i
+                    m.position,
+                    m.offset,
+                    m.length,
+                    i
                 );
             }
         }
@@ -2018,7 +2055,8 @@ mod tests {
         assert!(
             chunked_coverage >= min_acceptable,
             "Chunked coverage {} below 85% of standard {}",
-            chunked_coverage, standard_coverage
+            chunked_coverage,
+            standard_coverage
         );
     }
 
@@ -2032,21 +2070,37 @@ mod tests {
 
         // Early in file: need longer match to exit early (higher threshold)
         let threshold_early = finder.early_exit_threshold(100);
-        assert!(threshold_early >= 24, "Early position should have threshold >= 24, got {}", threshold_early);
+        assert!(
+            threshold_early >= 24,
+            "Early position should have threshold >= 24, got {}",
+            threshold_early
+        );
 
         // Mid-file: moderate threshold
         let threshold_mid = finder.early_exit_threshold(10000);
-        assert!(threshold_mid >= 12 && threshold_mid < 24,
-            "Mid position should have threshold 12-23, got {}", threshold_mid);
+        assert!(
+            threshold_mid >= 12 && threshold_mid < 24,
+            "Mid position should have threshold 12-23, got {}",
+            threshold_mid
+        );
 
         // Late in file: shorter threshold acceptable
         let threshold_late = finder.early_exit_threshold(50000);
-        assert!(threshold_late >= 8 && threshold_late < 16,
-            "Late position should have threshold 8-15, got {}", threshold_late);
+        assert!(
+            threshold_late >= 8 && threshold_late < 16,
+            "Late position should have threshold 8-15, got {}",
+            threshold_late
+        );
 
         // Monotonic: threshold should decrease (or stay same) as position increases
-        assert!(threshold_early >= threshold_mid, "Threshold should decrease with position");
-        assert!(threshold_mid >= threshold_late, "Threshold should decrease with position");
+        assert!(
+            threshold_early >= threshold_mid,
+            "Threshold should decrease with position"
+        );
+        assert!(
+            threshold_mid >= threshold_late,
+            "Threshold should decrease with position"
+        );
     }
 
     #[test]
@@ -2063,7 +2117,11 @@ mod tests {
 
         // Should find the excellent match
         let long_match = matches.iter().any(|m| m.length >= 36);
-        assert!(long_match, "Should find the long match >= 36 bytes, got {:?}", matches);
+        assert!(
+            long_match,
+            "Should find the long match >= 36 bytes, got {:?}",
+            matches
+        );
     }
 
     #[test]
@@ -2134,22 +2192,34 @@ mod tests {
         // Small input: default threshold
         let mut finder = LazyMatchFinder::new(16);
         finder.configure_for_size(1024);
-        assert_eq!(finder.lazy_threshold, 24, "Small input should use default threshold");
+        assert_eq!(
+            finder.lazy_threshold, 24,
+            "Small input should use default threshold"
+        );
 
         // Medium input: slightly lower threshold
         let mut finder = LazyMatchFinder::new(16);
         finder.configure_for_size(16384);
-        assert!(finder.lazy_threshold <= 20, "Medium input should lower threshold");
+        assert!(
+            finder.lazy_threshold <= 20,
+            "Medium input should lower threshold"
+        );
 
         // Large input: commit earlier
         let mut finder = LazyMatchFinder::new(16);
         finder.configure_for_size(65536);
-        assert!(finder.lazy_threshold <= 16, "Large input should commit earlier");
+        assert!(
+            finder.lazy_threshold <= 16,
+            "Large input should commit earlier"
+        );
 
         // Very large input: aggressive early commit
         let mut finder = LazyMatchFinder::new(16);
         finder.configure_for_size(262144);
-        assert!(finder.lazy_threshold <= 12, "Very large input should be aggressive");
+        assert!(
+            finder.lazy_threshold <= 12,
+            "Very large input should be aggressive"
+        );
     }
 
     #[test]
@@ -2186,7 +2256,8 @@ mod tests {
         assert!(
             adaptive_coverage >= min_coverage,
             "Adaptive coverage {} below 90% of fixed {}",
-            adaptive_coverage, fixed_coverage
+            adaptive_coverage,
+            fixed_coverage
         );
     }
 
@@ -2211,7 +2282,10 @@ mod tests {
 
         // Should have reasonable coverage
         let coverage: usize = matches.iter().map(|m| m.length).sum();
-        assert!(coverage > data.len() / 2, "Should cover at least 50% of input");
+        assert!(
+            coverage > data.len() / 2,
+            "Should cover at least 50% of input"
+        );
     }
 
     // =========================================================================
@@ -2251,7 +2325,11 @@ mod tests {
 
         // Should find the long match
         let long_match = matches.iter().any(|m| m.length >= 30);
-        assert!(long_match, "Should find long match via 8-byte hash, got {:?}", matches);
+        assert!(
+            long_match,
+            "Should find long match via 8-byte hash, got {:?}",
+            matches
+        );
     }
 
     #[test]
@@ -2264,7 +2342,11 @@ mod tests {
 
         // Should find the short match via 4-byte fallback
         let short_match = matches.iter().any(|m| m.length >= 4);
-        assert!(short_match, "Should find short match via 4-byte fallback, got {:?}", matches);
+        assert!(
+            short_match,
+            "Should find short match via 4-byte fallback, got {:?}",
+            matches
+        );
     }
 
     #[test]
@@ -2289,7 +2371,8 @@ mod tests {
         assert!(
             two_tier_coverage >= min_coverage,
             "Two-tier coverage {} below 90% of single {}",
-            two_tier_coverage, single_coverage
+            two_tier_coverage,
+            single_coverage
         );
     }
 
@@ -2338,7 +2421,9 @@ mod tests {
         assert!(
             ratio < 30.0,
             "Two-tier ({:?}) too slow compared to single ({:?}), ratio: {:.2}x",
-            two_tier_time, single_time, ratio
+            two_tier_time,
+            single_time,
+            ratio
         );
     }
 
@@ -2404,7 +2489,8 @@ mod tests {
         assert!(
             spec_coverage >= min_coverage,
             "Speculative coverage {} below 80% of standard {}",
-            spec_coverage, std_coverage
+            spec_coverage,
+            std_coverage
         );
     }
 
@@ -2421,7 +2507,9 @@ mod tests {
             assert!(
                 matches[i].position >= prev_end,
                 "Match {} at pos {} overlaps with previous ending at {}",
-                i, matches[i].position, prev_end
+                i,
+                matches[i].position,
+                prev_end
             );
         }
     }
@@ -2482,7 +2570,9 @@ mod tests {
         assert!(
             ratio < 8.0,
             "Speculative ({:?}) too slow compared to standard ({:?}), ratio: {:.2}x",
-            spec_time, std_time, ratio
+            spec_time,
+            std_time,
+            ratio
         );
     }
 
@@ -2501,6 +2591,10 @@ mod tests {
 
         // Should find the long match
         let has_long = matches.iter().any(|m| m.length >= 20);
-        assert!(has_long, "Speculative should find long matches: {:?}", matches);
+        assert!(
+            has_long,
+            "Speculative should find long matches: {:?}",
+            matches
+        );
     }
 }

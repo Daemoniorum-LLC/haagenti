@@ -5,11 +5,11 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use haagenti_fragments::FragmentId;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::fs;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Cache configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,7 +28,7 @@ impl Default for CacheConfig {
     fn default() -> Self {
         Self {
             path: PathBuf::from("./fragment_cache"),
-            max_size: 10 * 1024 * 1024 * 1024, // 10GB
+            max_size: 10 * 1024 * 1024 * 1024,  // 10GB
             max_memory_size: 512 * 1024 * 1024, // 512MB
             eviction_threshold: 0.9,
         }
@@ -193,8 +193,8 @@ impl FragmentCache {
         }
 
         let data = fs::read(&meta_path).await?;
-        let entries: Vec<CacheEntry> = bincode::deserialize(&data)
-            .map_err(|e| NetworkError::Cache(e.to_string()))?;
+        let entries: Vec<CacheEntry> =
+            bincode::deserialize(&data).map_err(|e| NetworkError::Cache(e.to_string()))?;
 
         let mut total_size = 0u64;
         for entry in entries {
@@ -203,7 +203,11 @@ impl FragmentCache {
         }
 
         self.disk_size.store(total_size, Ordering::Relaxed);
-        info!("Loaded cache metadata: {} entries, {} bytes", self.metadata.len(), total_size);
+        info!(
+            "Loaded cache metadata: {} entries, {} bytes",
+            self.metadata.len(),
+            total_size
+        );
 
         Ok(())
     }
@@ -211,8 +215,7 @@ impl FragmentCache {
     /// Save cache metadata to disk
     async fn save_metadata(&self) -> Result<()> {
         let entries: Vec<CacheEntry> = self.metadata.iter().map(|e| e.value().clone()).collect();
-        let data = bincode::serialize(&entries)
-            .map_err(|e| NetworkError::Cache(e.to_string()))?;
+        let data = bincode::serialize(&entries).map_err(|e| NetworkError::Cache(e.to_string()))?;
 
         let meta_path = self.config.path.join("metadata.bin");
         let tmp_path = meta_path.with_extension("tmp");
@@ -291,7 +294,8 @@ impl FragmentCache {
     /// Maybe evict entries
     async fn maybe_evict(&self, needed_size: u64) -> Result<()> {
         let current = self.disk_size.load(Ordering::Relaxed);
-        let threshold = (self.config.max_size as f64 * self.config.eviction_threshold as f64) as u64;
+        let threshold =
+            (self.config.max_size as f64 * self.config.eviction_threshold as f64) as u64;
 
         if current + needed_size < threshold {
             return Ok(());
@@ -324,7 +328,8 @@ impl FragmentCache {
     async fn evict(&self, fragment_id: &FragmentId) -> Result<()> {
         // Remove from memory
         if let Some((_, data)) = self.memory.remove(fragment_id) {
-            self.memory_size.fetch_sub(data.len() as u64, Ordering::Relaxed);
+            self.memory_size
+                .fetch_sub(data.len() as u64, Ordering::Relaxed);
         }
 
         // Remove from disk
@@ -407,7 +412,11 @@ impl FragmentCache {
 impl Drop for FragmentCache {
     fn drop(&mut self) {
         // Best effort sync on drop
-        let meta = self.metadata.iter().map(|e| e.value().clone()).collect::<Vec<_>>();
+        let meta = self
+            .metadata
+            .iter()
+            .map(|e| e.value().clone())
+            .collect::<Vec<_>>();
         if let Ok(data) = bincode::serialize(&meta) {
             let _ = std::fs::write(self.config.path.join("metadata.bin"), data);
         }

@@ -1,12 +1,10 @@
 //! Intent prediction from partial prompt input
 
-use crate::{Result, SpeculativeError};
 use haagenti_importance::{PromptAnalyzer, PromptFeatures, SemanticCategory};
 use radix_trie::{Trie, TrieCommon};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tracing::debug;
 
 /// Configuration for intent prediction
@@ -105,75 +103,87 @@ impl IntentPredictor {
         let mut category_hints = HashMap::new();
 
         // Portrait/Human hints
-        category_hints.insert(SemanticCategory::Human, vec![
-            FragmentHint {
-                layer_pattern: "*.attn*.to_q*".into(),
-                importance: 0.9,
-                priority: 0,
-            },
-            FragmentHint {
-                layer_pattern: "*.attn*.to_k*".into(),
-                importance: 0.9,
-                priority: 1,
-            },
-            FragmentHint {
-                layer_pattern: "*face*".into(),
-                importance: 0.95,
-                priority: 0,
-            },
-            FragmentHint {
-                layer_pattern: "*up_blocks.3*".into(),
-                importance: 0.8,
-                priority: 2,
-            },
-        ]);
+        category_hints.insert(
+            SemanticCategory::Human,
+            vec![
+                FragmentHint {
+                    layer_pattern: "*.attn*.to_q*".into(),
+                    importance: 0.9,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*.attn*.to_k*".into(),
+                    importance: 0.9,
+                    priority: 1,
+                },
+                FragmentHint {
+                    layer_pattern: "*face*".into(),
+                    importance: 0.95,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*up_blocks.3*".into(),
+                    importance: 0.8,
+                    priority: 2,
+                },
+            ],
+        );
 
         // Landscape hints
-        category_hints.insert(SemanticCategory::Landscape, vec![
-            FragmentHint {
-                layer_pattern: "*down_blocks.0*".into(),
-                importance: 0.8,
-                priority: 0,
-            },
-            FragmentHint {
-                layer_pattern: "*down_blocks.1*".into(),
-                importance: 0.7,
-                priority: 1,
-            },
-            FragmentHint {
-                layer_pattern: "*mid_block*".into(),
-                importance: 0.6,
-                priority: 2,
-            },
-        ]);
+        category_hints.insert(
+            SemanticCategory::Landscape,
+            vec![
+                FragmentHint {
+                    layer_pattern: "*down_blocks.0*".into(),
+                    importance: 0.8,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*down_blocks.1*".into(),
+                    importance: 0.7,
+                    priority: 1,
+                },
+                FragmentHint {
+                    layer_pattern: "*mid_block*".into(),
+                    importance: 0.6,
+                    priority: 2,
+                },
+            ],
+        );
 
         // Anime/Style hints
-        category_hints.insert(SemanticCategory::Anime, vec![
-            FragmentHint {
-                layer_pattern: "*style*".into(),
-                importance: 0.9,
-                priority: 0,
-            },
-            FragmentHint {
-                layer_pattern: "*up_blocks.2*".into(),
-                importance: 0.8,
-                priority: 1,
-            },
-        ]);
+        category_hints.insert(
+            SemanticCategory::Anime,
+            vec![
+                FragmentHint {
+                    layer_pattern: "*style*".into(),
+                    importance: 0.9,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*up_blocks.2*".into(),
+                    importance: 0.8,
+                    priority: 1,
+                },
+            ],
+        );
 
         // Photorealistic hints
-        category_hints.insert(SemanticCategory::Photorealistic, vec![
-            FragmentHint {
-                layer_pattern: "*up_blocks.3*".into(),
-                importance: 0.95,
-                priority: 0,
-            },
-            FragmentHint {
-                layer_pattern: "*vae.decoder*".into(),
-                importance: 1.0,
-                priority: 0,
-            },
-        ]);
+        category_hints.insert(
+            SemanticCategory::Photorealistic,
+            vec![
+                FragmentHint {
+                    layer_pattern: "*up_blocks.3*".into(),
+                    importance: 0.95,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*vae.decoder*".into(),
+                    importance: 1.0,
+                    priority: 0,
+                },
+            ],
+        );
 
         Self {
             config,
@@ -202,7 +212,7 @@ impl IntentPredictor {
         let mut candidates: Vec<(String, f32)> = Vec::new();
 
         if let Some(subtrie) = self.prompt_trie.get_raw_descendant(&partial_lower) {
-            for (key, entry) in subtrie.iter() {
+            for (_key, entry) in subtrie.iter() {
                 let recency_boost = self.recency_score(entry.last_used);
                 let frequency_boost = (entry.count as f32).ln().max(1.0) / 10.0;
                 let score = 0.5 + recency_boost * 0.25 + frequency_boost * 0.25;
@@ -251,12 +261,14 @@ impl IntentPredictor {
     }
 
     /// Build intent from features
-    fn intent_from_features(&self, prompt: &str, features: &PromptFeatures, confidence: f32) -> Intent {
-        let categories: SmallVec<[SemanticCategory; 4]> = features
-            .categories
-            .iter()
-            .map(|(c, _)| *c)
-            .collect();
+    fn intent_from_features(
+        &self,
+        prompt: &str,
+        features: &PromptFeatures,
+        confidence: f32,
+    ) -> Intent {
+        let categories: SmallVec<[SemanticCategory; 4]> =
+            features.categories.iter().map(|(c, _)| *c).collect();
 
         // Gather fragment hints based on detected categories
         let mut fragment_hints = Vec::new();
@@ -307,12 +319,15 @@ impl IntentPredictor {
             entry.last_used = now;
         } else {
             let features = Some(self.analyzer.analyze(prompt));
-            self.prompt_trie.insert(key, PromptEntry {
-                prompt: prompt.to_string(),
-                count: 1,
-                last_used: now,
-                features,
-            });
+            self.prompt_trie.insert(
+                key,
+                PromptEntry {
+                    prompt: prompt.to_string(),
+                    count: 1,
+                    last_used: now,
+                    features,
+                },
+            );
         }
 
         debug!("Learned prompt: {}", prompt);
@@ -320,7 +335,10 @@ impl IntentPredictor {
 
     /// Get hints for a specific category
     pub fn hints_for_category(&self, category: SemanticCategory) -> &[FragmentHint] {
-        self.category_hints.get(&category).map(|v| v.as_slice()).unwrap_or(&[])
+        self.category_hints
+            .get(&category)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Update category hints
@@ -406,8 +424,7 @@ mod tests {
         let short_result = predictor.predict("portr");
         let long_result = predictor.predict("portrait of a beaut");
 
-        if let (Some(short_intent), Some(long_intent)) =
-            (short_result.primary, long_result.primary)
+        if let (Some(short_intent), Some(long_intent)) = (short_result.primary, long_result.primary)
         {
             assert!(
                 long_intent.confidence >= short_intent.confidence,
@@ -423,7 +440,9 @@ mod tests {
         let hints = predictor.hints_for_category(SemanticCategory::Landscape);
         assert!(!hints.is_empty());
         // Landscape should have down_blocks hints
-        assert!(hints.iter().any(|h| h.layer_pattern.contains("down_blocks")));
+        assert!(hints
+            .iter()
+            .any(|h| h.layer_pattern.contains("down_blocks")));
     }
 
     #[test]
@@ -448,7 +467,11 @@ mod tests {
         let result = predictor.predict("test pr");
 
         // Prediction should be fast (<1ms for in-memory trie lookup)
-        assert!(result.latency_us < 1000, "Latency was {}us, expected <1000us", result.latency_us);
+        assert!(
+            result.latency_us < 1000,
+            "Latency was {}us, expected <1000us",
+            result.latency_us
+        );
     }
 
     #[test]
@@ -469,13 +492,11 @@ mod tests {
     fn test_update_category_hints() {
         let mut predictor = IntentPredictor::new(IntentConfig::default());
 
-        let custom_hints = vec![
-            FragmentHint {
-                layer_pattern: "*custom_layer*".into(),
-                importance: 1.0,
-                priority: 0,
-            },
-        ];
+        let custom_hints = vec![FragmentHint {
+            layer_pattern: "*custom_layer*".into(),
+            importance: 1.0,
+            priority: 0,
+        }];
 
         predictor.update_hints(SemanticCategory::Abstract, custom_hints);
 
@@ -518,8 +539,8 @@ mod tests {
 
         // Should have primary
         assert!(result.primary.is_some());
-        // Latency should be recorded
-        assert!(result.latency_us >= 0);
+        // Latency should be recorded (always true for u64, but verifies it's set)
+        let _ = result.latency_us; // Just verify it exists
     }
 
     #[test]
@@ -532,8 +553,14 @@ mod tests {
 
         // All hints should have valid fields
         for hint in hints {
-            assert!(!hint.layer_pattern.is_empty(), "Layer pattern should not be empty");
-            assert!(hint.importance >= 0.0 && hint.importance <= 1.0, "Importance should be 0-1");
+            assert!(
+                !hint.layer_pattern.is_empty(),
+                "Layer pattern should not be empty"
+            );
+            assert!(
+                hint.importance >= 0.0 && hint.importance <= 1.0,
+                "Importance should be 0-1"
+            );
         }
     }
 

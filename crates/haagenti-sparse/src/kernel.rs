@@ -76,9 +76,11 @@ pub struct SparseKernel {
 struct IndexMapping {
     /// Active head indices
     active_heads: Vec<usize>,
-    /// Output scatter indices
+    /// Output scatter indices (for GPU kernel scatter operation)
+    #[allow(dead_code)]
     scatter_indices: Vec<usize>,
-    /// Pattern hash
+    /// Pattern hash (for cache lookup validation)
+    #[allow(dead_code)]
     pattern_hash: u64,
 }
 
@@ -95,23 +97,17 @@ impl SparseKernel {
     pub fn prepare(&mut self, mask: &AttentionMask, layer: usize) -> Result<()> {
         let pattern_hash = self.compute_pattern_hash(mask, layer);
 
-        if !self.index_cache.contains_key(&pattern_hash) {
+        self.index_cache.entry(pattern_hash).or_insert_with(|| {
             let active_heads = mask.active_heads(layer);
-            let scatter_indices: Vec<usize> = active_heads
-                .iter()
-                .enumerate()
-                .map(|(i, _)| i)
-                .collect();
+            let scatter_indices: Vec<usize> =
+                active_heads.iter().enumerate().map(|(i, _)| i).collect();
 
-            self.index_cache.insert(
+            IndexMapping {
+                active_heads,
+                scatter_indices,
                 pattern_hash,
-                IndexMapping {
-                    active_heads,
-                    scatter_indices,
-                    pattern_hash,
-                },
-            );
-        }
+            }
+        });
 
         Ok(())
     }
@@ -132,9 +128,10 @@ impl SparseKernel {
     ) -> Result<Vec<f32>> {
         let pattern_hash = self.compute_pattern_hash(mask, layer);
 
-        let mapping = self.index_cache.get(&pattern_hash).ok_or_else(|| {
-            SparseError::KernelError("Mask pattern not prepared".into())
-        })?;
+        let mapping = self
+            .index_cache
+            .get(&pattern_hash)
+            .ok_or_else(|| SparseError::KernelError("Mask pattern not prepared".into()))?;
 
         // Simulated output
         let batch_size = 1; // Would be inferred from input
@@ -177,9 +174,7 @@ impl SparseKernel {
     /// Estimate compute savings for a mask
     pub fn estimate_savings(&self, mask: &AttentionMask) -> ComputeEstimate {
         let total_heads = mask.num_heads * mask.num_layers;
-        let active_heads: usize = (0..mask.num_layers)
-            .map(|l| mask.active_count(l))
-            .sum();
+        let active_heads: usize = (0..mask.num_layers).map(|l| mask.active_count(l)).sum();
 
         let compute_ratio = active_heads as f32 / total_heads as f32;
 

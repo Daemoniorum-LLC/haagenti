@@ -48,27 +48,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--retention" | "-r" => {
                 i += 1;
-                config.retention = args
-                    .get(i)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.20);
+                config.retention = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(0.20);
             }
             "--workers" | "-w" => {
                 i += 1;
-                config.num_workers = args
-                    .get(i)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(8);
+                config.num_workers = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(8);
             }
             "--gpu" | "-g" => {
                 config.use_gpu = true;
             }
             "--gpu-device" => {
                 i += 1;
-                config.gpu_device_id = args
-                    .get(i)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                config.gpu_device_id = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(0);
             }
             "--help" | "-h" => {
                 print_help();
@@ -93,7 +84,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Output:              {}", config.output_dir.display());
     println!("Retention:           {:.0}%", config.retention * 100.0);
     println!("Workers:             {}", config.num_workers);
-    println!("GPU:                 {}", if config.use_gpu { "enabled" } else { "disabled" });
+    println!(
+        "GPU:                 {}",
+        if config.use_gpu {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!();
 
     // Create and run pipeline
@@ -104,17 +102,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nCompression Complete!");
     println!("=====================");
     println!("Output:              {}", report.output_path.display());
-    println!("Tensors:             {}/{} completed, {} failed",
+    println!(
+        "Tensors:             {}/{} completed, {} failed",
         report.tensors_completed,
         report.tensors_completed + report.tensors_failed + report.tensors_skipped,
-        report.tensors_failed);
-    println!("Input Size:          {:.2} GB", report.total_input_bytes as f64 / 1_000_000_000.0);
-    println!("Output Size:         {:.2} GB", report.total_output_bytes as f64 / 1_000_000_000.0);
+        report.tensors_failed
+    );
+    println!(
+        "Input Size:          {:.2} GB",
+        report.total_input_bytes as f64 / 1_000_000_000.0
+    );
+    println!(
+        "Output Size:         {:.2} GB",
+        report.total_output_bytes as f64 / 1_000_000_000.0
+    );
     println!("Compression Ratio:   {:.1}x", report.compression_ratio);
     println!("Time:                {:.1} seconds", report.elapsed_seconds);
     println!("Throughput:          {:.1} MB/s", report.throughput_mbps);
     println!("Workers Used:        {}", report.num_workers);
-    println!("GPU Used:            {}", if report.gpu_used { "yes" } else { "no" });
+    println!(
+        "GPU Used:            {}",
+        if report.gpu_used { "yes" } else { "no" }
+    );
 
     println!("\nDone!");
 

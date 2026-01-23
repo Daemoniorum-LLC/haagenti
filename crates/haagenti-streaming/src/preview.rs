@@ -1,6 +1,5 @@
 //! Preview frame handling
 
-use crate::{Result, StreamError};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
@@ -173,7 +172,14 @@ impl PreviewFrame {
         quality: PreviewQuality,
     ) -> Self {
         let (width, height) = quality.resolution();
-        Self::new(step, total_steps, PreviewData::Latent(latent), width, height, quality)
+        Self::new(
+            step,
+            total_steps,
+            PreviewData::Latent(latent),
+            width,
+            height,
+            quality,
+        )
     }
 
     /// Mark as final frame
@@ -235,7 +241,7 @@ impl PreviewBuffer {
     }
 
     /// Get the next frame for playback
-    pub fn next(&mut self) -> Option<&PreviewFrame> {
+    pub fn next_frame(&mut self) -> Option<&PreviewFrame> {
         if self.position < self.frames.len() {
             let frame = &self.frames[self.position];
             self.position += 1;
@@ -320,14 +326,28 @@ mod tests {
         }
 
         assert_eq!(buffer.len(), 3);
-        assert!(buffer.next().is_some());
+        assert!(buffer.next_frame().is_some());
         assert_eq!(buffer.remaining(), 2);
     }
 
     #[test]
     fn test_quality_score() {
-        let early = PreviewFrame::new(2, 20, PreviewData::Raw(vec![]), 64, 64, PreviewQuality::Thumbnail);
-        let late = PreviewFrame::new(18, 20, PreviewData::Raw(vec![]), 64, 64, PreviewQuality::Thumbnail);
+        let early = PreviewFrame::new(
+            2,
+            20,
+            PreviewData::Raw(vec![]),
+            64,
+            64,
+            PreviewQuality::Thumbnail,
+        );
+        let late = PreviewFrame::new(
+            18,
+            20,
+            PreviewData::Raw(vec![]),
+            64,
+            64,
+            PreviewQuality::Thumbnail,
+        );
 
         assert!(late.estimated_quality_score() > early.estimated_quality_score());
     }
@@ -471,7 +491,7 @@ mod tests {
         assert_eq!(buffer.remaining(), 3);
 
         // Consume frames
-        let f1 = buffer.next();
+        let f1 = buffer.next_frame();
         assert!(f1.is_some());
         assert_eq!(f1.unwrap().step, 0);
         assert_eq!(buffer.remaining(), 2);

@@ -78,29 +78,28 @@ impl IncrementalHctWriter {
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
 
-        let file = File::create(path).map_err(|e| {
-            Error::io(format!("failed to create output file: {}", e))
-        })?;
+        let file = File::create(path)
+            .map_err(|e| Error::io(format!("failed to create output file: {}", e)))?;
 
         let mut writer = BufWriter::new(file);
 
         // Write placeholder header with magic and version
-        writer.write_all(INCREMENTAL_MAGIC).map_err(|e| {
-            Error::io(format!("failed to write magic: {}", e))
-        })?;
-        writer.write_all(&INCREMENTAL_VERSION.to_le_bytes()).map_err(|e| {
-            Error::io(format!("failed to write version: {}", e))
-        })?;
+        writer
+            .write_all(INCREMENTAL_MAGIC)
+            .map_err(|e| Error::io(format!("failed to write magic: {}", e)))?;
+        writer
+            .write_all(&INCREMENTAL_VERSION.to_le_bytes())
+            .map_err(|e| Error::io(format!("failed to write version: {}", e)))?;
 
         // Reserve space for the final header
         let reserved = vec![0u8; (RESERVED_HEADER_SIZE - 8) as usize];
-        writer.write_all(&reserved).map_err(|e| {
-            Error::io(format!("failed to reserve header space: {}", e))
-        })?;
+        writer
+            .write_all(&reserved)
+            .map_err(|e| Error::io(format!("failed to reserve header space: {}", e)))?;
 
-        writer.flush().map_err(|e| {
-            Error::io(format!("failed to flush: {}", e))
-        })?;
+        writer
+            .flush()
+            .map_err(|e| Error::io(format!("failed to flush: {}", e)))?;
 
         Ok(Self {
             file: writer,
@@ -119,24 +118,23 @@ impl IncrementalHctWriter {
         let path = path.as_ref();
 
         // Open for reading to get current state
-        let mut file = File::open(path).map_err(|e| {
-            Error::io(format!("failed to open for resume: {}", e))
-        })?;
+        let mut file =
+            File::open(path).map_err(|e| Error::io(format!("failed to open for resume: {}", e)))?;
 
         // Verify magic
         let mut magic = [0u8; 4];
-        std::io::Read::read_exact(&mut file, &mut magic).map_err(|e| {
-            Error::io(format!("failed to read magic: {}", e))
-        })?;
+        std::io::Read::read_exact(&mut file, &mut magic)
+            .map_err(|e| Error::io(format!("failed to read magic: {}", e)))?;
 
         if &magic != INCREMENTAL_MAGIC {
             return Err(Error::corrupted("invalid incremental file magic"));
         }
 
         // Try to read existing index from the end
-        let file_len = file.metadata().map_err(|e| {
-            Error::io(format!("failed to get file size: {}", e))
-        })?.len();
+        let file_len = file
+            .metadata()
+            .map_err(|e| Error::io(format!("failed to get file size: {}", e)))?
+            .len();
 
         let (index, position) = if file_len > RESERVED_HEADER_SIZE {
             // Try to find and parse the index footer
@@ -155,9 +153,9 @@ impl IncrementalHctWriter {
         let mut writer = BufWriter::new(file);
 
         // Seek to append position
-        writer.seek(SeekFrom::Start(position)).map_err(|e| {
-            Error::io(format!("failed to seek to append position: {}", e))
-        })?;
+        writer
+            .seek(SeekFrom::Start(position))
+            .map_err(|e| Error::io(format!("failed to seek to append position: {}", e)))?;
 
         Ok(Self {
             file: writer,
@@ -180,14 +178,12 @@ impl IncrementalHctWriter {
         }
 
         // Read footer magic
-        file.seek(SeekFrom::End(-4)).map_err(|e| {
-            Error::io(format!("failed to seek to footer: {}", e))
-        })?;
+        file.seek(SeekFrom::End(-4))
+            .map_err(|e| Error::io(format!("failed to seek to footer: {}", e)))?;
 
         let mut footer_magic = [0u8; 4];
-        std::io::Read::read_exact(file, &mut footer_magic).map_err(|e| {
-            Error::io(format!("failed to read footer magic: {}", e))
-        })?;
+        std::io::Read::read_exact(file, &mut footer_magic)
+            .map_err(|e| Error::io(format!("failed to read footer magic: {}", e)))?;
 
         if &footer_magic != FOOTER_MAGIC {
             // No valid footer, start fresh after reserved header
@@ -195,14 +191,12 @@ impl IncrementalHctWriter {
         }
 
         // Read JSON length
-        file.seek(SeekFrom::End(-12)).map_err(|e| {
-            Error::io(format!("failed to seek to length: {}", e))
-        })?;
+        file.seek(SeekFrom::End(-12))
+            .map_err(|e| Error::io(format!("failed to seek to length: {}", e)))?;
 
         let mut len_bytes = [0u8; 8];
-        std::io::Read::read_exact(file, &mut len_bytes).map_err(|e| {
-            Error::io(format!("failed to read index length: {}", e))
-        })?;
+        std::io::Read::read_exact(file, &mut len_bytes)
+            .map_err(|e| Error::io(format!("failed to read index length: {}", e)))?;
         let json_len = u64::from_le_bytes(len_bytes);
 
         if json_len > file_len - RESERVED_HEADER_SIZE - 12 {
@@ -210,18 +204,15 @@ impl IncrementalHctWriter {
         }
 
         // Read JSON index
-        file.seek(SeekFrom::End(-(12 + json_len as i64))).map_err(|e| {
-            Error::io(format!("failed to seek to index: {}", e))
-        })?;
+        file.seek(SeekFrom::End(-(12 + json_len as i64)))
+            .map_err(|e| Error::io(format!("failed to seek to index: {}", e)))?;
 
         let mut json_bytes = vec![0u8; json_len as usize];
-        std::io::Read::read_exact(file, &mut json_bytes).map_err(|e| {
-            Error::io(format!("failed to read index: {}", e))
-        })?;
+        std::io::Read::read_exact(file, &mut json_bytes)
+            .map_err(|e| Error::io(format!("failed to read index: {}", e)))?;
 
-        let index: Vec<TensorIndexEntry> = serde_json::from_slice(&json_bytes).map_err(|e| {
-            Error::corrupted(format!("failed to parse index: {}", e))
-        })?;
+        let index: Vec<TensorIndexEntry> = serde_json::from_slice(&json_bytes)
+            .map_err(|e| Error::corrupted(format!("failed to parse index: {}", e)))?;
 
         // Calculate data end position (before index)
         let data_end = file_len - 12 - json_len;
@@ -251,9 +242,9 @@ impl IncrementalHctWriter {
         let checksum = xxhash_rust::xxh3::xxh3_64(data);
 
         // Write data
-        self.file.write_all(data).map_err(|e| {
-            Error::io(format!("failed to write tensor data: {}", e))
-        })?;
+        self.file
+            .write_all(data)
+            .map_err(|e| Error::io(format!("failed to write tensor data: {}", e)))?;
 
         // Update position
         self.position += data.len() as u64;
@@ -277,42 +268,42 @@ impl IncrementalHctWriter {
     pub fn checkpoint(&mut self) -> Result<()> {
         const FOOTER_MAGIC: &[u8; 4] = b"INDX";
 
-        self.file.flush().map_err(|e| {
-            Error::io(format!("failed to flush: {}", e))
-        })?;
+        self.file
+            .flush()
+            .map_err(|e| Error::io(format!("failed to flush: {}", e)))?;
 
         // Write index as JSON
-        let json = serde_json::to_vec(&self.index).map_err(|e| {
-            Error::io(format!("failed to serialize index: {}", e))
-        })?;
+        let json = serde_json::to_vec(&self.index)
+            .map_err(|e| Error::io(format!("failed to serialize index: {}", e)))?;
 
-        self.file.write_all(&json).map_err(|e| {
-            Error::io(format!("failed to write index: {}", e))
-        })?;
+        self.file
+            .write_all(&json)
+            .map_err(|e| Error::io(format!("failed to write index: {}", e)))?;
 
         // Write length and magic
-        self.file.write_all(&(json.len() as u64).to_le_bytes()).map_err(|e| {
-            Error::io(format!("failed to write index length: {}", e))
-        })?;
-        self.file.write_all(FOOTER_MAGIC).map_err(|e| {
-            Error::io(format!("failed to write footer magic: {}", e))
-        })?;
+        self.file
+            .write_all(&(json.len() as u64).to_le_bytes())
+            .map_err(|e| Error::io(format!("failed to write index length: {}", e)))?;
+        self.file
+            .write_all(FOOTER_MAGIC)
+            .map_err(|e| Error::io(format!("failed to write footer magic: {}", e)))?;
 
-        self.file.flush().map_err(|e| {
-            Error::io(format!("failed to flush checkpoint: {}", e))
-        })?;
+        self.file
+            .flush()
+            .map_err(|e| Error::io(format!("failed to flush checkpoint: {}", e)))?;
 
         // Truncate to current position + footer
         // (This removes any old footer that's now outdated)
         let current_pos = self.position + json.len() as u64 + 12;
-        self.file.get_mut().set_len(current_pos).map_err(|e| {
-            Error::io(format!("failed to truncate: {}", e))
-        })?;
+        self.file
+            .get_mut()
+            .set_len(current_pos)
+            .map_err(|e| Error::io(format!("failed to truncate: {}", e)))?;
 
         // Seek back to data append position
-        self.file.seek(SeekFrom::Start(self.position)).map_err(|e| {
-            Error::io(format!("failed to seek after checkpoint: {}", e))
-        })?;
+        self.file
+            .seek(SeekFrom::Start(self.position))
+            .map_err(|e| Error::io(format!("failed to seek after checkpoint: {}", e)))?;
 
         Ok(())
     }
@@ -325,9 +316,9 @@ impl IncrementalHctWriter {
             return Err(Error::io("file already finalized"));
         }
 
-        self.file.flush().map_err(|e| {
-            Error::io(format!("failed to flush before finalize: {}", e))
-        })?;
+        self.file
+            .flush()
+            .map_err(|e| Error::io(format!("failed to flush before finalize: {}", e)))?;
 
         // Build safetensors header JSON
         let mut header_obj = serde_json::Map::new();
@@ -344,9 +335,8 @@ impl IncrementalHctWriter {
             header_obj.insert(entry.name.clone(), tensor_info);
         }
 
-        let header_json = serde_json::to_vec(&header_obj).map_err(|e| {
-            Error::io(format!("failed to serialize header: {}", e))
-        })?;
+        let header_json = serde_json::to_vec(&header_obj)
+            .map_err(|e| Error::io(format!("failed to serialize header: {}", e)))?;
 
         // Pad to 8-byte alignment
         let padded_len = (header_json.len() + 7) & !7;
@@ -362,25 +352,25 @@ impl IncrementalHctWriter {
         }
 
         // Seek to beginning and write final header
-        self.file.seek(SeekFrom::Start(0)).map_err(|e| {
-            Error::io(format!("failed to seek to start: {}", e))
-        })?;
+        self.file
+            .seek(SeekFrom::Start(0))
+            .map_err(|e| Error::io(format!("failed to seek to start: {}", e)))?;
 
         // Write header length
-        self.file.write_all(&(padded_len as u64).to_le_bytes()).map_err(|e| {
-            Error::io(format!("failed to write header length: {}", e))
-        })?;
+        self.file
+            .write_all(&(padded_len as u64).to_le_bytes())
+            .map_err(|e| Error::io(format!("failed to write header length: {}", e)))?;
 
         // Write header JSON
-        self.file.write_all(&header_json).map_err(|e| {
-            Error::io(format!("failed to write header JSON: {}", e))
-        })?;
+        self.file
+            .write_all(&header_json)
+            .map_err(|e| Error::io(format!("failed to write header JSON: {}", e)))?;
 
         // Write padding
         if padding > 0 {
-            self.file.write_all(&vec![b' '; padding]).map_err(|e| {
-                Error::io(format!("failed to write padding: {}", e))
-            })?;
+            self.file
+                .write_all(&vec![b' '; padding])
+                .map_err(|e| Error::io(format!("failed to write padding: {}", e)))?;
         }
 
         // Fill remaining reserved space with zeros
@@ -392,9 +382,9 @@ impl IncrementalHctWriter {
             // A production implementation would compact the file
         }
 
-        self.file.flush().map_err(|e| {
-            Error::io(format!("failed to flush final: {}", e))
-        })?;
+        self.file
+            .flush()
+            .map_err(|e| Error::io(format!("failed to flush final: {}", e)))?;
 
         self.finalized = true;
 

@@ -56,8 +56,8 @@ impl NctHeader {
         }
     }
 
-    /// Header size in bytes
-    pub const SIZE: usize = 40;
+    /// Header size in bytes (4 + 2 + 4 + 8 + 8 + 8 + 8 = 42)
+    pub const SIZE: usize = 42;
 
     /// Serialize to bytes
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -141,8 +141,7 @@ impl NctMetadata {
 
     /// Deserialize from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes)
-            .map_err(|e| NeuralError::InvalidFormat(e.to_string()))
+        bincode::deserialize(bytes).map_err(|e| NeuralError::InvalidFormat(e.to_string()))
     }
 }
 
@@ -340,6 +339,9 @@ mod tests {
         let restored = NctFile::read_from(&mut cursor).unwrap();
 
         assert_eq!(restored.tensors.len(), 1);
-        assert_eq!(restored.get_tensor("test.weight").unwrap().name, "test.weight");
+        assert_eq!(
+            restored.get_tensor("test.weight").unwrap().name,
+            "test.weight"
+        );
     }
 }

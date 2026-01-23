@@ -51,7 +51,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("No tensors found in compressed file".into());
     }
 
-    println!("Found {} tensors, testing decompression on first 5...\n", tensors.len());
+    println!(
+        "Found {} tensors, testing decompression on first 5...\n",
+        tensors.len()
+    );
 
     let test_tensors: Vec<_> = tensors.into_iter().take(5).collect();
 

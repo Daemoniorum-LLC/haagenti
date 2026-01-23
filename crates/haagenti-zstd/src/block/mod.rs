@@ -16,11 +16,8 @@
 mod literals;
 mod sequences;
 
-pub use literals::{LiteralsSection, LiteralsBlockType};
-pub use sequences::{
-    SequencesSection, Sequence,
-    LITERAL_LENGTH_BASELINE, MATCH_LENGTH_BASELINE,
-};
+pub use literals::{LiteralsBlockType, LiteralsSection};
+pub use sequences::{Sequence, SequencesSection, LITERAL_LENGTH_BASELINE, MATCH_LENGTH_BASELINE};
 
 use haagenti_core::{Error, Result};
 
@@ -44,11 +41,7 @@ pub fn decode_rle_block(input: &[u8], size: usize, output: &mut Vec<u8>) -> Resu
 }
 
 /// Decode a compressed block.
-pub fn decode_compressed_block(
-    input: &[u8],
-    output: &mut Vec<u8>,
-    window: &[u8],
-) -> Result<()> {
+pub fn decode_compressed_block(input: &[u8], output: &mut Vec<u8>, window: &[u8]) -> Result<()> {
     if input.is_empty() {
         return Err(Error::corrupted("Empty compressed block"));
     }
@@ -80,7 +73,9 @@ fn execute_sequences(
         // Copy literal_length bytes from literals
         let literal_end = literal_pos + seq.literal_length as usize;
         if literal_end > literal_bytes.len() {
-            return Err(Error::corrupted("Literal length exceeds available literals"));
+            return Err(Error::corrupted(
+                "Literal length exceeds available literals",
+            ));
         }
         output.extend_from_slice(&literal_bytes[literal_pos..literal_end]);
         literal_pos = literal_end;
@@ -169,13 +164,11 @@ mod tests {
     fn test_execute_sequences_with_match() {
         // Literal "ab", then match (offset=2, length=4) to repeat "ab" twice
         let literals = LiteralsSection::new_raw(b"ab".to_vec());
-        let sequences = vec![
-            Sequence {
-                literal_length: 2,
-                offset: 2,
-                match_length: 4,
-            },
-        ];
+        let sequences = vec![Sequence {
+            literal_length: 2,
+            offset: 2,
+            match_length: 4,
+        }];
         let mut output = Vec::new();
 
         execute_sequences(&literals, &sequences, &mut output, &[]).unwrap();
@@ -187,13 +180,11 @@ mod tests {
     fn test_execute_sequences_rle_pattern() {
         // Literal "a", then match (offset=1, length=4) to repeat "a" four times
         let literals = LiteralsSection::new_raw(b"a".to_vec());
-        let sequences = vec![
-            Sequence {
-                literal_length: 1,
-                offset: 1,
-                match_length: 4,
-            },
-        ];
+        let sequences = vec![Sequence {
+            literal_length: 1,
+            offset: 1,
+            match_length: 4,
+        }];
         let mut output = Vec::new();
 
         execute_sequences(&literals, &sequences, &mut output, &[]).unwrap();
@@ -209,7 +200,7 @@ mod tests {
             Sequence {
                 literal_length: 3, // "abc"
                 offset: 3,
-                match_length: 3,   // copy "abc"
+                match_length: 3, // copy "abc"
             },
             Sequence {
                 literal_length: 3, // "XYZ"

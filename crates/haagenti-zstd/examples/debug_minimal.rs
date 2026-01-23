@@ -9,8 +9,12 @@ fn main() {
     for lines in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20] {
         let mut data = Vec::new();
         for i in 0..lines {
-            let line = format!("[2024-01-{:02} 10:{:02}:00] INFO Request #{}\n",
-                              (i % 28) + 1, i % 60, i * 1000);
+            let line = format!(
+                "[2024-01-{:02} 10:{:02}:00] INFO Request #{}\n",
+                (i % 28) + 1,
+                i % 60,
+                i * 1000
+            );
             data.extend_from_slice(line.as_bytes());
         }
 
@@ -19,13 +23,27 @@ fn main() {
 
         match zstd::decode_all(Cursor::new(&compressed)) {
             Ok(dec) if dec == data => {
-                println!("{:2} lines ({:4} bytes): OK ({:3} bytes compressed)", lines, data.len(), compressed.len());
+                println!(
+                    "{:2} lines ({:4} bytes): OK ({:3} bytes compressed)",
+                    lines,
+                    data.len(),
+                    compressed.len()
+                );
             }
             Ok(_) => {
-                println!("{:2} lines ({:4} bytes): CONTENT MISMATCH", lines, data.len());
+                println!(
+                    "{:2} lines ({:4} bytes): CONTENT MISMATCH",
+                    lines,
+                    data.len()
+                );
             }
             Err(e) => {
-                println!("{:2} lines ({:4} bytes): FAILED - {:?}", lines, data.len(), e);
+                println!(
+                    "{:2} lines ({:4} bytes): FAILED - {:?}",
+                    lines,
+                    data.len(),
+                    e
+                );
 
                 // Show the data that fails
                 if lines <= 5 {
@@ -45,7 +63,11 @@ fn main() {
 
         match zstd::decode_all(Cursor::new(&compressed)) {
             Ok(dec) if dec == data => {
-                println!("{} bytes alpha: OK ({} bytes compressed)", len, compressed.len());
+                println!(
+                    "{} bytes alpha: OK ({} bytes compressed)",
+                    len,
+                    compressed.len()
+                );
             }
             Ok(_) => {
                 println!("{} bytes alpha: CONTENT MISMATCH", len);

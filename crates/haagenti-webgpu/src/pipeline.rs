@@ -1,8 +1,8 @@
 //! Compute pipeline management for WebGPU
 
-use crate::{Result, WebGpuError};
-use crate::buffer::{BufferUsage, GpuBuffer};
+use crate::buffer::GpuBuffer;
 use crate::shader::{ShaderModule, WgslSource};
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -69,7 +69,7 @@ pub enum ShaderStage {
 
 impl ShaderStage {
     /// Convert to WebGPU visibility flags
-    pub fn to_webgpu(&self) -> u32 {
+    pub fn to_webgpu(self) -> u32 {
         match self {
             ShaderStage::Vertex => 0x1,
             ShaderStage::Fragment => 0x2,
@@ -194,15 +194,16 @@ impl ComputePipeline {
     pub fn dispatch_size(&self, total_x: u32, total_y: u32, total_z: u32) -> (u32, u32, u32) {
         let (wg_x, wg_y, wg_z) = self.config.workgroup_size;
 
-        let dispatch_x = (total_x + wg_x - 1) / wg_x;
-        let dispatch_y = (total_y + wg_y - 1) / wg_y;
-        let dispatch_z = (total_z + wg_z - 1) / wg_z;
+        let dispatch_x = total_x.div_ceil(wg_x);
+        let dispatch_y = total_y.div_ceil(wg_y);
+        let dispatch_z = total_z.div_ceil(wg_z);
 
         (dispatch_x, dispatch_y, dispatch_z)
     }
 }
 
 /// Standard pipeline builders for common operations
+#[allow(dead_code)]
 pub mod builders {
     use super::*;
     use crate::shader::templates;
@@ -218,10 +219,10 @@ pub mod builders {
 
         let mut layout = BindGroupLayout::new(0);
         layout
-            .add_uniform(0)      // Uniforms (M, N, K)
+            .add_uniform(0) // Uniforms (M, N, K)
             .add_read_storage(1) // Matrix A
             .add_read_storage(2) // Matrix B
-            .add_storage(3);     // Matrix C (output)
+            .add_storage(3); // Matrix C (output)
 
         ComputePipeline::new(config, templates::matmul(), "matmul_main")
             .map(|p| p.with_bind_group(layout))
@@ -238,10 +239,10 @@ pub mod builders {
 
         let mut layout = BindGroupLayout::new(0);
         layout
-            .add_uniform(0)      // Uniforms (size)
+            .add_uniform(0) // Uniforms (size)
             .add_read_storage(1) // Input A
             .add_read_storage(2) // Input B
-            .add_storage(3);     // Output C
+            .add_storage(3); // Output C
 
         ComputePipeline::new(config, templates::add(), "add_main")
             .map(|p| p.with_bind_group(layout))
@@ -258,9 +259,9 @@ pub mod builders {
 
         let mut layout = BindGroupLayout::new(0);
         layout
-            .add_uniform(0)      // Uniforms (size)
+            .add_uniform(0) // Uniforms (size)
             .add_read_storage(1) // Input
-            .add_storage(2);     // Output
+            .add_storage(2); // Output
 
         ComputePipeline::new(config, templates::gelu(), "gelu_main")
             .map(|p| p.with_bind_group(layout))
@@ -277,9 +278,9 @@ pub mod builders {
 
         let mut layout = BindGroupLayout::new(0);
         layout
-            .add_uniform(0)      // Uniforms (batch_size, seq_len)
+            .add_uniform(0) // Uniforms (batch_size, seq_len)
             .add_read_storage(1) // Input
-            .add_storage(2);     // Output
+            .add_storage(2); // Output
 
         ComputePipeline::new(config, templates::softmax(), "softmax_main")
             .map(|p| p.with_bind_group(layout))
@@ -296,11 +297,11 @@ pub mod builders {
 
         let mut layout = BindGroupLayout::new(0);
         layout
-            .add_uniform(0)      // Uniforms (batch_size, hidden_size, epsilon)
+            .add_uniform(0) // Uniforms (batch_size, hidden_size, epsilon)
             .add_read_storage(1) // Input
             .add_read_storage(2) // Gamma
             .add_read_storage(3) // Beta
-            .add_storage(4);     // Output
+            .add_storage(4); // Output
 
         ComputePipeline::new(config, templates::layer_norm(), "layer_norm_main")
             .map(|p| p.with_bind_group(layout))
@@ -317,10 +318,10 @@ pub mod builders {
 
         let mut layout = BindGroupLayout::new(0);
         layout
-            .add_uniform(0)      // Uniforms (size)
+            .add_uniform(0) // Uniforms (size)
             .add_read_storage(1) // Quantized data
             .add_read_storage(2) // Scales
-            .add_storage(3);     // Output
+            .add_storage(3); // Output
 
         ComputePipeline::new(config, templates::dequantize_int4(), "dequantize_main")
             .map(|p| p.with_bind_group(layout))
@@ -328,6 +329,7 @@ pub mod builders {
 }
 
 /// Pipeline cache for reusing compiled pipelines
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct PipelineCache {
     /// Cached pipelines by ID
@@ -336,6 +338,7 @@ pub struct PipelineCache {
     name_to_id: HashMap<String, u64>,
 }
 
+#[allow(dead_code)]
 impl PipelineCache {
     /// Create new empty cache
     pub fn new() -> Self {
@@ -401,6 +404,7 @@ impl PipelineCache {
 }
 
 /// Execution context for running compute pipelines
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ExecutionContext {
     /// Buffer bindings
@@ -409,6 +413,7 @@ pub struct ExecutionContext {
     dispatch: (u32, u32, u32),
 }
 
+#[allow(dead_code)]
 impl ExecutionContext {
     /// Create new execution context
     pub fn new() -> Self {
@@ -491,14 +496,14 @@ mod tests {
     #[test]
     fn test_bind_group_layout() {
         let mut layout = BindGroupLayout::new(0);
-        layout
-            .add_uniform(0)
-            .add_read_storage(1)
-            .add_storage(2);
+        layout.add_uniform(0).add_read_storage(1).add_storage(2);
 
         assert_eq!(layout.bindings.len(), 3);
         assert_eq!(layout.bindings[0].buffer_type, BufferBindingType::Uniform);
-        assert_eq!(layout.bindings[1].buffer_type, BufferBindingType::ReadOnlyStorage);
+        assert_eq!(
+            layout.bindings[1].buffer_type,
+            BufferBindingType::ReadOnlyStorage
+        );
         assert_eq!(layout.bindings[2].buffer_type, BufferBindingType::Storage);
     }
 
@@ -507,8 +512,7 @@ mod tests {
         let buffer = GpuBuffer::storage(1024, "test");
         let mut ctx = ExecutionContext::new();
 
-        ctx.bind(0, 0, &buffer)
-           .dispatch(64, 64, 1);
+        ctx.bind(0, 0, &buffer).dispatch(64, 64, 1);
 
         assert_eq!(ctx.bindings().len(), 1);
         assert_eq!(ctx.dispatch_dims(), (64, 64, 1));

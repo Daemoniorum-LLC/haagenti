@@ -1,7 +1,7 @@
 //! Trace full compression pipeline
 
 use haagenti_core::CompressionLevel;
-use haagenti_zstd::compress::{CompressContext, block};
+use haagenti_zstd::compress::{block, CompressContext};
 
 fn main() {
     let sample = b"The quick brown fox jumps over the lazy dog. \
@@ -10,7 +10,11 @@ fn main() {
                    The five boxing wizards jump quickly. ";
 
     let data: Vec<u8> = sample.iter().cycle().take(1024).copied().collect();
-    println!("Input: {} bytes (pattern {} bytes)", data.len(), sample.len());
+    println!(
+        "Input: {} bytes (pattern {} bytes)",
+        data.len(),
+        sample.len()
+    );
 
     let mut ctx = CompressContext::new(CompressionLevel::Default);
 
@@ -26,16 +30,27 @@ fn main() {
     let fhd = compressed[pos];
     pos += 1;
     let single_segment = (fhd >> 5) & 1 != 0;
-    if !single_segment { pos += 1; }
+    if !single_segment {
+        pos += 1;
+    }
     let fcs_flag = (fhd >> 6) & 3;
     let fcs_size = match fcs_flag {
-        0 => if single_segment { 1 } else { 0 },
-        1 => 2, 2 => 4, 3 => 8, _ => 0,
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
+        1 => 2,
+        2 => 4,
+        3 => 8,
+        _ => 0,
     };
     pos += fcs_size;
 
     // Block header
-    let header = u32::from_le_bytes([compressed[pos], compressed[pos+1], compressed[pos+2], 0]);
+    let header = u32::from_le_bytes([compressed[pos], compressed[pos + 1], compressed[pos + 2], 0]);
     let block_type = (header >> 1) & 3;
     let block_size = (header >> 3) as usize;
     pos += 3;
@@ -54,8 +69,16 @@ fn main() {
             0 => {
                 let size = match size_format {
                     0 | 1 => ((header_byte >> 3) as usize, 1),
-                    2 => (((header_byte >> 4) as usize) | ((block[1] as usize) << 4), 2),
-                    3 => (((header_byte >> 4) as usize) | ((block[1] as usize) << 4) | ((block[2] as usize) << 12), 3),
+                    2 => (
+                        ((header_byte >> 4) as usize) | ((block[1] as usize) << 4),
+                        2,
+                    ),
+                    3 => (
+                        ((header_byte >> 4) as usize)
+                            | ((block[1] as usize) << 4)
+                            | ((block[2] as usize) << 12),
+                        3,
+                    ),
                     _ => (0, 1),
                 };
                 (size.0, size.0, size.1)
@@ -63,7 +86,10 @@ fn main() {
             _ => (0, 0, 1),
         };
 
-        println!("Literals: type={}, regen={}, comp={}, header={}", lit_type, lit_regen, lit_comp, lit_header_size);
+        println!(
+            "Literals: type={}, regen={}, comp={}, header={}",
+            lit_type, lit_regen, lit_comp, lit_header_size
+        );
 
         let seq_start = lit_header_size + lit_comp;
         let seq_section = &block[seq_start..];
@@ -85,7 +111,10 @@ fn main() {
             println!("Number of sequences: {}", num_seq);
 
             // First few bytes of sequences section
-            println!("Seq section bytes: {:02x?}", &seq_section[..20.min(seq_section.len())]);
+            println!(
+                "Seq section bytes: {:02x?}",
+                &seq_section[..20.min(seq_section.len())]
+            );
         }
     }
 
@@ -104,15 +133,27 @@ fn main() {
 
     // Show first few sequences
     for (i, seq) in sequences.iter().take(10).enumerate() {
-        println!("  Seq {}: ll={}, offset={}, ml={}", i, seq.literal_length, seq.offset, seq.match_length);
+        println!(
+            "  Seq {}: ll={}, offset={}, ml={}",
+            i, seq.literal_length, seq.offset, seq.match_length
+        );
     }
 
     // Check if uniform
     use haagenti_zstd::compress::analyze_for_rle;
     let suitability = analyze_for_rle(&sequences);
     println!("\nRLE Suitability:");
-    println!("  LL uniform: {} (code {})", suitability.ll_uniform, suitability.ll_code);
-    println!("  OF uniform: {} (code {})", suitability.of_uniform, suitability.of_code);
-    println!("  ML uniform: {} (code {})", suitability.ml_uniform, suitability.ml_code);
+    println!(
+        "  LL uniform: {} (code {})",
+        suitability.ll_uniform, suitability.ll_code
+    );
+    println!(
+        "  OF uniform: {} (code {})",
+        suitability.of_uniform, suitability.of_code
+    );
+    println!(
+        "  ML uniform: {} (code {})",
+        suitability.ml_uniform, suitability.ml_code
+    );
     println!("  All uniform: {}", suitability.all_uniform());
 }

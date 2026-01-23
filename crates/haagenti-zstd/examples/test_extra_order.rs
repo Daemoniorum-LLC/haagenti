@@ -26,7 +26,10 @@ fn main() {
     // ML (6 bits): bits 11-6
     let ml_state = ((container >> 6) & 0x3F) as usize;
 
-    println!("Initial states: LL={}, OF={}, ML={}", ll_state, of_state, ml_state);
+    println!(
+        "Initial states: LL={}, OF={}, ML={}",
+        ll_state, of_state, ml_state
+    );
 
     // Remaining 6 bits for extras: bits 0-5
     let remaining = (container & 0x3F) as u32;
@@ -35,22 +38,44 @@ fn main() {
     // OF code 2 needs 2 extra bits, ML code 41 needs 4 extra bits
 
     println!("\n--- Reading OF first, then ML (current order) ---");
-    let of_extra_current = remaining & 0x3;  // bits 0-1
-    let ml_extra_current = (remaining >> 2) & 0xF;  // bits 2-5
+    let of_extra_current = remaining & 0x3; // bits 0-1
+    let ml_extra_current = (remaining >> 2) & 0xF; // bits 2-5
     let offset_value_current = (1u32 << 2) + of_extra_current;
     let ml_value_current = 83 + ml_extra_current;
-    println!("OF extra: {}, ML extra: {}", of_extra_current, ml_extra_current);
-    println!("offset_value = {}, actual_offset = {}", offset_value_current, offset_value_current - 3);
+    println!(
+        "OF extra: {}, ML extra: {}",
+        of_extra_current, ml_extra_current
+    );
+    println!(
+        "offset_value = {}, actual_offset = {}",
+        offset_value_current,
+        offset_value_current - 3
+    );
     println!("ML = {}", ml_value_current);
-    println!("Total bytes: 4 + {} = {}", ml_value_current, 4 + ml_value_current);
+    println!(
+        "Total bytes: 4 + {} = {}",
+        ml_value_current,
+        4 + ml_value_current
+    );
 
     println!("\n--- Reading ML first, then OF (reversed order) ---");
-    let ml_extra_reversed = remaining & 0xF;  // bits 0-3
-    let of_extra_reversed = (remaining >> 4) & 0x3;  // bits 4-5
+    let ml_extra_reversed = remaining & 0xF; // bits 0-3
+    let of_extra_reversed = (remaining >> 4) & 0x3; // bits 4-5
     let offset_value_reversed = (1u32 << 2) + of_extra_reversed;
     let ml_value_reversed = 83 + ml_extra_reversed;
-    println!("ML extra: {}, OF extra: {}", ml_extra_reversed, of_extra_reversed);
-    println!("offset_value = {}, actual_offset = {}", offset_value_reversed, offset_value_reversed - 3);
+    println!(
+        "ML extra: {}, OF extra: {}",
+        ml_extra_reversed, of_extra_reversed
+    );
+    println!(
+        "offset_value = {}, actual_offset = {}",
+        offset_value_reversed,
+        offset_value_reversed - 3
+    );
     println!("ML = {}", ml_value_reversed);
-    println!("Total bytes: 4 + {} = {}", ml_value_reversed, 4 + ml_value_reversed);
+    println!(
+        "Total bytes: 4 + {} = {}",
+        ml_value_reversed,
+        4 + ml_value_reversed
+    );
 }

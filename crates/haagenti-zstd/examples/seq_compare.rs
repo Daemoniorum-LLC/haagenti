@@ -43,7 +43,7 @@ fn parse_seq_section(data: &[u8]) -> Vec<u8> {
     let mut pos = 4 + 1 + 1; // assuming standard frame header
 
     // Block header
-    let bh = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], 0]);
+    let bh = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], 0]);
     let block_size = (bh >> 3) as usize;
     pos += 3;
     let block_start = pos;
@@ -56,13 +56,13 @@ fn parse_seq_section(data: &[u8]) -> Vec<u8> {
     let (lit_size, header_len) = match size_format {
         0 | 2 => ((lit_byte >> 3) as usize, 1usize),
         1 => {
-            let size = ((data[pos] >> 4) as usize) | ((data[pos+1] as usize) << 4);
+            let size = ((data[pos] >> 4) as usize) | ((data[pos + 1] as usize) << 4);
             (size, 2)
         }
         3 => {
             let size = ((data[pos] >> 4) as usize)
-                | ((data[pos+1] as usize) << 4)
-                | ((data[pos+2] as usize) << 12);
+                | ((data[pos + 1] as usize) << 4)
+                | ((data[pos + 2] as usize) << 12);
             (size, 3)
         }
         _ => panic!(),

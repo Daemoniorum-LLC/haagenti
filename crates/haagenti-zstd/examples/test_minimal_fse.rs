@@ -35,7 +35,11 @@ fn main() {
 
 fn test_case(name: &str, input: &[u8]) {
     println!("=== {} ===", name);
-    println!("Input: {:?} ({} bytes)", std::str::from_utf8(input).unwrap(), input.len());
+    println!(
+        "Input: {:?} ({} bytes)",
+        std::str::from_utf8(input).unwrap(),
+        input.len()
+    );
 
     // Use the zstd crate to compress and see what it produces
     let ref_compressed = match zstd::encode_all(&input[..], 1) {
@@ -113,7 +117,7 @@ fn analyze_block_type(frame: &[u8]) {
         return;
     }
 
-    let bh = u32::from_le_bytes([frame[pos], frame[pos+1], frame[pos+2], 0]);
+    let bh = u32::from_le_bytes([frame[pos], frame[pos + 1], frame[pos + 2], 0]);
     let block_type = (bh >> 1) & 0x3;
     let block_size = (bh >> 3) as usize;
 
@@ -125,15 +129,26 @@ fn analyze_block_type(frame: &[u8]) {
         _ => "Unknown",
     };
 
-    println!("  Block type: {} ({}), size: {}", block_type, type_name, block_size);
+    println!(
+        "  Block type: {} ({}), size: {}",
+        block_type, type_name, block_size
+    );
 
     if block_type == 2 && pos + 3 + block_size <= frame.len() {
-        let block_data = &frame[pos+3..pos+3+block_size];
+        let block_data = &frame[pos + 3..pos + 3 + block_size];
 
         // Parse literals header
         if !block_data.is_empty() {
             let lit_type = block_data[0] & 0x03;
-            println!("  Literals type: {}", match lit_type { 0 => "Raw", 1 => "RLE", 2 => "Compressed", _ => "Treeless" });
+            println!(
+                "  Literals type: {}",
+                match lit_type {
+                    0 => "Raw",
+                    1 => "RLE",
+                    2 => "Compressed",
+                    _ => "Treeless",
+                }
+            );
 
             // For raw literals, find sequence section
             if lit_type == 0 {
@@ -141,7 +156,8 @@ fn analyze_block_type(frame: &[u8]) {
                 let (lit_size, header_size) = match size_format {
                     0 => ((block_data[0] >> 3) as usize, 1),
                     1 => {
-                        let s = ((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF;
+                        let s = ((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4))
+                            & 0xFFF;
                         (s, 2)
                     }
                     _ => (0, 1),
@@ -162,8 +178,19 @@ fn analyze_block_type(frame: &[u8]) {
                             let of_mode = (mode >> 2) & 0x3;
                             let ml_mode = (mode >> 4) & 0x3;
 
-                            let mode_name = |m| match m { 0 => "Predefined", 1 => "RLE", 2 => "FSE", 3 => "Repeat", _ => "?" };
-                            println!("    LL: {}, OF: {}, ML: {}", mode_name(ll_mode), mode_name(of_mode), mode_name(ml_mode));
+                            let mode_name = |m| match m {
+                                0 => "Predefined",
+                                1 => "RLE",
+                                2 => "FSE",
+                                3 => "Repeat",
+                                _ => "?",
+                            };
+                            println!(
+                                "    LL: {}, OF: {}, ML: {}",
+                                mode_name(ll_mode),
+                                mode_name(of_mode),
+                                mode_name(ml_mode)
+                            );
 
                             if seq_section.len() > 2 {
                                 println!("  Bitstream: {:02x?}", &seq_section[2..]);

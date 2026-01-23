@@ -1,6 +1,5 @@
 //! Network topology for distributed inference
 
-use crate::{DistributedError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -81,63 +80,63 @@ impl Topology {
 
         match topology_type {
             TopologyType::Ring => {
-                for i in 0..size {
+                for (i, set) in adj.iter_mut().enumerate() {
                     let prev = (i + size - 1) % size;
                     let next = (i + 1) % size;
-                    adj[i].insert(prev);
-                    adj[i].insert(next);
+                    set.insert(prev);
+                    set.insert(next);
                 }
             }
             TopologyType::Mesh => {
                 // 2D mesh (approximately square)
                 let side = (size as f64).sqrt().ceil() as usize;
-                for i in 0..size {
+                for (i, set) in adj.iter_mut().enumerate() {
                     let row = i / side;
                     let col = i % side;
 
                     // Left neighbor
                     if col > 0 {
-                        adj[i].insert(i - 1);
+                        set.insert(i - 1);
                     }
                     // Right neighbor
                     if col < side - 1 && i + 1 < size {
-                        adj[i].insert(i + 1);
+                        set.insert(i + 1);
                     }
                     // Top neighbor
                     if row > 0 {
-                        adj[i].insert(i - side);
+                        set.insert(i - side);
                     }
                     // Bottom neighbor
                     if i + side < size {
-                        adj[i].insert(i + side);
+                        set.insert(i + side);
                     }
                 }
             }
             TopologyType::FullyConnected => {
-                for i in 0..size {
+                for (i, set) in adj.iter_mut().enumerate() {
                     for j in 0..size {
                         if i != j {
-                            adj[i].insert(j);
+                            set.insert(j);
                         }
                     }
                 }
             }
             TopologyType::Tree => {
                 // Binary tree with root at 0
-                for i in 0..size {
+                for (i, set) in adj.iter_mut().enumerate() {
                     // Parent
                     if i > 0 {
-                        adj[i].insert((i - 1) / 2);
+                        set.insert((i - 1) / 2);
                     }
                     // Left child
                     let left = 2 * i + 1;
                     if left < size {
-                        adj[i].insert(left);
+                        set.insert(left);
                     }
                     // Right child
                     let right = 2 * i + 2;
                     if right < size {
-                        adj[i].insert(right);
+                        set.insert(right);
                     }
                 }
             }
@@ -146,9 +145,9 @@ impl Topology {
                 // Level 0: Intra-group (ring)
                 // Level 1: Inter-group (all-to-all between leaders)
                 let group_size = 4;
-                let num_groups = (size + group_size - 1) / group_size;
+                let num_groups = size.div_ceil(group_size);
 
-                for i in 0..size {
+                for (i, set) in adj.iter_mut().enumerate() {
                     let group = i / group_size;
                     let pos_in_group = i % group_size;
 
@@ -158,10 +157,11 @@ impl Topology {
                     let actual_group_size = group_end - group_start;
 
                     if actual_group_size > 1 {
-                        let prev = group_start + (pos_in_group + actual_group_size - 1) % actual_group_size;
+                        let prev = group_start
+                            + (pos_in_group + actual_group_size - 1) % actual_group_size;
                         let next = group_start + (pos_in_group + 1) % actual_group_size;
-                        adj[i].insert(prev);
-                        adj[i].insert(next);
+                        set.insert(prev);
+                        set.insert(next);
                     }
 
                     // Inter-group (leaders only, pos 0 in each group)
@@ -170,7 +170,7 @@ impl Topology {
                             if other_group != group {
                                 let leader = other_group * group_size;
                                 if leader < size {
-                                    adj[i].insert(leader);
+                                    set.insert(leader);
                                 }
                             }
                         }
@@ -317,7 +317,7 @@ impl Mesh {
     /// Get mesh dimensions for given size
     pub fn dimensions(size: usize) -> (usize, usize) {
         let side = (size as f64).sqrt().ceil() as usize;
-        let rows = (size + side - 1) / side;
+        let rows = size.div_ceil(side);
         (rows, side)
     }
 

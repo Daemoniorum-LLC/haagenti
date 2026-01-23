@@ -14,12 +14,11 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
-use haagenti::mixed_precision::{
-    MixedPrecisionEncoder, MixedPrecisionDecoder,
-    mse, cosine_similarity
-};
-use haagenti::compressive::{CompressiveSpectralEncoder, CompressiveSpectralDecoder};
+use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
 use haagenti::holotensor::HoloFragment;
+use haagenti::mixed_precision::{
+    cosine_similarity, mse, MixedPrecisionDecoder, MixedPrecisionEncoder,
+};
 
 // ============================================================================
 // Safetensors Utilities
@@ -60,7 +59,11 @@ fn find_model_in_cache(model_name: &str) -> Option<Vec<PathBuf>> {
     if let Ok(entries) = std::fs::read_dir(&snapshot) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map(|e| e == "safetensors").unwrap_or(false) {
+            if path
+                .extension()
+                .map(|e| e == "safetensors")
+                .unwrap_or(false)
+            {
                 files.push(path);
             }
         }
@@ -101,12 +104,14 @@ fn parse_safetensors_header(data: &[u8]) -> Option<(u64, HashMap<String, TensorI
 
         let info_obj = info.as_object()?;
         let dtype = info_obj.get("dtype")?.as_str()?;
-        let shape: Vec<usize> = info_obj.get("shape")?
+        let shape: Vec<usize> = info_obj
+            .get("shape")?
             .as_array()?
             .iter()
             .filter_map(|v| v.as_u64().map(|x| x as usize))
             .collect();
-        let data_offsets: Vec<usize> = info_obj.get("data_offsets")?
+        let data_offsets: Vec<usize> = info_obj
+            .get("data_offsets")?
             .as_array()?
             .iter()
             .filter_map(|v| v.as_u64().map(|x| x as usize))
@@ -116,11 +121,14 @@ fn parse_safetensors_header(data: &[u8]) -> Option<(u64, HashMap<String, TensorI
             continue;
         }
 
-        tensors.insert(name.clone(), TensorInfo {
-            dtype: dtype.to_string(),
-            shape,
-            data_offsets: (data_offsets[0], data_offsets[1]),
-        });
+        tensors.insert(
+            name.clone(),
+            TensorInfo {
+                dtype: dtype.to_string(),
+                shape,
+                data_offsets: (data_offsets[0], data_offsets[1]),
+            },
+        );
     }
 
     Some((header_size, tensors))
@@ -135,27 +143,24 @@ struct TensorInfo {
 
 fn bytes_to_f32(data: &[u8], dtype: &str) -> Vec<f32> {
     match dtype {
-        "F32" => {
-            data.chunks_exact(4)
-                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect()
-        }
-        "F16" => {
-            data.chunks_exact(2)
-                .map(|c| {
-                    let bits = u16::from_le_bytes([c[0], c[1]]);
-                    half::f16::from_bits(bits).to_f32()
-                })
-                .collect()
-        }
-        "BF16" => {
-            data.chunks_exact(2)
-                .map(|c| {
-                    let bits = u16::from_le_bytes([c[0], c[1]]);
-                    half::bf16::from_bits(bits).to_f32()
-                })
-                .collect()
-        }
+        "F32" => data
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+        "F16" => data
+            .chunks_exact(2)
+            .map(|c| {
+                let bits = u16::from_le_bytes([c[0], c[1]]);
+                half::f16::from_bits(bits).to_f32()
+            })
+            .collect(),
+        "BF16" => data
+            .chunks_exact(2)
+            .map(|c| {
+                let bits = u16::from_le_bytes([c[0], c[1]]);
+                half::bf16::from_bits(bits).to_f32()
+            })
+            .collect(),
         _ => vec![],
     }
 }
@@ -177,8 +182,10 @@ struct CompressionResult {
 impl CompressionResult {
     fn print(&self) {
         println!("  {} compression:", self.name);
-        println!("    Compression ratio: {:.2}x ({} -> {} bytes)",
-            self.ratio, self.original_bytes, self.compressed_bytes);
+        println!(
+            "    Compression ratio: {:.2}x ({} -> {} bytes)",
+            self.ratio, self.original_bytes, self.compressed_bytes
+        );
         println!("    Cosine similarity: {:.4}", self.cosine_sim);
         println!("    MSE: {:.6}", self.mse);
     }
@@ -214,12 +221,7 @@ fn test_mixed_precision(
     }
 }
 
-fn test_all_int4(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    retention: f32,
-) -> CompressionResult {
+fn test_all_int4(data: &[f32], width: usize, height: usize, retention: f32) -> CompressionResult {
     // FP16 ratio = 0 means all INT4
     let encoder = MixedPrecisionEncoder::new(retention, 0.0);
     let decoder = MixedPrecisionDecoder::new();
@@ -240,12 +242,7 @@ fn test_all_int4(
     }
 }
 
-fn test_all_fp16(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    retention: f32,
-) -> CompressionResult {
+fn test_all_fp16(data: &[f32], width: usize, height: usize, retention: f32) -> CompressionResult {
     // FP16 ratio = 1.0 means all FP16
     let encoder = MixedPrecisionEncoder::new(retention, 1.0);
     let decoder = MixedPrecisionDecoder::new();
@@ -332,18 +329,29 @@ fn test_progressive_decode(
     let total_bytes = compressed.storage_bytes();
 
     println!("  Storage breakdown:");
-    println!("    FP16 essentials: {} bytes ({:.1}%)",
-        fp16_bytes, 100.0 * fp16_bytes as f32 / total_bytes as f32);
-    println!("    INT4 details: {} bytes ({:.1}%)",
-        int4_bytes, 100.0 * int4_bytes as f32 / total_bytes as f32);
-    println!("    Index map: {} bytes ({:.1}%)",
-        index_bytes, 100.0 * index_bytes as f32 / total_bytes as f32);
+    println!(
+        "    FP16 essentials: {} bytes ({:.1}%)",
+        fp16_bytes,
+        100.0 * fp16_bytes as f32 / total_bytes as f32
+    );
+    println!(
+        "    INT4 details: {} bytes ({:.1}%)",
+        int4_bytes,
+        100.0 * int4_bytes as f32 / total_bytes as f32
+    );
+    println!(
+        "    Index map: {} bytes ({:.1}%)",
+        index_bytes,
+        100.0 * index_bytes as f32 / total_bytes as f32
+    );
 
     println!("\n  Quality comparison:");
     println!("    Essentials only (FP16): cosine = {:.4}", cos_essentials);
     println!("    Full decode (FP16+INT4): cosine = {:.4}", cos_full);
-    println!("    Improvement: +{:.2}%",
-        100.0 * (cos_full - cos_essentials) / cos_essentials);
+    println!(
+        "    Improvement: +{:.2}%",
+        100.0 * (cos_full - cos_essentials) / cos_essentials
+    );
 }
 
 // ============================================================================
@@ -354,8 +362,7 @@ fn main() {
     println!("=== Mixed Precision Compression Test ===\n");
 
     // Default model
-    let model_name = env::var("MODEL")
-        .unwrap_or_else(|_| "Qwen/Qwen2.5-0.5B-Instruct".to_string());
+    let model_name = env::var("MODEL").unwrap_or_else(|_| "Qwen/Qwen2.5-0.5B-Instruct".to_string());
     let max_tensors: usize = env::var("MAX_TENSORS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -461,14 +468,37 @@ fn main() {
             let mut results = Vec::new();
 
             // Mixed precision with different FP16 ratios
-            results.push(test_mixed_precision(&tensor_f32, width, height, retention, 0.10));
-            results.push(test_mixed_precision(&tensor_f32, width, height, retention, 0.20));
-            results.push(test_mixed_precision(&tensor_f32, width, height, retention, 0.30));
+            results.push(test_mixed_precision(
+                &tensor_f32,
+                width,
+                height,
+                retention,
+                0.10,
+            ));
+            results.push(test_mixed_precision(
+                &tensor_f32,
+                width,
+                height,
+                retention,
+                0.20,
+            ));
+            results.push(test_mixed_precision(
+                &tensor_f32,
+                width,
+                height,
+                retention,
+                0.30,
+            ));
 
             // Baselines
             results.push(test_all_int4(&tensor_f32, width, height, retention));
             results.push(test_all_fp16(&tensor_f32, width, height, retention));
-            results.push(test_compressive_spectral(&tensor_f32, width, height, retention));
+            results.push(test_compressive_spectral(
+                &tensor_f32,
+                width,
+                height,
+                retention,
+            ));
 
             for r in &results {
                 r.print();
@@ -492,15 +522,21 @@ fn main() {
         // Calculate averages by method
         let num_methods = total_results[0].len();
         for method_idx in 0..num_methods {
-            let avg_ratio: f32 = total_results.iter()
+            let avg_ratio: f32 = total_results
+                .iter()
                 .map(|r| r[method_idx].ratio)
-                .sum::<f32>() / total_results.len() as f32;
-            let avg_cos: f32 = total_results.iter()
+                .sum::<f32>()
+                / total_results.len() as f32;
+            let avg_cos: f32 = total_results
+                .iter()
                 .map(|r| r[method_idx].cosine_sim)
-                .sum::<f32>() / total_results.len() as f32;
+                .sum::<f32>()
+                / total_results.len() as f32;
 
-            println!("  {}: avg ratio {:.2}x, avg cosine {:.4}",
-                total_results[0][method_idx].name, avg_ratio, avg_cos);
+            println!(
+                "  {}: avg ratio {:.2}x, avg cosine {:.4}",
+                total_results[0][method_idx].name, avg_ratio, avg_cos
+            );
         }
     }
 }
@@ -514,9 +550,20 @@ fn run_synthetic_test(retention: f32) {
 
     // Generate various test patterns
     let patterns: Vec<(&str, Vec<f32>)> = vec![
-        ("Sine pattern", (0..n).map(|i| (i as f32 * 0.01).sin()).collect()),
-        ("Random-like", (0..n).map(|i| ((i as f32 * 1.618).sin() * 1000.0) % 1.0).collect()),
-        ("Low frequency", (0..n).map(|i| (i as f32 * 0.001).cos() * 0.5).collect()),
+        (
+            "Sine pattern",
+            (0..n).map(|i| (i as f32 * 0.01).sin()).collect(),
+        ),
+        (
+            "Random-like",
+            (0..n)
+                .map(|i| ((i as f32 * 1.618).sin() * 1000.0) % 1.0)
+                .collect(),
+        ),
+        (
+            "Low frequency",
+            (0..n).map(|i| (i as f32 * 0.001).cos() * 0.5).collect(),
+        ),
         ("Sparse", {
             let mut v = vec![0.0f32; n];
             for i in (0..n).step_by(100) {

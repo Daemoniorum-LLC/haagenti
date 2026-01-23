@@ -44,7 +44,10 @@ fn test_raw_block() {
 
     match zstd::decode_all(Cursor::new(&frame)) {
         Ok(decoded) if decoded == input => println!("Result: OK"),
-        Ok(decoded) => println!("Result: MISMATCH - got {:?}", String::from_utf8_lossy(&decoded)),
+        Ok(decoded) => println!(
+            "Result: MISMATCH - got {:?}",
+            String::from_utf8_lossy(&decoded)
+        ),
         Err(e) => println!("Result: FAILED - {:?}", e),
     }
 }
@@ -93,13 +96,17 @@ fn test_one_sequence() {
     use haagenti_zstd::fse::{FseBitWriter, InterleavedTansEncoder};
 
     // Offset 4 matches initial repeat_offset_2, so encoded as 2
-    let seq = Sequence::new(4, 2, 4);  // LL=4, OF_value=2 (repeat), ML=4
+    let seq = Sequence::new(4, 2, 4); // LL=4, OF_value=2 (repeat), ML=4
     let enc = EncodedSequence::from_sequence(&seq);
 
-    println!("  Encoded: ll_code={}, of_code={}, ml_code={}",
-             enc.ll_code, enc.of_code, enc.ml_code);
-    println!("  Extras: ll={}({}b), of={}({}b), ml={}({}b)",
-             enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits);
+    println!(
+        "  Encoded: ll_code={}, of_code={}, ml_code={}",
+        enc.ll_code, enc.of_code, enc.ml_code
+    );
+    println!(
+        "  Extras: ll={}({}b), of={}({}b), ml={}({}b)",
+        enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits
+    );
 
     let mut tans = InterleavedTansEncoder::new_predefined();
     let (ll_log, of_log, ml_log) = tans.accuracy_logs();
@@ -108,15 +115,24 @@ fn test_one_sequence() {
     tans.init_states(enc.ll_code, enc.of_code, enc.ml_code);
     let (ll_state, of_state, ml_state) = tans.get_states();
 
-    println!("  States: LL={}, OF={}, ML={}", ll_state, of_state, ml_state);
+    println!(
+        "  States: LL={}, OF={}, ML={}",
+        ll_state, of_state, ml_state
+    );
 
     // Build bitstream: just extra bits + states
     let mut bits = FseBitWriter::new();
 
     // Extra bits for the only sequence
-    if enc.ll_bits > 0 { bits.write_bits(enc.ll_extra, enc.ll_bits); }
-    if enc.ml_bits > 0 { bits.write_bits(enc.ml_extra, enc.ml_bits); }
-    if enc.of_bits > 0 { bits.write_bits(enc.of_extra, enc.of_bits); }
+    if enc.ll_bits > 0 {
+        bits.write_bits(enc.ll_extra, enc.ll_bits);
+    }
+    if enc.ml_bits > 0 {
+        bits.write_bits(enc.ml_extra, enc.ml_bits);
+    }
+    if enc.of_bits > 0 {
+        bits.write_bits(enc.of_extra, enc.of_bits);
+    }
 
     // States (ML, OF, LL order for correct MSB reading)
     bits.write_bits(ml_state, ml_log);
@@ -140,7 +156,10 @@ fn test_one_sequence() {
 
     match zstd::decode_all(Cursor::new(&frame)) {
         Ok(decoded) if decoded == expected => println!("  Result: OK"),
-        Ok(decoded) => println!("  Result: MISMATCH - got {:?}", String::from_utf8_lossy(&decoded)),
+        Ok(decoded) => println!(
+            "  Result: MISMATCH - got {:?}",
+            String::from_utf8_lossy(&decoded)
+        ),
         Err(e) => println!("  Result: FAILED - {:?}", e),
     }
 }
@@ -171,8 +190,8 @@ fn test_two_sequences() {
     block.extend_from_slice(b"abcdefghXY");
 
     // Sequences section
-    block.push(0x02);  // count = 2
-    block.push(0x00);  // mode = predefined
+    block.push(0x02); // count = 2
+    block.push(0x00); // mode = predefined
 
     // Build FSE bitstream for 2 sequences
     use haagenti_zstd::block::Sequence;
@@ -181,20 +200,22 @@ fn test_two_sequences() {
 
     // Seq 0: LL=9, OF_value=12 (offset 9 + 3), ML=8
     // Seq 1: LL=1, OF_value=1 (repeat offset), ML=4
-    let sequences = vec![
-        Sequence::new(9, 12, 8),
-        Sequence::new(1, 1, 4),
-    ];
+    let sequences = vec![Sequence::new(9, 12, 8), Sequence::new(1, 1, 4)];
 
-    let encoded: Vec<_> = sequences.iter()
+    let encoded: Vec<_> = sequences
+        .iter()
         .map(|s| EncodedSequence::from_sequence(s))
         .collect();
 
     for (i, enc) in encoded.iter().enumerate() {
-        println!("  Seq {}: ll_code={}, of_code={}, ml_code={}",
-                 i, enc.ll_code, enc.of_code, enc.ml_code);
-        println!("       extras: ll={}({}b), of={}({}b), ml={}({}b)",
-                 enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits);
+        println!(
+            "  Seq {}: ll_code={}, of_code={}, ml_code={}",
+            i, enc.ll_code, enc.of_code, enc.ml_code
+        );
+        println!(
+            "       extras: ll={}({}b), of={}({}b), ml={}({}b)",
+            enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits
+        );
     }
 
     let mut tans = InterleavedTansEncoder::new_predefined();
@@ -207,29 +228,44 @@ fn test_two_sequences() {
     let fse_bits = tans.encode_sequence(encoded[0].ll_code, encoded[0].of_code, encoded[0].ml_code);
     let (ll_state, of_state, ml_state) = tans.get_states();
 
-    println!("  FSE bits for seq 0: LL({},{}) OF({},{}) ML({},{})",
-             fse_bits[0].0, fse_bits[0].1,
-             fse_bits[1].0, fse_bits[1].1,
-             fse_bits[2].0, fse_bits[2].1);
-    println!("  Final states: LL={}, OF={}, ML={}", ll_state, of_state, ml_state);
+    println!(
+        "  FSE bits for seq 0: LL({},{}) OF({},{}) ML({},{})",
+        fse_bits[0].0, fse_bits[0].1, fse_bits[1].0, fse_bits[1].1, fse_bits[2].0, fse_bits[2].1
+    );
+    println!(
+        "  Final states: LL={}, OF={}, ML={}",
+        ll_state, of_state, ml_state
+    );
 
     // Build bitstream
     let mut bits = FseBitWriter::new();
 
     // Seq 0: extras + FSE bits
     let seq0 = &encoded[0];
-    if seq0.ll_bits > 0 { bits.write_bits(seq0.ll_extra, seq0.ll_bits); }
-    if seq0.ml_bits > 0 { bits.write_bits(seq0.ml_extra, seq0.ml_bits); }
-    if seq0.of_bits > 0 { bits.write_bits(seq0.of_extra, seq0.of_bits); }
+    if seq0.ll_bits > 0 {
+        bits.write_bits(seq0.ll_extra, seq0.ll_bits);
+    }
+    if seq0.ml_bits > 0 {
+        bits.write_bits(seq0.ml_extra, seq0.ml_bits);
+    }
+    if seq0.of_bits > 0 {
+        bits.write_bits(seq0.of_extra, seq0.of_bits);
+    }
 
-    bits.write_bits(fse_bits[0].0, fse_bits[0].1);  // LL
-    bits.write_bits(fse_bits[2].0, fse_bits[2].1);  // ML
-    bits.write_bits(fse_bits[1].0, fse_bits[1].1);  // OF
+    bits.write_bits(fse_bits[0].0, fse_bits[0].1); // LL
+    bits.write_bits(fse_bits[2].0, fse_bits[2].1); // ML
+    bits.write_bits(fse_bits[1].0, fse_bits[1].1); // OF
 
     // Seq 1 (last): just extras
-    if last.ll_bits > 0 { bits.write_bits(last.ll_extra, last.ll_bits); }
-    if last.ml_bits > 0 { bits.write_bits(last.ml_extra, last.ml_bits); }
-    if last.of_bits > 0 { bits.write_bits(last.of_extra, last.of_bits); }
+    if last.ll_bits > 0 {
+        bits.write_bits(last.ll_extra, last.ll_bits);
+    }
+    if last.ml_bits > 0 {
+        bits.write_bits(last.ml_extra, last.ml_bits);
+    }
+    if last.of_bits > 0 {
+        bits.write_bits(last.of_extra, last.of_bits);
+    }
 
     // States
     bits.write_bits(ml_state, ml_log);
@@ -254,7 +290,10 @@ fn test_two_sequences() {
 
     match zstd::decode_all(Cursor::new(&frame)) {
         Ok(decoded) if decoded == expected => println!("  Result: OK"),
-        Ok(decoded) => println!("  Result: MISMATCH - got {:?}", String::from_utf8_lossy(&decoded)),
+        Ok(decoded) => println!(
+            "  Result: MISMATCH - got {:?}",
+            String::from_utf8_lossy(&decoded)
+        ),
         Err(e) => println!("  Result: FAILED - {:?}", e),
     }
 }
@@ -289,9 +328,19 @@ fn test_reference_compression() {
     println!("\n  Comparison:");
     let max_len = compressed.len().max(our_compressed.len());
     for i in 0..max_len {
-        let ref_byte = compressed.get(i).map(|b| format!("{:02x}", b)).unwrap_or_else(|| "  ".to_string());
-        let our_byte = our_compressed.get(i).map(|b| format!("{:02x}", b)).unwrap_or_else(|| "  ".to_string());
-        let marker = if compressed.get(i) == our_compressed.get(i) { " " } else { "*" };
+        let ref_byte = compressed
+            .get(i)
+            .map(|b| format!("{:02x}", b))
+            .unwrap_or_else(|| "  ".to_string());
+        let our_byte = our_compressed
+            .get(i)
+            .map(|b| format!("{:02x}", b))
+            .unwrap_or_else(|| "  ".to_string());
+        let marker = if compressed.get(i) == our_compressed.get(i) {
+            " "
+        } else {
+            "*"
+        };
         println!("    {:3}: ref={} our={} {}", i, ref_byte, our_byte, marker);
     }
 }

@@ -7,16 +7,15 @@ fn main() {
     // Generate pseudo-random but realistic text content
     // This simulates actual English text with natural word patterns
     let words = [
-        "the", "be", "to", "of", "and", "a", "in", "that", "have", "I",
-        "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
-        "this", "but", "his", "by", "from", "they", "we", "say", "her", "she",
-        "or", "an", "will", "my", "one", "all", "would", "there", "their", "what",
-        "so", "up", "out", "if", "about", "who", "get", "which", "go", "me",
-        "when", "make", "can", "like", "time", "no", "just", "him", "know", "take",
-        "people", "into", "year", "your", "good", "some", "could", "them", "see", "other",
-        "than", "then", "now", "look", "only", "come", "its", "over", "think", "also",
-        "back", "after", "use", "two", "how", "our", "work", "first", "well", "way",
-        "even", "new", "want", "because", "any", "these", "give", "day", "most", "us",
+        "the", "be", "to", "of", "and", "a", "in", "that", "have", "I", "it", "for", "not", "on",
+        "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we",
+        "say", "her", "she", "or", "an", "will", "my", "one", "all", "would", "there", "their",
+        "what", "so", "up", "out", "if", "about", "who", "get", "which", "go", "me", "when",
+        "make", "can", "like", "time", "no", "just", "him", "know", "take", "people", "into",
+        "year", "your", "good", "some", "could", "them", "see", "other", "than", "then", "now",
+        "look", "only", "come", "its", "over", "think", "also", "back", "after", "use", "two",
+        "how", "our", "work", "first", "well", "way", "even", "new", "want", "because", "any",
+        "these", "give", "day", "most", "us",
     ];
 
     // Simple PRNG for reproducible results
@@ -67,12 +66,16 @@ fn main() {
     let gap = (our_compressed.len() as f64 / ref_compressed.len() as f64 - 1.0) * 100.0;
 
     println!("\nCompression Results:");
-    println!("  Reference: {} bytes ({:.2}x ratio)",
-             ref_compressed.len(),
-             data.len() as f64 / ref_compressed.len() as f64);
-    println!("  Ours: {} bytes ({:.2}x ratio)",
-             our_compressed.len(),
-             data.len() as f64 / our_compressed.len() as f64);
+    println!(
+        "  Reference: {} bytes ({:.2}x ratio)",
+        ref_compressed.len(),
+        data.len() as f64 / ref_compressed.len() as f64
+    );
+    println!(
+        "  Ours: {} bytes ({:.2}x ratio)",
+        our_compressed.len(),
+        data.len() as f64 / our_compressed.len() as f64
+    );
     println!("  Gap: {:+.1}%", gap);
 
     // Analyze block structure
@@ -99,7 +102,13 @@ fn analyze_frame(data: &[u8]) {
 
     let fcs_flag = (fhd >> 6) & 0x3;
     let fcs_size = match fcs_flag {
-        0 => if single_segment { 1 } else { 0 },
+        0 => {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        }
         1 => 2,
         2 => 4,
         3 => 8,
@@ -133,9 +142,15 @@ fn analyze_frame(data: &[u8]) {
                 3 => "Treeless",
                 _ => "Unknown",
             };
-            println!("  Block {}: {} ({} bytes), literals={}", block_num, type_name, block_size, lit_type_name);
+            println!(
+                "  Block {}: {} ({} bytes), literals={}",
+                block_num, type_name, block_size, lit_type_name
+            );
         } else {
-            println!("  Block {}: {} ({} bytes)", block_num, type_name, block_size);
+            println!(
+                "  Block {}: {} ({} bytes)",
+                block_num, type_name, block_size
+            );
         }
 
         pos += block_size;

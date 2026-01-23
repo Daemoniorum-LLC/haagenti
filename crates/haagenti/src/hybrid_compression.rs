@@ -30,26 +30,21 @@
 //! let reconstructed = decoder.decompress(&compressed)?;
 //! ```
 
-use haagenti_core::{Error, Result};
-use crate::svd_compression::{SvdEncoder, SvdDecoder, SvdCompressedWeight};
-use crate::compressive::{CompressiveSpectralEncoder, CompressiveSpectralDecoder};
+use crate::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
 use crate::holotensor::HoloFragment;
+use crate::svd_compression::{SvdCompressedWeight, SvdDecoder, SvdEncoder};
+use haagenti_core::{Error, Result};
 
 /// Compression method selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompressionMethod {
     /// SVD-based low-rank approximation
     Svd,
     /// DCT-based spectral compression
+    #[default]
     Dct,
     /// No compression (keep original)
     None,
-}
-
-impl Default for CompressionMethod {
-    fn default() -> Self {
-        Self::Dct
-    }
 }
 
 /// Classification of tensor types for compression selection.
@@ -90,16 +85,22 @@ impl TensorType {
         }
 
         // Layer normalization
-        if name_lower.contains("layernorm") || name_lower.contains("layer_norm") ||
-           name_lower.contains("ln_") || name_lower.contains("_ln") ||
-           name_lower.contains("norm.weight") {
+        if name_lower.contains("layernorm")
+            || name_lower.contains("layer_norm")
+            || name_lower.contains("ln_")
+            || name_lower.contains("_ln")
+            || name_lower.contains("norm.weight")
+        {
             return Self::LayerNorm;
         }
 
         // Embeddings
-        if name_lower.contains("embed_tokens") || name_lower.contains("wte") ||
-           name_lower.contains("word_embed") || name_lower.contains("token_embed") ||
-           name_lower.contains("position_embed") {
+        if name_lower.contains("embed_tokens")
+            || name_lower.contains("wte")
+            || name_lower.contains("word_embed")
+            || name_lower.contains("token_embed")
+            || name_lower.contains("position_embed")
+        {
             return Self::Embedding;
         }
 
@@ -114,30 +115,44 @@ impl TensorType {
         }
 
         // Individual attention projections
-        if name_lower.contains("q_proj") || name_lower.contains(".wq.") ||
-           name_lower.contains("query") {
+        if name_lower.contains("q_proj")
+            || name_lower.contains(".wq.")
+            || name_lower.contains("query")
+        {
             return Self::AttentionQuery;
         }
-        if name_lower.contains("k_proj") || name_lower.contains(".wk.") ||
-           name_lower.contains("key") {
+        if name_lower.contains("k_proj")
+            || name_lower.contains(".wk.")
+            || name_lower.contains("key")
+        {
             return Self::AttentionKey;
         }
-        if name_lower.contains("v_proj") || name_lower.contains(".wv.") ||
-           name_lower.contains("value") {
+        if name_lower.contains("v_proj")
+            || name_lower.contains(".wv.")
+            || name_lower.contains("value")
+        {
             return Self::AttentionValue;
         }
-        if name_lower.contains("o_proj") || name_lower.contains(".wo.") ||
-           name_lower.contains("dense") {
+        if name_lower.contains("o_proj")
+            || name_lower.contains(".wo.")
+            || name_lower.contains("dense")
+        {
             return Self::AttentionOutput;
         }
 
         // MLP/FFN
-        if name_lower.contains("mlp.") || name_lower.contains("feed_forward") ||
-           name_lower.contains("ffn") || name_lower.contains(".fc1") ||
-           name_lower.contains(".fc2") || name_lower.contains("up_proj") ||
-           name_lower.contains("down_proj") || name_lower.contains("gate_proj") ||
-           name_lower.contains("w1.") || name_lower.contains("w2.") ||
-           name_lower.contains("w3.") {
+        if name_lower.contains("mlp.")
+            || name_lower.contains("feed_forward")
+            || name_lower.contains("ffn")
+            || name_lower.contains(".fc1")
+            || name_lower.contains(".fc2")
+            || name_lower.contains("up_proj")
+            || name_lower.contains("down_proj")
+            || name_lower.contains("gate_proj")
+            || name_lower.contains("w1.")
+            || name_lower.contains("w2.")
+            || name_lower.contains("w3.")
+        {
             return Self::Mlp;
         }
 
@@ -151,15 +166,15 @@ impl TensorType {
             Self::LayerNorm | Self::Bias => CompressionMethod::None,
 
             // All weight matrices: DCT (better quality than SVD at same compression)
-            Self::AttentionQuery |
-            Self::AttentionKey |
-            Self::AttentionValue |
-            Self::AttentionOutput |
-            Self::AttentionQkv |
-            Self::Mlp |
-            Self::Embedding |
-            Self::OutputHead |
-            Self::Unknown => CompressionMethod::Dct,
+            Self::AttentionQuery
+            | Self::AttentionKey
+            | Self::AttentionValue
+            | Self::AttentionOutput
+            | Self::AttentionQkv
+            | Self::Mlp
+            | Self::Embedding
+            | Self::OutputHead
+            | Self::Unknown => CompressionMethod::Dct,
         }
     }
 
@@ -176,11 +191,11 @@ impl TensorType {
             Self::OutputHead => (base_retention * 1.1).min(1.0),
 
             // Attention: base retention
-            Self::AttentionQuery |
-            Self::AttentionKey |
-            Self::AttentionValue |
-            Self::AttentionOutput |
-            Self::AttentionQkv => base_retention,
+            Self::AttentionQuery
+            | Self::AttentionKey
+            | Self::AttentionValue
+            | Self::AttentionOutput
+            | Self::AttentionQkv => base_retention,
 
             // MLP: can be more aggressive
             Self::Mlp => (base_retention * 0.9).max(0.1),
@@ -257,8 +272,6 @@ pub struct HybridEncoder {
     base_retention: f32,
     /// Number of fragments for DCT
     num_fragments: u16,
-    /// SVD encoder
-    svd_encoder: SvdEncoder,
     /// Use automatic method selection based on tensor name
     auto_select: bool,
 }
@@ -275,7 +288,6 @@ impl HybridEncoder {
         Self {
             base_retention: base_retention.clamp(0.01, 1.0),
             num_fragments: 8,
-            svd_encoder: SvdEncoder::new(base_retention),
             auto_select: true,
         }
     }
@@ -332,13 +344,11 @@ impl HybridEncoder {
         }
 
         match method {
-            CompressionMethod::None => {
-                Ok(HybridCompressedWeight::None {
-                    width: cols,
-                    height: rows,
-                    data: data.to_vec(),
-                })
-            }
+            CompressionMethod::None => Ok(HybridCompressedWeight::None {
+                width: cols,
+                height: rows,
+                data: data.to_vec(),
+            }),
 
             CompressionMethod::Svd => {
                 let encoder = SvdEncoder::new(retention);
@@ -446,25 +456,67 @@ mod tests {
 
     #[test]
     fn test_tensor_type_classification() {
-        assert_eq!(TensorType::from_name("model.layers.0.self_attn.q_proj.weight"), TensorType::AttentionQuery);
-        assert_eq!(TensorType::from_name("model.layers.0.self_attn.k_proj.weight"), TensorType::AttentionKey);
-        assert_eq!(TensorType::from_name("model.layers.0.self_attn.v_proj.weight"), TensorType::AttentionValue);
-        assert_eq!(TensorType::from_name("model.layers.0.self_attn.o_proj.weight"), TensorType::AttentionOutput);
-        assert_eq!(TensorType::from_name("model.layers.0.mlp.gate_proj.weight"), TensorType::Mlp);
-        assert_eq!(TensorType::from_name("model.layers.0.mlp.up_proj.weight"), TensorType::Mlp);
-        assert_eq!(TensorType::from_name("model.layers.0.mlp.down_proj.weight"), TensorType::Mlp);
-        assert_eq!(TensorType::from_name("model.embed_tokens.weight"), TensorType::Embedding);
-        assert_eq!(TensorType::from_name("model.layers.0.input_layernorm.weight"), TensorType::LayerNorm);
-        assert_eq!(TensorType::from_name("lm_head.weight"), TensorType::OutputHead);
-        assert_eq!(TensorType::from_name("model.layers.0.self_attn.q_proj.bias"), TensorType::Bias);
+        assert_eq!(
+            TensorType::from_name("model.layers.0.self_attn.q_proj.weight"),
+            TensorType::AttentionQuery
+        );
+        assert_eq!(
+            TensorType::from_name("model.layers.0.self_attn.k_proj.weight"),
+            TensorType::AttentionKey
+        );
+        assert_eq!(
+            TensorType::from_name("model.layers.0.self_attn.v_proj.weight"),
+            TensorType::AttentionValue
+        );
+        assert_eq!(
+            TensorType::from_name("model.layers.0.self_attn.o_proj.weight"),
+            TensorType::AttentionOutput
+        );
+        assert_eq!(
+            TensorType::from_name("model.layers.0.mlp.gate_proj.weight"),
+            TensorType::Mlp
+        );
+        assert_eq!(
+            TensorType::from_name("model.layers.0.mlp.up_proj.weight"),
+            TensorType::Mlp
+        );
+        assert_eq!(
+            TensorType::from_name("model.layers.0.mlp.down_proj.weight"),
+            TensorType::Mlp
+        );
+        assert_eq!(
+            TensorType::from_name("model.embed_tokens.weight"),
+            TensorType::Embedding
+        );
+        assert_eq!(
+            TensorType::from_name("model.layers.0.input_layernorm.weight"),
+            TensorType::LayerNorm
+        );
+        assert_eq!(
+            TensorType::from_name("lm_head.weight"),
+            TensorType::OutputHead
+        );
+        assert_eq!(
+            TensorType::from_name("model.layers.0.self_attn.q_proj.bias"),
+            TensorType::Bias
+        );
     }
 
     #[test]
     fn test_recommended_method() {
-        assert_eq!(TensorType::AttentionQuery.recommended_method(), CompressionMethod::Dct);
+        assert_eq!(
+            TensorType::AttentionQuery.recommended_method(),
+            CompressionMethod::Dct
+        );
         assert_eq!(TensorType::Mlp.recommended_method(), CompressionMethod::Dct);
-        assert_eq!(TensorType::LayerNorm.recommended_method(), CompressionMethod::None);
-        assert_eq!(TensorType::Bias.recommended_method(), CompressionMethod::None);
+        assert_eq!(
+            TensorType::LayerNorm.recommended_method(),
+            CompressionMethod::None
+        );
+        assert_eq!(
+            TensorType::Bias.recommended_method(),
+            CompressionMethod::None
+        );
     }
 
     #[test]
@@ -473,11 +525,15 @@ mod tests {
         let data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
 
         // Attention Q should use DCT
-        let compressed = encoder.compress_auto(&data, 8, 8, "model.layers.0.self_attn.q_proj.weight").unwrap();
+        let compressed = encoder
+            .compress_auto(&data, 8, 8, "model.layers.0.self_attn.q_proj.weight")
+            .unwrap();
         assert_eq!(compressed.method(), CompressionMethod::Dct);
 
         // LayerNorm should use None
-        let compressed = encoder.compress_auto(&data, 8, 8, "model.layers.0.input_layernorm.weight").unwrap();
+        let compressed = encoder
+            .compress_auto(&data, 8, 8, "model.layers.0.input_layernorm.weight")
+            .unwrap();
         assert_eq!(compressed.method(), CompressionMethod::None);
     }
 
@@ -487,7 +543,9 @@ mod tests {
         let decoder = HybridDecoder::new();
 
         let data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
-        let compressed = encoder.compress(&data, 8, 8, CompressionMethod::Dct).unwrap();
+        let compressed = encoder
+            .compress(&data, 8, 8, CompressionMethod::Dct)
+            .unwrap();
         let reconstructed = decoder.decompress(&compressed).unwrap();
 
         assert_eq!(reconstructed.len(), data.len());
@@ -499,7 +557,9 @@ mod tests {
         let decoder = HybridDecoder::new();
 
         let data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
-        let compressed = encoder.compress(&data, 8, 8, CompressionMethod::Svd).unwrap();
+        let compressed = encoder
+            .compress(&data, 8, 8, CompressionMethod::Svd)
+            .unwrap();
         let reconstructed = decoder.decompress(&compressed).unwrap();
 
         assert_eq!(reconstructed.len(), data.len());
@@ -511,7 +571,9 @@ mod tests {
         let decoder = HybridDecoder::new();
 
         let data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
-        let compressed = encoder.compress(&data, 8, 8, CompressionMethod::None).unwrap();
+        let compressed = encoder
+            .compress(&data, 8, 8, CompressionMethod::None)
+            .unwrap();
         let reconstructed = decoder.decompress(&compressed).unwrap();
 
         assert_eq!(reconstructed, data);
@@ -524,10 +586,14 @@ mod tests {
 
         let data: Vec<f32> = (0..64).map(|i| i as f32).collect();
 
-        let compressed1 = encoder.compress_auto(&data, 8, 8, "model.layers.0.self_attn.q_proj.weight").unwrap();
+        let compressed1 = encoder
+            .compress_auto(&data, 8, 8, "model.layers.0.self_attn.q_proj.weight")
+            .unwrap();
         stats.record(&compressed1, TensorType::AttentionQuery);
 
-        let compressed2 = encoder.compress_auto(&data, 8, 8, "model.layers.0.input_layernorm.weight").unwrap();
+        let compressed2 = encoder
+            .compress_auto(&data, 8, 8, "model.layers.0.input_layernorm.weight")
+            .unwrap();
         stats.record(&compressed2, TensorType::LayerNorm);
 
         assert_eq!(stats.tensors_processed, 2);

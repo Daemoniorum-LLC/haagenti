@@ -6,6 +6,22 @@
 
 ---
 
+## Important: Benchmark Context
+
+These benchmarks measure specific synthetic data patterns where Haagenti's optimizations apply. The impressive speedups (up to 29x) are **real but workload-dependent**.
+
+- **Where Haagenti excels:** Structured data, repetitive patterns, small blocks, decompression-heavy workloads
+- **Where reference wins:** Large unstructured files, maximum compression ratio requirements
+
+If you're compressing general-purpose data, the reference implementation is battle-tested and excellent. Haagenti targets specific patterns where generic compressors leave performance on the table.
+
+**Verify for your workload:**
+```bash
+cargo bench -p haagenti-zstd
+```
+
+---
+
 ## Executive Summary
 
 Haagenti's pure Rust Zstd implementation achieves:
@@ -191,14 +207,62 @@ CARGO_INCREMENTAL=0 RUSTFLAGS="-C target-cpu=native" \
 
 ---
 
+## General-Purpose Data: Honest Comparison
+
+The benchmarks above use synthetic patterns optimized for Haagenti. What about real-world general-purpose data like the [Canterbury Corpus](https://corpus.canterbury.ac.nz/) or [Silesia Corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia)?
+
+**On general-purpose data, reference Zstd wins.**
+
+### Compression Speed (64KB blocks)
+
+| Data Type | Haagenti | Reference | Haagenti/Ref |
+|-----------|----------|-----------|--------------|
+| English prose | 1.50 GiB/s | 2.22 GiB/s | **0.68x** |
+| C source code | 357 MiB/s | 1.01 GiB/s | **0.35x** |
+| HTML markup | 608 MiB/s | 1.40 GiB/s | **0.43x** |
+| XML data | 537 MiB/s | 1.25 GiB/s | **0.43x** |
+| JSON | 1.13 GiB/s | 1.80 GiB/s | **0.63x** |
+| Server logs | 281 MiB/s | 764 MiB/s | **0.37x** |
+| Mixed binary | 553 MiB/s | 1.45 GiB/s | **0.38x** |
+| Random data | 109 MiB/s | 3.03 GiB/s | **0.04x** |
+
+### Compression Ratio (64KB blocks)
+
+| Data Type | Haagenti | Reference | Delta |
+|-----------|----------|-----------|-------|
+| English prose | 18.02x | 26.54x | **-32.1%** |
+| C source code | 7.19x | 8.98x | **-19.9%** |
+| HTML markup | 10.29x | 13.48x | **-23.7%** |
+| XML data | 9.34x | 11.76x | **-20.5%** |
+| JSON | 14.84x | 20.25x | **-26.7%** |
+| Server logs | 4.85x | 6.40x | **-24.2%** |
+| Mixed binary | 2.66x | 2.67x | **-0.1%** |
+| Random data | 1.00x | 1.00x | Equal |
+
+### Interpretation
+
+- **Speed:** Reference is 1.5-28x faster on general-purpose data
+- **Ratio:** Reference achieves 20-32% better compression on text/markup
+- **Random data:** Haagenti's fingerprinting adds overhead before passthrough
+
+**This is expected.** Haagenti optimizes for specific structured numeric patterns. General-purpose data doesn't trigger those optimizations.
+
+Run these benchmarks yourself:
+```bash
+cargo bench -p haagenti-zstd --bench general_purpose_benchmark
+```
+
+---
+
 ## Use Case Recommendations
 
 | Use Case | Recommendation |
 |----------|----------------|
-| API responses | Haagenti (fast small-data) |
-| Database records | Haagenti (decompression speed) |
-| Log streaming | Haagenti (low latency) |
-| Large file archives | Reference (larger ratio gap) |
+| Structured numeric data | **Haagenti** (17-21 GiB/s) |
+| API responses (small) | Haagenti (fast small-data) |
+| Text/markup files | **Reference** (better ratio) |
+| Source code archives | **Reference** (20% better ratio) |
+| Log files | **Reference** (faster, better ratio) |
 | Embedded/no_std | Haagenti (pure Rust) |
 
 ---

@@ -79,10 +79,7 @@ where
         let mut this = self.project();
 
         if *this.finished {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
-                "writer already finished",
-            )));
+            return Poll::Ready(Err(io::Error::other("writer already finished")));
         }
 
         // First, flush any pending compressed data
@@ -109,7 +106,7 @@ where
             let compressed = this
                 .compressor
                 .compress(data)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| io::Error::other(e.to_string()))?;
 
             *this.compressed_buffer = compressed;
             this.buffer.clear();
@@ -127,7 +124,7 @@ where
             let compressed = this
                 .compressor
                 .compress(data)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| io::Error::other(e.to_string()))?;
 
             *this.compressed_buffer = compressed;
             this.buffer.clear();
@@ -255,8 +252,10 @@ where
                     if !this.input_buffer.is_empty() {
                         let decompressed = this
                             .decompressor
-                            .decompress(&this.input_buffer)
-                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                            .decompress(this.input_buffer)
+                            .map_err(|e| {
+                                io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+                            })?;
 
                         *this.output_buffer = decompressed;
                         *this.output_pos = 0;
@@ -364,8 +363,7 @@ mod tests {
         let mut output = Vec::new();
 
         {
-            let mut writer =
-                AsyncCompressWriter::with_buffer_size(&mut output, MockCompressor, 16);
+            let mut writer = AsyncCompressWriter::with_buffer_size(&mut output, MockCompressor, 16);
             writer.write_all(b"Hello").await.unwrap();
             writer.shutdown().await.unwrap();
         }

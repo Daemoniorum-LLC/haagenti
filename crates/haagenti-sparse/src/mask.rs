@@ -1,6 +1,6 @@
 //! Attention masks for sparse computation
 
-use crate::{HeadCategory, CategoryMapping, Result, SparseError, MIN_ACTIVE_HEADS};
+use crate::{CategoryMapping, HeadCategory, Result, SparseError, MIN_ACTIVE_HEADS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -12,7 +12,7 @@ pub struct AttentionMask {
     /// Number of layers
     pub num_layers: usize,
     /// Mask values: true = compute, false = skip
-    /// Indexed as [layer][head]
+    /// Indexed as `[layer][head]`
     pub mask: Vec<Vec<bool>>,
     /// Per-layer sparsity (fraction of heads skipped)
     pub layer_sparsity: Vec<f32>,
@@ -261,7 +261,7 @@ impl AttentionMask {
         let num_heads = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
         let num_layers = u16::from_le_bytes([bytes[2], bytes[3]]) as usize;
 
-        let bytes_per_layer = (num_heads + 7) / 8;
+        let bytes_per_layer = num_heads.div_ceil(8);
         let mut mask = Vec::with_capacity(num_layers);
 
         let mut offset = 4;
@@ -389,20 +389,14 @@ impl MaskBuilder {
 
     fn build_strided(&self, stride: usize) -> AttentionMask {
         let mask: Vec<Vec<bool>> = (0..self.num_layers)
-            .map(|_| {
-                (0..self.num_heads)
-                    .map(|head| head % stride != 0)
-                    .collect()
-            })
+            .map(|_| (0..self.num_heads).map(|head| head % stride != 0).collect())
             .collect();
         AttentionMask::from_mask(mask)
     }
 
     fn build_skip_first(&self, count: usize) -> AttentionMask {
         let mask: Vec<Vec<bool>> = (0..self.num_layers)
-            .map(|_| {
-                (0..self.num_heads).map(|head| head >= count).collect()
-            })
+            .map(|_| (0..self.num_heads).map(|head| head >= count).collect())
             .collect();
         AttentionMask::from_mask(mask)
     }
@@ -525,7 +519,10 @@ mod tests {
         assert_eq!(original.num_layers, restored.num_layers);
         for layer in 0..10 {
             for head in 0..32 {
-                assert_eq!(original.is_active(layer, head), restored.is_active(layer, head));
+                assert_eq!(
+                    original.is_active(layer, head),
+                    restored.is_active(layer, head)
+                );
             }
         }
     }

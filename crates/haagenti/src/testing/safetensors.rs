@@ -47,7 +47,9 @@ impl TensorInfo {
 /// # Errors
 ///
 /// Returns an error string if the header is invalid or malformed.
-pub fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, TensorInfo>), String> {
+pub fn parse_safetensors_header(
+    data: &[u8],
+) -> Result<(usize, HashMap<String, TensorInfo>), String> {
     if data.len() < 8 {
         return Err("File too small for safetensors header".to_string());
     }
@@ -294,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_bytes_to_f32_f32() {
-        let val: f32 = 3.14159;
+        let val: f32 = std::f32::consts::PI;
         let bytes = val.to_le_bytes();
         let result = bytes_to_f32(&bytes, "F32");
         assert_eq!(result.len(), 1);

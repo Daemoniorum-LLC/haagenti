@@ -102,7 +102,12 @@ pub fn compress_block(input: &[u8], output: &mut [u8]) -> Result<usize> {
         {
             // Found a match! Extend it.
             let match_len = MIN_MATCH
-                + count_match(input, match_pos + MIN_MATCH, input_pos + MIN_MATCH, match_limit);
+                + count_match(
+                    input,
+                    match_pos + MIN_MATCH,
+                    input_pos + MIN_MATCH,
+                    match_limit,
+                );
 
             let literal_len = input_pos - anchor;
             let offset = (input_pos - match_pos) as u16;
@@ -157,7 +162,8 @@ fn write_sequence(
     let token = ((ll_token << 4) | ml_token) as u8;
 
     // Check output space (rough estimate)
-    let needed = 1 + (literal_len / 255) + 1 + literal_len + 2 + ((match_len - MIN_MATCH) / 255) + 1;
+    let needed =
+        1 + (literal_len / 255) + 1 + literal_len + 2 + ((match_len - MIN_MATCH) / 255) + 1;
     if pos + needed > output.len() {
         return Err(Error::buffer_too_small(pos + needed, output.len()));
     }
@@ -179,7 +185,8 @@ fn write_sequence(
     }
 
     // Write literals
-    output[pos..pos + literal_len].copy_from_slice(&input[literal_start..literal_start + literal_len]);
+    output[pos..pos + literal_len]
+        .copy_from_slice(&input[literal_start..literal_start + literal_len]);
     pos += literal_len;
 
     // Write match offset
@@ -202,7 +209,7 @@ fn write_sequence(
 }
 
 /// Write final literals (no match follows).
-fn write_last_literals(
+pub(crate) fn write_last_literals(
     input: &[u8],
     output: &mut [u8],
     mut pos: usize,
@@ -236,7 +243,8 @@ fn write_last_literals(
     }
 
     // Write literals
-    output[pos..pos + literal_len].copy_from_slice(&input[literal_start..literal_start + literal_len]);
+    output[pos..pos + literal_len]
+        .copy_from_slice(&input[literal_start..literal_start + literal_len]);
     pos += literal_len;
 
     Ok(pos)
@@ -286,7 +294,10 @@ pub fn decompress_block(input: &[u8], output: &mut [u8], output_size: usize) -> 
                 return Err(Error::unexpected_eof(input_pos));
             }
             if output_pos + literal_len > output.len() {
-                return Err(Error::buffer_too_small(output_pos + literal_len, output.len()));
+                return Err(Error::buffer_too_small(
+                    output_pos + literal_len,
+                    output.len(),
+                ));
             }
             output[output_pos..output_pos + literal_len]
                 .copy_from_slice(&input[input_pos..input_pos + literal_len]);
@@ -332,7 +343,10 @@ pub fn decompress_block(input: &[u8], output: &mut [u8], output_size: usize) -> 
         // Copy match (may overlap!)
         let match_start = output_pos - offset;
         if output_pos + match_len > output.len() {
-            return Err(Error::buffer_too_small(output_pos + match_len, output.len()));
+            return Err(Error::buffer_too_small(
+                output_pos + match_len,
+                output.len(),
+            ));
         }
 
         // Handle overlapping copy

@@ -337,11 +337,9 @@ impl ThermalHistory {
         let mut count = 0u64;
 
         for i in 0..self.events.len() {
-            if self.events[i].from_state != ThermalState::Nominal {
-                if i + 1 < self.events.len() {
-                    total_ms += self.events[i + 1].timestamp_ms - self.events[i].timestamp_ms;
-                    count += 1;
-                }
+            if self.events[i].from_state != ThermalState::Nominal && i + 1 < self.events.len() {
+                total_ms += self.events[i + 1].timestamp_ms - self.events[i].timestamp_ms;
+                count += 1;
             }
         }
 

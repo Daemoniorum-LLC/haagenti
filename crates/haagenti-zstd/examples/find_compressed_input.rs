@@ -24,13 +24,21 @@ fn main() {
         if block_type == "Compressed" {
             println!("FOUND: {:?}", &input_str[..input_str.len().min(50)]);
             println!("  Input: {} bytes", input.len());
-            println!("  Reference: {} bytes, block_type={}", ref_compressed.len(), block_type);
+            println!(
+                "  Reference: {} bytes, block_type={}",
+                ref_compressed.len(),
+                block_type
+            );
 
             // Try our compression
             let compressor = haagenti_zstd::compress::SpeculativeCompressor::new();
             let our_compressed = compressor.compress(input).unwrap();
             let our_block_type = get_block_type(&our_compressed);
-            println!("  Ours: {} bytes, block_type={}", our_compressed.len(), our_block_type);
+            println!(
+                "  Ours: {} bytes, block_type={}",
+                our_compressed.len(),
+                our_block_type
+            );
 
             // Test decode
             match zstd::decode_all(&our_compressed[..]) {
@@ -57,12 +65,20 @@ fn main() {
     let ref_compressed = zstd::encode_all(input, 1).unwrap();
     let block_type = get_block_type(&ref_compressed);
     println!("Input: {} bytes, \"{}...\"", input.len(), &long_input[..40]);
-    println!("Reference: {} bytes, block_type={}", ref_compressed.len(), block_type);
+    println!(
+        "Reference: {} bytes, block_type={}",
+        ref_compressed.len(),
+        block_type
+    );
 
     let compressor = haagenti_zstd::compress::SpeculativeCompressor::new();
     let our_compressed = compressor.compress(input).unwrap();
     let our_block_type = get_block_type(&our_compressed);
-    println!("Ours: {} bytes, block_type={}", our_compressed.len(), our_block_type);
+    println!(
+        "Ours: {} bytes, block_type={}",
+        our_compressed.len(),
+        our_block_type
+    );
 
     match zstd::decode_all(&our_compressed[..]) {
         Ok(decoded) if decoded == input => println!("Status: Reference decodes OK"),
@@ -72,16 +88,22 @@ fn main() {
 }
 
 fn get_block_type(frame: &[u8]) -> &'static str {
-    if frame.len() < 7 { return "too_short"; }
+    if frame.len() < 7 {
+        return "too_short";
+    }
 
     let fhd = frame[4];
     let single_segment = (fhd & 0x20) != 0;
     let mut pos = 5;
-    if !single_segment { pos += 1; }
+    if !single_segment {
+        pos += 1;
+    }
 
-    if pos + 3 > frame.len() { return "no_block_header"; }
+    if pos + 3 > frame.len() {
+        return "no_block_header";
+    }
 
-    let bh = u32::from_le_bytes([frame[pos], frame[pos+1], frame[pos+2], 0]);
+    let bh = u32::from_le_bytes([frame[pos], frame[pos + 1], frame[pos + 2], 0]);
     let block_type = (bh >> 1) & 0x3;
 
     match block_type {
@@ -104,36 +126,52 @@ fn compare_bitstreams(ref_frame: &[u8], our_frame: &[u8]) {
         if r.len() > 2 && o.len() > 2 {
             let ref_count = r[0];
             let our_count = o[0];
-            println!("    Ref seq count: {}, Our seq count: {}", ref_count, our_count);
+            println!(
+                "    Ref seq count: {}, Our seq count: {}",
+                ref_count, our_count
+            );
 
             if ref_count == our_count {
                 let ref_mode = r[1];
                 let our_mode = o[1];
-                println!("    Ref mode: 0x{:02x}, Our mode: 0x{:02x}", ref_mode, our_mode);
+                println!(
+                    "    Ref mode: 0x{:02x}, Our mode: 0x{:02x}",
+                    ref_mode, our_mode
+                );
             }
         }
     }
 }
 
 fn get_seq_section(frame: &[u8]) -> Option<&[u8]> {
-    if frame.len() < 7 { return None; }
+    if frame.len() < 7 {
+        return None;
+    }
 
     let fhd = frame[4];
     let single_segment = (fhd & 0x20) != 0;
     let mut pos = 5;
-    if !single_segment { pos += 1; }
+    if !single_segment {
+        pos += 1;
+    }
 
-    if pos + 3 > frame.len() { return None; }
+    if pos + 3 > frame.len() {
+        return None;
+    }
 
-    let bh = u32::from_le_bytes([frame[pos], frame[pos+1], frame[pos+2], 0]);
+    let bh = u32::from_le_bytes([frame[pos], frame[pos + 1], frame[pos + 2], 0]);
     let block_type = (bh >> 1) & 0x3;
     let block_size = (bh >> 3) as usize;
     pos += 3;
 
-    if block_type != 2 { return None; }
-    if pos + block_size > frame.len() { return None; }
+    if block_type != 2 {
+        return None;
+    }
+    if pos + block_size > frame.len() {
+        return None;
+    }
 
-    let block_data = &frame[pos..pos+block_size];
+    let block_data = &frame[pos..pos + block_size];
 
     // Parse literals section
     let lit_type = block_data[0] & 0x03;
@@ -141,7 +179,10 @@ fn get_seq_section(frame: &[u8]) -> Option<&[u8]> {
         let size_format = (block_data[0] >> 2) & 0x3;
         match size_format {
             0 | 1 => ((block_data[0] >> 3) as usize, 1),
-            2 => (((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF, 2),
+            2 => (
+                ((block_data[0] as usize >> 4) | ((block_data[1] as usize) << 4)) & 0xFFF,
+                2,
+            ),
             _ => (0, 1),
         }
     } else {

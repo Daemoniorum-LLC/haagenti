@@ -13,48 +13,61 @@ fn main() {
     // Seq 0: LL=9, OF_value=12, ML=8  (offset 9 encoded as 12)
     // Seq 1: LL=1, OF_value=1, ML=4   (repeat offset)
 
-    let sequences = vec![
-        Sequence::new(9, 12, 8),
-        Sequence::new(1, 1, 4),
-    ];
+    let sequences = vec![Sequence::new(9, 12, 8), Sequence::new(1, 1, 4)];
 
-    let encoded: Vec<_> = sequences.iter()
+    let encoded: Vec<_> = sequences
+        .iter()
         .map(|s| EncodedSequence::from_sequence(s))
         .collect();
 
     println!("Encoded sequences:");
     for (i, enc) in encoded.iter().enumerate() {
-        println!("  Seq {}: ll_code={}, of_code={}, ml_code={}",
-                 i, enc.ll_code, enc.of_code, enc.ml_code);
-        println!("       extras: ll={}({}b), of={}({}b), ml={}({}b)",
-                 enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits);
+        println!(
+            "  Seq {}: ll_code={}, of_code={}, ml_code={}",
+            i, enc.ll_code, enc.of_code, enc.ml_code
+        );
+        println!(
+            "       extras: ll={}({}b), of={}({}b), ml={}({}b)",
+            enc.ll_extra, enc.ll_bits, enc.of_extra, enc.of_bits, enc.ml_extra, enc.ml_bits
+        );
     }
 
     let mut tans = InterleavedTansEncoder::new_predefined();
     let (ll_log, of_log, ml_log) = tans.accuracy_logs();
 
-    println!("\nAccuracy logs: LL={}, OF={}, ML={}", ll_log, of_log, ml_log);
+    println!(
+        "\nAccuracy logs: LL={}, OF={}, ML={}",
+        ll_log, of_log, ml_log
+    );
 
     // Try BOTH bit orders and see which one the reference decoder accepts
 
     // Order 1: LL, ML, OF (our current order)
-    let bitstream_llmlof = build_bitstream_order(&encoded, &mut tans, "LL,ML,OF",
-        |bits, seq| {
-            if seq.ll_bits > 0 { bits.write_bits(seq.ll_extra, seq.ll_bits); }
-            if seq.ml_bits > 0 { bits.write_bits(seq.ml_extra, seq.ml_bits); }
-            if seq.of_bits > 0 { bits.write_bits(seq.of_extra, seq.of_bits); }
+    let bitstream_llmlof = build_bitstream_order(&encoded, &mut tans, "LL,ML,OF", |bits, seq| {
+        if seq.ll_bits > 0 {
+            bits.write_bits(seq.ll_extra, seq.ll_bits);
         }
-    );
+        if seq.ml_bits > 0 {
+            bits.write_bits(seq.ml_extra, seq.ml_bits);
+        }
+        if seq.of_bits > 0 {
+            bits.write_bits(seq.of_extra, seq.of_bits);
+        }
+    });
 
     // Order 2: OF, ML, LL (reference zstd order based on decoder source)
     let mut tans2 = InterleavedTansEncoder::new_predefined();
-    let bitstream_ofmlll = build_bitstream_order(&encoded, &mut tans2, "OF,ML,LL",
-        |bits, seq| {
-            if seq.of_bits > 0 { bits.write_bits(seq.of_extra, seq.of_bits); }
-            if seq.ml_bits > 0 { bits.write_bits(seq.ml_extra, seq.ml_bits); }
-            if seq.ll_bits > 0 { bits.write_bits(seq.ll_extra, seq.ll_bits); }
+    let bitstream_ofmlll = build_bitstream_order(&encoded, &mut tans2, "OF,ML,LL", |bits, seq| {
+        if seq.of_bits > 0 {
+            bits.write_bits(seq.of_extra, seq.of_bits);
         }
-    );
+        if seq.ml_bits > 0 {
+            bits.write_bits(seq.ml_extra, seq.ml_bits);
+        }
+        if seq.ll_bits > 0 {
+            bits.write_bits(seq.ll_extra, seq.ll_bits);
+        }
+    });
 
     // Build full frames with each bitstream and test
     println!("\n=== Testing full decompression ===");
@@ -92,7 +105,10 @@ where
     let (ll_state, of_state, ml_state) = tans.get_states();
 
     println!("\nBitstream with {} order:", order_name);
-    println!("  Final states: LL={}, OF={}, ML={}", ll_state, of_state, ml_state);
+    println!(
+        "  Final states: LL={}, OF={}, ML={}",
+        ll_state, of_state, ml_state
+    );
 
     let mut bits = FseBitWriter::new();
 

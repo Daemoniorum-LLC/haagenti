@@ -5,19 +5,40 @@ use haagenti_zstd::compress::CompressibilityFingerprint;
 fn main() {
     // Test different patterns
     let patterns: Vec<(&str, Vec<u8>)> = vec![
-        ("cyclic 0-255", (0..256).cycle().take(1000).map(|x| x as u8).collect()),
+        (
+            "cyclic 0-255",
+            (0..256).cycle().take(1000).map(|x| x as u8).collect(),
+        ),
         ("all zeros", vec![0u8; 1000]),
-        ("random-looking", (0..1000).map(|i| (i * 7 % 256) as u8).collect()),
-        ("text pattern", b"The quick brown fox jumps over the lazy dog. ".repeat(20)),
-        ("binary mix", (0..1000).map(|i| ((i * i) % 256) as u8).collect()),
+        (
+            "random-looking",
+            (0..1000).map(|i| (i * 7 % 256) as u8).collect(),
+        ),
+        (
+            "text pattern",
+            b"The quick brown fox jumps over the lazy dog. ".repeat(20),
+        ),
+        (
+            "binary mix",
+            (0..1000).map(|i| ((i * i) % 256) as u8).collect(),
+        ),
     ];
 
-    println!("{:20} {:>8} {:>12} {:>15}", "Pattern", "Size", "Entropy", "Pattern Type");
+    println!(
+        "{:20} {:>8} {:>12} {:>15}",
+        "Pattern", "Size", "Entropy", "Pattern Type"
+    );
     println!("{:-<60}", "");
 
     for (name, data) in &patterns {
         let fp = CompressibilityFingerprint::analyze(data);
-        println!("{:20} {:8} {:12.2} {:15?}", name, data.len(), fp.entropy, fp.pattern);
+        println!(
+            "{:20} {:8} {:12.2} {:15?}",
+            name,
+            data.len(),
+            fp.entropy,
+            fp.pattern
+        );
     }
 
     println!("\n=== For 1000-byte cyclic pattern ===");

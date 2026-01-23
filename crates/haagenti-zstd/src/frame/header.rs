@@ -25,7 +25,9 @@ impl FrameDescriptor {
     pub fn new(byte: u8) -> Result<Self> {
         // Check reserved bit (bit 3)
         if byte & 0x08 != 0 {
-            return Err(Error::corrupted("Reserved bit in frame descriptor must be 0"));
+            return Err(Error::corrupted(
+                "Reserved bit in frame descriptor must be 0",
+            ));
         }
 
         Ok(Self { raw: byte })
@@ -127,7 +129,9 @@ impl FrameHeader {
         // Parse window descriptor if present
         let window_size = if descriptor.has_window_descriptor() {
             if data.len() < offset + 1 {
-                return Err(Error::corrupted("Frame header truncated at window descriptor"));
+                return Err(Error::corrupted(
+                    "Frame header truncated at window descriptor",
+                ));
             }
             let window_byte = data[offset];
             offset += 1;
@@ -154,7 +158,9 @@ impl FrameHeader {
         let fcs_bytes = descriptor.frame_content_size_bytes();
         let frame_content_size = if fcs_bytes > 0 {
             if data.len() < offset + fcs_bytes {
-                return Err(Error::corrupted("Frame header truncated at frame content size"));
+                return Err(Error::corrupted(
+                    "Frame header truncated at frame content size",
+                ));
             }
             let mut fcs = Self::read_le_uint(&data[offset..], fcs_bytes)?;
             // For 2-byte FCS, add 256
@@ -222,8 +228,8 @@ impl FrameHeader {
         }
 
         let mut result = 0u64;
-        for i in 0..size {
-            result |= (data[i] as u64) << (8 * i);
+        for (i, &byte) in data.iter().enumerate().take(size) {
+            result |= (byte as u64) << (8 * i);
         }
         Ok(result)
     }
@@ -380,10 +386,7 @@ mod tests {
         ];
         let header = FrameHeader::parse(&data).unwrap();
 
-        assert_eq!(
-            header.frame_content_size,
-            Some(0x0807060504030201)
-        );
+        assert_eq!(header.frame_content_size, Some(0x0807060504030201));
     }
 
     #[test]

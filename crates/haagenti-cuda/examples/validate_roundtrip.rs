@@ -36,8 +36,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("Low Retention (576x576)", 576, 576, 0.10),
     ];
 
-    println!("{:30} {:>10} {:>10} {:>10} {:>10} {:>10}",
-             "Test Case", "Elements", "Retention", "Cosine", "MSE", "Status");
+    println!(
+        "{:30} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Test Case", "Elements", "Retention", "Cosine", "MSE", "Status"
+    );
     println!("{}", "-".repeat(85));
 
     let mut all_passed = true;
@@ -80,8 +82,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             all_passed = false;
         }
 
-        println!("{:30} {:>10} {:>10.0}% {:>10.4} {:>10.2e} {:>10}",
-                 name, width * height, retention * 100.0, cosine, mse, status);
+        println!(
+            "{:30} {:>10} {:>10.0}% {:>10.4} {:>10.2e} {:>10}",
+            name,
+            width * height,
+            retention * 100.0,
+            cosine,
+            mse,
+            status
+        );
     }
 
     println!();
@@ -91,9 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("---------------------");
 
     let bench_sizes = [
-        (576, 576),    // SmolLM attention
-        (1536, 576),   // SmolLM MLP
-        (4096, 4096),  // Large LLM
+        (576, 576),   // SmolLM attention
+        (1536, 576),  // SmolLM MLP
+        (4096, 4096), // Large LLM
     ];
 
     for (width, height) in bench_sizes {
@@ -125,8 +134,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let dct_throughput = bytes / dct_time.as_secs_f64() / 1e6;
         let idct_throughput = bytes / idct_time.as_secs_f64() / 1e6;
 
-        println!("  {}x{}: DCT {:.1} MB/s, IDCT {:.1} MB/s",
-                 width, height, dct_throughput, idct_throughput);
+        println!(
+            "  {}x{}: DCT {:.1} MB/s, IDCT {:.1} MB/s",
+            width, height, dct_throughput, idct_throughput
+        );
     }
 
     println!();

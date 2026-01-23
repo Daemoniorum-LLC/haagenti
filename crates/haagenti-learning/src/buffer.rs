@@ -1,10 +1,9 @@
 //! Experience replay buffer for online learning
 
-use crate::{LearningError, Result};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use rand::{Rng, SeedableRng};
-use rand::rngs::StdRng;
 
 /// Buffer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

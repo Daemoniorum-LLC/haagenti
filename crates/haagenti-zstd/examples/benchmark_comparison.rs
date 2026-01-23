@@ -39,8 +39,10 @@ fn main() {
             let ratio = result.our_throughput / result.ref_throughput * 100.0;
             let ratio_str = format!("{:>6.0}%", ratio);
 
-            println!("│ {:15} │ {:>6} │ {:>12} │ {:>12} │ {:>12} │ {:>15} │",
-                     name, size_str, ref_tp, our_tp, spec_tp, ratio_str);
+            println!(
+                "│ {:15} │ {:>6} │ {:>12} │ {:>12} │ {:>12} │ {:>15} │",
+                name, size_str, ref_tp, our_tp, spec_tp, ratio_str
+            );
         }
         println!("├─────────────────┼────────┼──────────────┼──────────────┼──────────────┼─────────────────┤");
     }
@@ -64,8 +66,10 @@ fn main() {
             let ratio = result.our_throughput / result.ref_throughput * 100.0;
             let ratio_str = format!("{:>6.0}%", ratio);
 
-            println!("│ {:15} │ {:>6} │ {:>12} │ {:>12} │ {:>31} │",
-                     name, size_str, ref_tp, our_tp, ratio_str);
+            println!(
+                "│ {:15} │ {:>6} │ {:>12} │ {:>12} │ {:>31} │",
+                name, size_str, ref_tp, our_tp, ratio_str
+            );
         }
         println!("├─────────────────┼────────┼──────────────┼──────────────┼─────────────────────────────────┤");
     }
@@ -94,8 +98,10 @@ fn main() {
                 format!("{:>6.1}%", diff)
             };
 
-            println!("│ {:15} │ {:>6} │ {:>12} │ {:>12} │ {:>12} │ {:>15} │",
-                     name, size_str, ref_ratio, our_ratio, spec_ratio, diff_str);
+            println!(
+                "│ {:15} │ {:>6} │ {:>12} │ {:>12} │ {:>12} │ {:>15} │",
+                name, size_str, ref_ratio, our_ratio, spec_ratio, diff_str
+            );
         }
         println!("├─────────────────┼────────┼──────────────┼──────────────┼──────────────┼─────────────────┤");
     }
@@ -133,9 +139,18 @@ fn main() {
     let avg_decompress_ratio = (total_our_decompress / total_ref_decompress) * 100.0;
 
     println!();
-    println!("  Average Compression Throughput vs Reference:   {:>6.1}%", avg_compress_ratio);
-    println!("  Average Speculative Throughput vs Reference:   {:>6.1}%", avg_spec_ratio);
-    println!("  Average Decompression Throughput vs Reference: {:>6.1}%", avg_decompress_ratio);
+    println!(
+        "  Average Compression Throughput vs Reference:   {:>6.1}%",
+        avg_compress_ratio
+    );
+    println!(
+        "  Average Speculative Throughput vs Reference:   {:>6.1}%",
+        avg_spec_ratio
+    );
+    println!(
+        "  Average Decompression Throughput vs Reference: {:>6.1}%",
+        avg_decompress_ratio
+    );
     println!();
 
     // Feature summary
@@ -176,7 +191,8 @@ fn benchmark_compression(data: &[u8], _size: usize) -> CompressionResult {
     let ref_throughput = calculate_throughput(data.len(), iterations, ref_elapsed);
 
     // Benchmark haagenti-zstd
-    let mut ctx = haagenti_zstd::compress::CompressContext::new(haagenti_core::CompressionLevel::Fast);
+    let mut ctx =
+        haagenti_zstd::compress::CompressContext::new(haagenti_core::CompressionLevel::Fast);
     let start = Instant::now();
     for _ in 0..iterations {
         let _ = std::hint::black_box(ctx.compress(data));
@@ -204,7 +220,8 @@ fn benchmark_decompression(data: &[u8]) -> DecompressionResult {
     // Compress data first
     let ref_compressed = zstd::encode_all(std::io::Cursor::new(data), 1).unwrap();
     let our_compressed = {
-        let mut ctx = haagenti_zstd::compress::CompressContext::new(haagenti_core::CompressionLevel::Fast);
+        let mut ctx =
+            haagenti_zstd::compress::CompressContext::new(haagenti_core::CompressionLevel::Fast);
         ctx.compress(data).unwrap()
     };
 
@@ -235,7 +252,8 @@ fn benchmark_decompression(data: &[u8]) -> DecompressionResult {
 fn benchmark_ratio(data: &[u8]) -> RatioResult {
     let ref_compressed = zstd::encode_all(std::io::Cursor::new(data), 1).unwrap();
 
-    let mut ctx = haagenti_zstd::compress::CompressContext::new(haagenti_core::CompressionLevel::Fast);
+    let mut ctx =
+        haagenti_zstd::compress::CompressContext::new(haagenti_core::CompressionLevel::Fast);
     let our_compressed = ctx.compress(data).unwrap();
 
     let spec_compressor = haagenti_zstd::compress::SpeculativeCompressor::new();
@@ -275,10 +293,12 @@ fn generate_text(size: usize) -> Vec<u8> {
 }
 
 fn generate_binary(size: usize) -> Vec<u8> {
-    (0..size).map(|i| {
-        let x = (i as u64).wrapping_mul(0x5851f42d4c957f2d);
-        ((x >> 24) ^ (x >> 48)) as u8
-    }).collect()
+    (0..size)
+        .map(|i| {
+            let x = (i as u64).wrapping_mul(0x5851f42d4c957f2d);
+            ((x >> 24) ^ (x >> 48)) as u8
+        })
+        .collect()
 }
 
 fn generate_repetitive(size: usize) -> Vec<u8> {
@@ -288,8 +308,12 @@ fn generate_repetitive(size: usize) -> Vec<u8> {
 fn generate_high_entropy(size: usize) -> Vec<u8> {
     // Pseudo-random but deterministic
     let mut state: u64 = 0x853c49e6748fea9b;
-    (0..size).map(|_| {
-        state = state.wrapping_mul(0x5851f42d4c957f2d).wrapping_add(0x14057b7ef767814f);
-        ((state >> 33) ^ state) as u8
-    }).collect()
+    (0..size)
+        .map(|_| {
+            state = state
+                .wrapping_mul(0x5851f42d4c957f2d)
+                .wrapping_add(0x14057b7ef767814f);
+            ((state >> 33) ^ state) as u8
+        })
+        .collect()
 }

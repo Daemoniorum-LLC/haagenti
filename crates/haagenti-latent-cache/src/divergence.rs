@@ -103,7 +103,8 @@ impl DivergencePredictor {
         // Estimate quality impact
         // Later divergence = higher quality, but also higher risk if similarity is wrong
         let quality_risk = (1.0 - similarity) * self.coefficients.quality_penalty;
-        let estimated_quality = 1.0 - quality_risk * (diverge_step as f32 / self.total_steps as f32);
+        let estimated_quality =
+            1.0 - quality_risk * (diverge_step as f32 / self.total_steps as f32);
 
         // Confidence is based on similarity and how conservative the prediction is
         let confidence = similarity * (1.0 - diverge_step as f32 / self.total_steps as f32 * 0.3);
@@ -120,21 +121,12 @@ impl DivergencePredictor {
     /// Get recommended checkpoints for caching
     pub fn recommended_checkpoints(&self) -> Vec<u32> {
         // Cache at strategic points that cover different similarity levels
-        let mut checkpoints = Vec::new();
-
-        // Early checkpoint (for high similarity matches)
-        checkpoints.push(self.total_steps / 4);
-
-        // Mid checkpoint (for medium similarity)
-        checkpoints.push(self.total_steps / 2);
-
-        // Late checkpoint (for lower similarity)
-        checkpoints.push(self.total_steps * 3 / 4);
-
-        // Near-final checkpoint (for very high similarity)
-        checkpoints.push(self.total_steps - 2);
-
-        checkpoints
+        vec![
+            self.total_steps / 4,     // Early (for high similarity matches)
+            self.total_steps / 2,     // Mid (for medium similarity)
+            self.total_steps * 3 / 4, // Late (for lower similarity)
+            self.total_steps - 2,     // Near-final (for very high similarity)
+        ]
     }
 
     /// Update coefficients based on observed quality
@@ -142,7 +134,7 @@ impl DivergencePredictor {
         // Simple online learning
         let predicted = self.predict(similarity);
         if let Some(pred) = predicted {
-            let step_error = (pred.step as f32 - used_step as f32).abs();
+            let _step_error = (pred.step as f32 - used_step as f32).abs();
             let quality_error = (pred.estimated_quality - actual_quality).abs();
 
             // Adjust quality penalty based on observed error
@@ -185,7 +177,7 @@ mod tests {
         let checkpoints = predictor.recommended_checkpoints();
 
         assert_eq!(checkpoints.len(), 4);
-        assert!(checkpoints.contains(&5));  // 20/4
+        assert!(checkpoints.contains(&5)); // 20/4
         assert!(checkpoints.contains(&10)); // 20/2
         assert!(checkpoints.contains(&15)); // 20*3/4
         assert!(checkpoints.contains(&18)); // 20-2

@@ -1,6 +1,6 @@
 //! WebGPU context and device management
 
-use crate::{Result, WebGpuError};
+use crate::Result;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for WebGPU context
@@ -117,9 +117,8 @@ impl WebGpuContext {
         use wasm_bindgen::JsCast;
         use web_sys::window;
 
-        let window = window().ok_or_else(|| {
-            WebGpuError::NotAvailable("No window object".into())
-        })?;
+        let window =
+            window().ok_or_else(|| WebGpuError::NotAvailable("No window object".into()))?;
 
         let navigator = window.navigator();
 
@@ -129,9 +128,7 @@ impl WebGpuContext {
         // Request adapter
         let adapter_options = web_sys::GpuRequestAdapterOptions::new();
         if self.config.high_performance {
-            adapter_options.set_power_preference(
-                web_sys::GpuPowerPreference::HighPerformance
-            );
+            adapter_options.set_power_preference(web_sys::GpuPowerPreference::HighPerformance);
         }
 
         let adapter_promise = gpu.request_adapter_with_options(&adapter_options);
@@ -188,15 +185,15 @@ impl WebGpuContext {
 
         // For 1D compute, use single dimension
         let workgroup_size = max_x.min(256);
-        let num_workgroups = (total_elements + workgroup_size - 1) / workgroup_size;
+        let num_workgroups = total_elements.div_ceil(workgroup_size);
 
         (num_workgroups, 1, 1)
     }
 
     /// Estimate memory usage for a model
     pub fn estimate_memory_usage(&self, model_params: u64, precision_bits: u32) -> u64 {
-        let bytes_per_param = precision_bits as u64 / 8;
-        model_params * bytes_per_param
+        // Multiply first to avoid integer division truncation for sub-byte precisions
+        model_params * precision_bits as u64 / 8
     }
 
     /// Check if model fits in GPU memory
@@ -207,6 +204,7 @@ impl WebGpuContext {
 }
 
 /// Browser detection utilities
+#[allow(dead_code)]
 pub mod browser {
     /// Check if running in browser environment
     pub fn is_browser() -> bool {

@@ -130,19 +130,19 @@ impl LoraAdapter {
 
         // Compute A @ x (in_dim x rank) @ (in_dim,) = (rank,)
         let mut ax = vec![0.0; self.rank];
-        for r in 0..self.rank {
-            for i in 0..self.in_dim {
-                ax[r] += self.lora_a[i * self.rank + r] * x[i];
+        for (r, ax_r) in ax.iter_mut().enumerate() {
+            for (i, &x_i) in x.iter().enumerate() {
+                *ax_r += self.lora_a[i * self.rank + r] * x_i;
             }
         }
 
         // Compute B @ (A @ x) (rank x out_dim) @ (rank,) = (out_dim,)
         let mut result = vec![0.0; self.out_dim];
-        for o in 0..self.out_dim {
-            for r in 0..self.rank {
-                result[o] += self.lora_b[r * self.out_dim + o] * ax[r];
+        for (o, result_o) in result.iter_mut().enumerate() {
+            for (r, &ax_r) in ax.iter().enumerate() {
+                *result_o += self.lora_b[r * self.out_dim + o] * ax_r;
             }
-            result[o] *= self.scaling;
+            *result_o *= self.scaling;
         }
 
         Ok(result)
@@ -248,7 +248,9 @@ impl AdapterRegistry {
 
     /// Get active adapter
     pub fn active(&self) -> Option<&LoraAdapter> {
-        self.active.as_ref().and_then(|name| self.adapters.get(name))
+        self.active
+            .as_ref()
+            .and_then(|name| self.adapters.get(name))
     }
 
     /// Set active adapter
@@ -322,7 +324,11 @@ mod tests {
 
     #[test]
     fn test_lora_forward() {
-        let config = LoraConfig { rank: 2, alpha: 2.0, ..Default::default() };
+        let config = LoraConfig {
+            rank: 2,
+            alpha: 2.0,
+            ..Default::default()
+        };
         let mut adapter = LoraAdapter::new("test", "layer", 4, 3, &config);
 
         // Set known values

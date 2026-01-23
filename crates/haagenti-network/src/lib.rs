@@ -42,18 +42,18 @@ mod loader;
 mod priority;
 mod scheduler;
 
-pub use cache::{FragmentCache, CacheConfig, CacheEntry, CacheStats};
-pub use client::{HttpClient, ClientConfig, RangeRequest};
-pub use config::{NetworkConfig, CdnEndpoint, RetryConfig};
+pub use cache::{CacheConfig, CacheEntry, CacheStats, FragmentCache};
+pub use client::{ClientConfig, HttpClient, RangeRequest};
+pub use config::{CdnEndpoint, NetworkConfig, RetryConfig};
 pub use error::{NetworkError, Result};
-pub use loader::{NetworkLoader, LoadRequest, LoadResult, StreamingLoader};
-pub use priority::{Priority, PriorityQueue, PrioritizedFragment};
-pub use scheduler::{Scheduler, SchedulerConfig, BandwidthMonitor};
+pub use loader::{LoadRequest, LoadResult, NetworkLoader, StreamingLoader};
+pub use priority::{PrioritizedFragment, Priority, PriorityQueue};
+pub use scheduler::{BandwidthMonitor, Scheduler, SchedulerConfig};
 
 /// Prelude for common imports
 pub mod prelude {
     pub use super::{
-        NetworkLoader, NetworkConfig, CdnEndpoint, LoadRequest, LoadResult,
-        Priority, FragmentCache, Result,
+        CdnEndpoint, FragmentCache, LoadRequest, LoadResult, NetworkConfig, NetworkLoader,
+        Priority, Result,
     };
 }

@@ -92,7 +92,8 @@ impl Compressor for BrotliCompressor {
         let mut output = Vec::new();
 
         {
-            let mut writer = brotli::CompressorWriter::new(&mut output, BUFFER_SIZE, quality, DEFAULT_LG_WIN);
+            let mut writer =
+                brotli::CompressorWriter::new(&mut output, BUFFER_SIZE, quality, DEFAULT_LG_WIN);
             writer
                 .write_all(input)
                 .map_err(|e| Error::algorithm("brotli", e.to_string()))?;
@@ -203,7 +204,8 @@ impl Compressor for BrotliCodec {
         let mut output = Vec::new();
 
         {
-            let mut writer = brotli::CompressorWriter::new(&mut output, BUFFER_SIZE, quality, DEFAULT_LG_WIN);
+            let mut writer =
+                brotli::CompressorWriter::new(&mut output, BUFFER_SIZE, quality, DEFAULT_LG_WIN);
             writer
                 .write_all(input)
                 .map_err(|e| Error::algorithm("brotli", e.to_string()))?;
@@ -315,7 +317,8 @@ mod tests {
 
     #[test]
     fn test_compression_levels() {
-        let input = b"Testing compression levels for Brotli algorithm with some repetitive content.";
+        let input =
+            b"Testing compression levels for Brotli algorithm with some repetitive content.";
 
         for level in [
             CompressionLevel::None,

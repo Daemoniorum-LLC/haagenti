@@ -2,17 +2,17 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status, Streaming};
 
-use haagenti_core::{Compressor, Decompressor, CompressionLevel as HLevel};
-use haagenti_zstd::{ZstdCodec, ZstdDictionary, ZstdDictCompressor, ZstdDictDecompressor};
+use haagenti_core::{CompressionLevel as HLevel, Compressor, Decompressor};
+use haagenti_zstd::{ZstdCodec, ZstdDictCompressor, ZstdDictDecompressor, ZstdDictionary};
 
-use crate::proto::*;
 use crate::proto::compression_service_server::CompressionService;
+use crate::proto::*;
 
 /// Service statistics
 pub struct ServiceStats {
@@ -92,14 +92,19 @@ impl CompressionService for CompressionServiceImpl {
         // Currently only Zstd is fully implemented
         let codec = ZstdCodec::with_level(level);
 
-        let compressed = codec.compress(&req.data)
+        let compressed = codec
+            .compress(&req.data)
             .map_err(|e| Status::internal(format!("Compression failed: {}", e)))?;
 
         let elapsed = start.elapsed();
 
         // Update stats
-        self.stats.total_compressed.fetch_add(req.data.len() as u64, Ordering::Relaxed);
-        self.stats.total_output.fetch_add(compressed.len() as u64, Ordering::Relaxed);
+        self.stats
+            .total_compressed
+            .fetch_add(req.data.len() as u64, Ordering::Relaxed);
+        self.stats
+            .total_output
+            .fetch_add(compressed.len() as u64, Ordering::Relaxed);
         self.stats.compress_ops.fetch_add(1, Ordering::Relaxed);
 
         let checksum = if req.calculate_checksum {
@@ -140,13 +145,16 @@ impl CompressionService for CompressionServiceImpl {
         }
 
         let codec = ZstdCodec::new();
-        let decompressed = codec.decompress(&req.compressed_data)
+        let decompressed = codec
+            .decompress(&req.compressed_data)
             .map_err(|e| Status::internal(format!("Decompression failed: {}", e)))?;
 
         let elapsed = start.elapsed();
 
         // Update stats
-        self.stats.total_decompressed.fetch_add(decompressed.len() as u64, Ordering::Relaxed);
+        self.stats
+            .total_decompressed
+            .fetch_add(decompressed.len() as u64, Ordering::Relaxed);
         self.stats.decompress_ops.fetch_add(1, Ordering::Relaxed);
 
         Ok(Response::new(DecompressResponse {
@@ -157,9 +165,8 @@ impl CompressionService for CompressionServiceImpl {
         }))
     }
 
-    type CompressStreamStream = std::pin::Pin<
-        Box<dyn futures::Stream<Item = Result<CompressedChunk, Status>> + Send>
-    >;
+    type CompressStreamStream =
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<CompressedChunk, Status>> + Send>>;
 
     async fn compress_stream(
         &self,
@@ -199,9 +206,8 @@ impl CompressionService for CompressionServiceImpl {
         Ok(Response::new(Box::pin(output)))
     }
 
-    type DecompressStreamStream = std::pin::Pin<
-        Box<dyn futures::Stream<Item = Result<DecompressedChunk, Status>> + Send>
-    >;
+    type DecompressStreamStream =
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<DecompressedChunk, Status>> + Send>>;
 
     async fn decompress_stream(
         &self,
@@ -279,13 +285,18 @@ impl CompressionService for CompressionServiceImpl {
             .map_err(|e| Status::internal(format!("Failed to parse dictionary: {}", e)))?;
 
         let compressor = ZstdDictCompressor::new(dictionary);
-        let compressed = compressor.compress(&req.data)
+        let compressed = compressor
+            .compress(&req.data)
             .map_err(|e| Status::internal(format!("Compression failed: {}", e)))?;
 
         let elapsed = start.elapsed();
 
-        self.stats.total_compressed.fetch_add(req.data.len() as u64, Ordering::Relaxed);
-        self.stats.total_output.fetch_add(compressed.len() as u64, Ordering::Relaxed);
+        self.stats
+            .total_compressed
+            .fetch_add(req.data.len() as u64, Ordering::Relaxed);
+        self.stats
+            .total_output
+            .fetch_add(compressed.len() as u64, Ordering::Relaxed);
         self.stats.compress_ops.fetch_add(1, Ordering::Relaxed);
 
         let ratio = if !compressed.is_empty() {
@@ -315,12 +326,15 @@ impl CompressionService for CompressionServiceImpl {
             .map_err(|e| Status::internal(format!("Failed to parse dictionary: {}", e)))?;
 
         let decompressor = ZstdDictDecompressor::new(dictionary);
-        let decompressed = decompressor.decompress(&req.compressed_data)
+        let decompressed = decompressor
+            .decompress(&req.compressed_data)
             .map_err(|e| Status::internal(format!("Decompression failed: {}", e)))?;
 
         let elapsed = start.elapsed();
 
-        self.stats.total_decompressed.fetch_add(decompressed.len() as u64, Ordering::Relaxed);
+        self.stats
+            .total_decompressed
+            .fetch_add(decompressed.len() as u64, Ordering::Relaxed);
         self.stats.decompress_ops.fetch_add(1, Ordering::Relaxed);
 
         Ok(Response::new(DecompressResponse {
@@ -364,7 +378,8 @@ impl CompressionService for CompressionServiceImpl {
         let start = Instant::now();
 
         let codec = ZstdCodec::new();
-        let compressed = codec.compress(&req.data)
+        let compressed = codec
+            .compress(&req.data)
             .map_err(|e| Status::internal(format!("Compression failed: {}", e)))?;
 
         let elapsed = start.elapsed();

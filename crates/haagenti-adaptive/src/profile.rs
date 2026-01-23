@@ -157,11 +157,12 @@ impl PrecisionProfile {
 }
 
 /// Preset profiles for common use cases
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ProfilePreset {
     /// Maximum performance, lower quality
     Performance,
     /// Balanced performance and quality
+    #[default]
     Balanced,
     /// Maximum quality, slower
     Quality,
@@ -177,19 +178,33 @@ impl ProfilePreset {
     /// Build the profile for this preset
     pub fn build(self) -> PrecisionProfile {
         match self {
-            ProfilePreset::Performance => PrecisionProfile::new(
-                "Performance",
-                "Maximum speed with aggressive INT4 usage",
-            )
-            .add_zone(0.0, 0.4, Precision::INT4, "High noise masks quantization errors")
-            .add_zone(0.4, 0.7, Precision::INT8, "Medium noise tolerates INT8")
-            .add_zone(0.7, 1.0, Precision::FP16, "Low noise requires precision"),
+            ProfilePreset::Performance => {
+                PrecisionProfile::new("Performance", "Maximum speed with aggressive INT4 usage")
+                    .add_zone(
+                        0.0,
+                        0.4,
+                        Precision::INT4,
+                        "High noise masks quantization errors",
+                    )
+                    .add_zone(0.4, 0.7, Precision::INT8, "Medium noise tolerates INT8")
+                    .add_zone(0.7, 1.0, Precision::FP16, "Low noise requires precision")
+            }
 
             ProfilePreset::Balanced => {
                 PrecisionProfile::new("Balanced", "Good balance of speed and quality")
                     .add_zone(0.0, 0.25, Precision::INT4, "Early steps: high noise")
-                    .add_zone(0.25, 0.5, Precision::INT8, "Mid-early steps: moderate noise")
-                    .add_zone(0.5, 1.0, Precision::FP16, "Later steps: detail preservation")
+                    .add_zone(
+                        0.25,
+                        0.5,
+                        Precision::INT8,
+                        "Mid-early steps: moderate noise",
+                    )
+                    .add_zone(
+                        0.5,
+                        1.0,
+                        Precision::FP16,
+                        "Later steps: detail preservation",
+                    )
             }
 
             ProfilePreset::Quality => {
@@ -198,12 +213,10 @@ impl ProfilePreset {
                     .add_zone(0.15, 1.0, Precision::FP16, "FP16 for most steps")
             }
 
-            ProfilePreset::LowVram => {
-                PrecisionProfile::new("LowVRAM", "Aggressive memory savings")
-                    .add_zone(0.0, 0.5, Precision::INT4, "Extended INT4 zone")
-                    .add_zone(0.5, 0.85, Precision::INT8, "INT8 for refinement")
-                    .add_zone(0.85, 1.0, Precision::FP16, "FP16 only for final details")
-            }
+            ProfilePreset::LowVram => PrecisionProfile::new("LowVRAM", "Aggressive memory savings")
+                .add_zone(0.0, 0.5, Precision::INT4, "Extended INT4 zone")
+                .add_zone(0.5, 0.85, Precision::INT8, "INT8 for refinement")
+                .add_zone(0.85, 1.0, Precision::FP16, "FP16 only for final details"),
 
             ProfilePreset::Conservative => {
                 PrecisionProfile::new("Conservative", "Minimal quantization for maximum quality")
@@ -245,12 +258,6 @@ impl ProfilePreset {
             ProfilePreset::Conservative,
             ProfilePreset::NoiseAdaptive,
         ]
-    }
-}
-
-impl Default for ProfilePreset {
-    fn default() -> Self {
-        ProfilePreset::Balanced
     }
 }
 

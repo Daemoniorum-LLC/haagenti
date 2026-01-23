@@ -29,7 +29,10 @@ fn main() {
             } else {
                 println!("MISMATCH!");
                 println!("Expected: {:?}", String::from_utf8_lossy(&input[..20]));
-                println!("Got:      {:?}", String::from_utf8_lossy(&d[..20.min(d.len())]));
+                println!(
+                    "Got:      {:?}",
+                    String::from_utf8_lossy(&d[..20.min(d.len())])
+                );
             }
         }
         Err(e) => {

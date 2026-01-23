@@ -8,8 +8,12 @@ fn main() {
     // Simple test pattern
     let mut data = Vec::new();
     for i in 0..100 {
-        let line = format!("[2024-01-{:02} 10:{:02}:00] INFO Processing request #{}\n",
-                          (i % 28) + 1, i % 60, i * 1000);
+        let line = format!(
+            "[2024-01-{:02} 10:{:02}:00] INFO Processing request #{}\n",
+            (i % 28) + 1,
+            i % 60,
+            i * 1000
+        );
         data.extend_from_slice(line.as_bytes());
     }
 

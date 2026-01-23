@@ -4,9 +4,8 @@ use haagenti_zstd::block::Sequence;
 use haagenti_zstd::compress::EncodedSequence;
 use haagenti_zstd::fse::{
     BitReader, FseBitWriter, FseDecoder, FseTable, InterleavedTansEncoder,
-    LITERAL_LENGTH_ACCURACY_LOG, LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
-    MATCH_LENGTH_ACCURACY_LOG, MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
-    OFFSET_DEFAULT_DISTRIBUTION,
+    LITERAL_LENGTH_ACCURACY_LOG, LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,
+    MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG, OFFSET_DEFAULT_DISTRIBUTION,
 };
 
 fn main() {
@@ -33,8 +32,10 @@ fn main() {
     // Note: offset_value=1 → of_code=0 (since 1 = (1<<0) + 0)
     let sequences = vec![Sequence::new(4, 2, 36), Sequence::new(8, 1, 16)];
 
-    let encoded: Vec<EncodedSequence> =
-        sequences.iter().map(EncodedSequence::from_sequence).collect();
+    let encoded: Vec<EncodedSequence> = sequences
+        .iter()
+        .map(EncodedSequence::from_sequence)
+        .collect();
 
     println!("Input sequences:");
     for (i, enc) in encoded.iter().enumerate() {
@@ -52,10 +53,7 @@ fn main() {
     println!("\n=== ENCODING ===");
     let mut tans = InterleavedTansEncoder::new_predefined();
     let (ll_log, of_log, ml_log) = tans.accuracy_logs();
-    println!(
-        "Accuracy logs: LL={}, OF={}, ML={}",
-        ll_log, of_log, ml_log
-    );
+    println!("Accuracy logs: LL={}, OF={}, ML={}", ll_log, of_log, ml_log);
 
     // Init with LAST sequence
     let last = &encoded[1];
@@ -93,7 +91,10 @@ fn main() {
         "  FSE bits: LL({}, {} bits), OF({}, {} bits), ML({}, {} bits)",
         fse_bits[0].0, fse_bits[0].1, fse_bits[1].0, fse_bits[1].1, fse_bits[2].0, fse_bits[2].1
     );
-    println!("  New states: LL={}, OF={}, ML={}", ll_state, of_state, ml_state);
+    println!(
+        "  New states: LL={}, OF={}, ML={}",
+        ll_state, of_state, ml_state
+    );
     println!(
         "  Verify: LL state {} -> symbol {}",
         ll_state,
@@ -214,9 +215,17 @@ fn main() {
     bit_pos += ll_log as usize;
 
     let bitstream = bits.finish();
-    println!("\nFinal bitstream ({} bytes): {:02x?}", bitstream.len(), bitstream);
+    println!(
+        "\nFinal bitstream ({} bytes): {:02x?}",
+        bitstream.len(),
+        bitstream
+    );
     println!("Total data bits: {}", bit_pos);
-    println!("With sentinel: {} bits = {} bytes", bit_pos + 1, (bit_pos + 8) / 8);
+    println!(
+        "With sentinel: {} bits = {} bytes",
+        bit_pos + 1,
+        (bit_pos + 8) / 8
+    );
 
     // Print binary representation
     print!("Binary (LSB first): ");
@@ -264,31 +273,49 @@ fn main() {
         ml_decoder.peek_symbol(),
         encoded[0].ml_code
     );
-    println!("Bits remaining after states: {}", bits_reader.bits_remaining());
+    println!(
+        "Bits remaining after states: {}",
+        bits_reader.bits_remaining()
+    );
 
     // Switch to LSB mode for extras
     bits_reader.switch_to_lsb_mode().unwrap();
-    println!("Bits remaining in LSB mode: {}", bits_reader.bits_remaining());
+    println!(
+        "Bits remaining in LSB mode: {}",
+        bits_reader.bits_remaining()
+    );
 
     // Decode seq[0]
     println!("\nDecoding seq[0]:");
     let ll0_code = ll_decoder.peek_symbol();
     let of0_code = of_decoder.peek_symbol();
     let ml0_code = ml_decoder.peek_symbol();
-    println!("  Codes from states: LL={}, OF={}, ML={}", ll0_code, of0_code, ml0_code);
+    println!(
+        "  Codes from states: LL={}, OF={}, ML={}",
+        ll0_code, of0_code, ml0_code
+    );
 
     // Read extras
     if seq0.ll_bits > 0 {
         let val = bits_reader.read_bits(seq0.ll_bits as usize).unwrap();
-        println!("  Read LL extra: {} ({} bits), expected {}", val, seq0.ll_bits, seq0.ll_extra);
+        println!(
+            "  Read LL extra: {} ({} bits), expected {}",
+            val, seq0.ll_bits, seq0.ll_extra
+        );
     }
     if seq0.ml_bits > 0 {
         let val = bits_reader.read_bits(seq0.ml_bits as usize).unwrap();
-        println!("  Read ML extra: {} ({} bits), expected {}", val, seq0.ml_bits, seq0.ml_extra);
+        println!(
+            "  Read ML extra: {} ({} bits), expected {}",
+            val, seq0.ml_bits, seq0.ml_extra
+        );
     }
     if seq0.of_bits > 0 {
         let val = bits_reader.read_bits(seq0.of_bits as usize).unwrap();
-        println!("  Read OF extra: {} ({} bits), expected {}", val, seq0.of_bits, seq0.of_extra);
+        println!(
+            "  Read OF extra: {} ({} bits), expected {}",
+            val, seq0.of_bits, seq0.of_extra
+        );
     }
 
     // Update states for next sequence
@@ -298,15 +325,21 @@ fn main() {
     let of_entry = of_table.decode(of_decoder.state());
     println!(
         "    LL: state={}, needs {} bits, baseline={}",
-        ll_decoder.state(), ll_entry.num_bits, ll_entry.baseline
+        ll_decoder.state(),
+        ll_entry.num_bits,
+        ll_entry.baseline
     );
     println!(
         "    ML: state={}, needs {} bits, baseline={}",
-        ml_decoder.state(), ml_entry.num_bits, ml_entry.baseline
+        ml_decoder.state(),
+        ml_entry.num_bits,
+        ml_entry.baseline
     );
     println!(
         "    OF: state={}, needs {} bits, baseline={}",
-        of_decoder.state(), of_entry.num_bits, of_entry.baseline
+        of_decoder.state(),
+        of_entry.num_bits,
+        of_entry.baseline
     );
 
     ll_decoder.update_state(&mut bits_reader).unwrap();
@@ -321,9 +354,12 @@ fn main() {
     );
     println!(
         "  New symbols: LL={} (expected {}), OF={} (expected {}), ML={} (expected {})",
-        ll_decoder.peek_symbol(), last.ll_code,
-        of_decoder.peek_symbol(), last.of_code,
-        ml_decoder.peek_symbol(), last.ml_code
+        ll_decoder.peek_symbol(),
+        last.ll_code,
+        of_decoder.peek_symbol(),
+        last.of_code,
+        ml_decoder.peek_symbol(),
+        last.ml_code
     );
     println!("Bits remaining: {}", bits_reader.bits_remaining());
 
@@ -332,20 +368,32 @@ fn main() {
     let ll1_code = ll_decoder.peek_symbol();
     let of1_code = of_decoder.peek_symbol();
     let ml1_code = ml_decoder.peek_symbol();
-    println!("  Codes from states: LL={}, OF={}, ML={}", ll1_code, of1_code, ml1_code);
+    println!(
+        "  Codes from states: LL={}, OF={}, ML={}",
+        ll1_code, of1_code, ml1_code
+    );
 
     // Read extras for last seq
     if last.ll_bits > 0 {
         let val = bits_reader.read_bits(last.ll_bits as usize).unwrap();
-        println!("  Read LL extra: {} ({} bits), expected {}", val, last.ll_bits, last.ll_extra);
+        println!(
+            "  Read LL extra: {} ({} bits), expected {}",
+            val, last.ll_bits, last.ll_extra
+        );
     }
     if last.ml_bits > 0 {
         let val = bits_reader.read_bits(last.ml_bits as usize).unwrap();
-        println!("  Read ML extra: {} ({} bits), expected {}", val, last.ml_bits, last.ml_extra);
+        println!(
+            "  Read ML extra: {} ({} bits), expected {}",
+            val, last.ml_bits, last.ml_extra
+        );
     }
     if last.of_bits > 0 {
         let val = bits_reader.read_bits(last.of_bits as usize).unwrap();
-        println!("  Read OF extra: {} ({} bits), expected {}", val, last.of_bits, last.of_extra);
+        println!(
+            "  Read OF extra: {} ({} bits), expected {}",
+            val, last.of_bits, last.of_extra
+        );
     }
     println!("Bits remaining: {}", bits_reader.bits_remaining());
 
@@ -368,11 +416,16 @@ fn main() {
     let ll_entry = ll_table.decode(ll_state as usize);
     println!(
         "\nLL transition from state {} (symbol {}):",
-        ll_state,
-        ll_entry.symbol
+        ll_state, ll_entry.symbol
     );
-    println!("  num_bits = {}, baseline = {}", ll_entry.num_bits, ll_entry.baseline);
-    println!("  FSE bits written: {} ({} bits)", fse_bits[0].0, fse_bits[0].1);
+    println!(
+        "  num_bits = {}, baseline = {}",
+        ll_entry.num_bits, ll_entry.baseline
+    );
+    println!(
+        "  FSE bits written: {} ({} bits)",
+        fse_bits[0].0, fse_bits[0].1
+    );
     let ll_new = ll_entry.baseline as u32 + fse_bits[0].0;
     println!(
         "  Expected new state: {} + {} = {}",

@@ -29,10 +29,10 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
 use haagenti::adaptive::AdaptiveSpectralEncoder;
-use haagenti::mixed_precision::{MixedPrecisionEncoder, MixedPrecisionDecoder};
-use haagenti::importance::{ImportanceGuidedEncoder, ImportanceGuidedDecoder, ImportanceMap};
+use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+use haagenti::importance::{ImportanceGuidedDecoder, ImportanceGuidedEncoder, ImportanceMap};
+use haagenti::mixed_precision::{MixedPrecisionDecoder, MixedPrecisionEncoder};
 use indicatif::{ProgressBar, ProgressStyle};
 
 /// Error types for model compression
@@ -50,8 +50,12 @@ impl fmt::Display for CompressionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CompressionError::ModelNotFound(model) => {
-                write!(f, "Model '{}' not found in HuggingFace cache.\n\
-                       Download with: huggingface-cli download {}", model, model)
+                write!(
+                    f,
+                    "Model '{}' not found in HuggingFace cache.\n\
+                       Download with: huggingface-cli download {}",
+                    model, model
+                )
             }
             CompressionError::FileReadError(path, err) => {
                 write!(f, "Failed to read '{}': {}", path, err)
@@ -66,7 +70,11 @@ impl fmt::Display for CompressionError {
                 write!(f, "Encoding error: {}", msg)
             }
             CompressionError::InvalidDtype(dtype) => {
-                write!(f, "Unsupported dtype '{}'. Supported: F32, F16, BF16", dtype)
+                write!(
+                    f,
+                    "Unsupported dtype '{}'. Supported: F32, F16, BF16",
+                    dtype
+                )
             }
         }
     }
@@ -109,8 +117,12 @@ fn get_layer_retention(name: &str, base_retention: f32, mode: CompressionMode) -
                 let parts: Vec<&str> = name.split('.').collect();
                 if let Some(idx_str) = parts.get(2) {
                     if let Ok(layer_idx) = idx_str.parse::<usize>() {
-                        if layer_idx == 0 || layer_idx >= 23 { return 1.0; }
-                        if layer_idx <= 2 || layer_idx >= 21 { return 0.80; }
+                        if layer_idx == 0 || layer_idx >= 23 {
+                            return 1.0;
+                        }
+                        if layer_idx <= 2 || layer_idx >= 21 {
+                            return 0.80;
+                        }
                         return base_retention;
                     }
                 }
@@ -121,10 +133,15 @@ fn get_layer_retention(name: &str, base_retention: f32, mode: CompressionMode) -
         CompressionMode::LayerType => {
             // === Critical layers: 100% retention ===
             // LayerNorm - critical for training stability
-            if name.contains("layernorm") || name.contains("layer_norm") ||
-               name.contains("ln_") || name.contains("_ln") ||
-               name.contains("norm.weight") || name.contains("input_layernorm") ||
-               name.contains("post_attention_layernorm") || name.contains("final_layernorm") {
+            if name.contains("layernorm")
+                || name.contains("layer_norm")
+                || name.contains("ln_")
+                || name.contains("_ln")
+                || name.contains("norm.weight")
+                || name.contains("input_layernorm")
+                || name.contains("post_attention_layernorm")
+                || name.contains("final_layernorm")
+            {
                 return 1.0;
             }
 
@@ -134,8 +151,11 @@ fn get_layer_retention(name: &str, base_retention: f32, mode: CompressionMode) -
             }
 
             // Embeddings - need full vocabulary precision
-            if name.contains("embed_tokens") || name.contains("wte") ||
-               name.contains("word_embed") || name.contains("token_embed") {
+            if name.contains("embed_tokens")
+                || name.contains("wte")
+                || name.contains("word_embed")
+                || name.contains("token_embed")
+            {
                 return 1.0;
             }
 
@@ -146,26 +166,41 @@ fn get_layer_retention(name: &str, base_retention: f32, mode: CompressionMode) -
 
             // === FFN/MLP: Aggressive compression (50-60% of base) ===
             // These are ~67% of model parameters and tolerate compression well
-            if name.contains("mlp.") || name.contains("feed_forward") ||
-               name.contains("ffn") || name.contains(".fc1") || name.contains(".fc2") ||
-               name.contains("up_proj") || name.contains("down_proj") ||
-               name.contains("gate_proj") || name.contains("w1.") ||
-               name.contains("w2.") || name.contains("w3.") {
+            if name.contains("mlp.")
+                || name.contains("feed_forward")
+                || name.contains("ffn")
+                || name.contains(".fc1")
+                || name.contains(".fc2")
+                || name.contains("up_proj")
+                || name.contains("down_proj")
+                || name.contains("gate_proj")
+                || name.contains("w1.")
+                || name.contains("w2.")
+                || name.contains("w3.")
+            {
                 // FFN can tolerate 50% quality per haagenti-importance
                 return (base_retention * 0.70).max(0.40);
             }
 
             // === Attention Q/K: Medium compression ===
-            if name.contains("q_proj") || name.contains("k_proj") ||
-               name.contains(".wq.") || name.contains(".wk.") ||
-               name.contains("query") || name.contains("key") {
+            if name.contains("q_proj")
+                || name.contains("k_proj")
+                || name.contains(".wq.")
+                || name.contains(".wk.")
+                || name.contains("query")
+                || name.contains("key")
+            {
                 return base_retention; // Use base retention
             }
 
             // === Attention V/O: Careful compression ===
-            if name.contains("v_proj") || name.contains("o_proj") ||
-               name.contains(".wv.") || name.contains(".wo.") ||
-               name.contains("value") || name.contains("dense") {
+            if name.contains("v_proj")
+                || name.contains("o_proj")
+                || name.contains(".wv.")
+                || name.contains(".wo.")
+                || name.contains("value")
+                || name.contains("dense")
+            {
                 return (base_retention * 1.1).min(1.0); // 10% more retention
             }
 
@@ -253,7 +288,14 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
                 if let Some(offs) = offsets {
                     let start = offs[0].as_u64().unwrap_or(0) as usize;
                     let end = offs[1].as_u64().unwrap_or(0) as usize;
-                    tensors.insert(name, TensorInfo { dtype, shape, data_offsets: (start, end) });
+                    tensors.insert(
+                        name,
+                        TensorInfo {
+                            dtype,
+                            shape,
+                            data_offsets: (start, end),
+                        },
+                    );
                 }
             }
         }
@@ -264,16 +306,19 @@ fn parse_safetensors_header(data: &[u8]) -> Result<(usize, HashMap<String, Tenso
 
 fn bytes_to_f32(data: &[u8], dtype: &str) -> Result<Vec<f32>, CompressionError> {
     match dtype {
-        "F32" => Ok(data.chunks_exact(4)
+        "F32" => Ok(data
+            .chunks_exact(4)
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect()),
-        "F16" => Ok(data.chunks_exact(2)
+        "F16" => Ok(data
+            .chunks_exact(2)
             .map(|c| {
                 let bits = u16::from_le_bytes([c[0], c[1]]);
                 half::f16::from_bits(bits).to_f32()
             })
             .collect()),
-        "BF16" => Ok(data.chunks_exact(2)
+        "BF16" => Ok(data
+            .chunks_exact(2)
             .map(|c| {
                 let bits = u16::from_le_bytes([c[0], c[1]]);
                 f32::from_bits((bits as u32) << 16)
@@ -408,20 +453,28 @@ fn compress_decompress(
             let offset = essential_start + i * 4;
             if offset + 4 <= frag0.len() {
                 all_coeffs.push(f32::from_le_bytes([
-                    frag0[offset], frag0[offset + 1], frag0[offset + 2], frag0[offset + 3]
+                    frag0[offset],
+                    frag0[offset + 1],
+                    frag0[offset + 2],
+                    frag0[offset + 3],
                 ]));
             }
         }
 
         for frag in &fragments[1..] {
             let data = &frag.data;
-            if data.len() < 8 { continue; }
+            if data.len() < 8 {
+                continue;
+            }
             let coeff_count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
             for i in 0..coeff_count {
                 let offset = 8 + i * 4;
                 if offset + 4 <= data.len() {
                     all_coeffs.push(f32::from_le_bytes([
-                        data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                        data[offset],
+                        data[offset + 1],
+                        data[offset + 2],
+                        data[offset + 3],
                     ]));
                 }
             }
@@ -440,7 +493,7 @@ fn compress_decompress(
                     let offset = essential_start + i * 4;
                     let bytes = dequantized[coeff_idx].to_le_bytes();
                     if offset + 4 <= frag0.len() {
-                        frag0[offset..offset+4].copy_from_slice(&bytes);
+                        frag0[offset..offset + 4].copy_from_slice(&bytes);
                     }
                     coeff_idx += 1;
                 }
@@ -449,14 +502,16 @@ fn compress_decompress(
 
         for frag in &mut fragments[1..] {
             let data = &mut frag.data;
-            if data.len() < 8 { continue; }
+            if data.len() < 8 {
+                continue;
+            }
             let coeff_count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
             for i in 0..coeff_count {
                 if coeff_idx < dequantized.len() {
                     let offset = 8 + i * 4;
                     let bytes = dequantized[coeff_idx].to_le_bytes();
                     if offset + 4 <= data.len() {
-                        data[offset..offset+4].copy_from_slice(&bytes);
+                        data[offset..offset + 4].copy_from_slice(&bytes);
                     }
                     coeff_idx += 1;
                 }
@@ -466,7 +521,9 @@ fn compress_decompress(
 
     // Decode
     let mut decoder = CompressiveSpectralDecoder::new();
-    decoder.add_essentials(&fragments[0]).map_err(|e| format!("{:?}", e))?;
+    decoder
+        .add_essentials(&fragments[0])
+        .map_err(|e| format!("{:?}", e))?;
     for frag in &fragments[1..] {
         decoder.add_detail(frag).map_err(|e| format!("{:?}", e))?;
     }
@@ -528,20 +585,28 @@ fn compress_decompress_adaptive(
             let offset = essential_start + i * 4;
             if offset + 4 <= frag0.len() {
                 all_coeffs.push(f32::from_le_bytes([
-                    frag0[offset], frag0[offset + 1], frag0[offset + 2], frag0[offset + 3]
+                    frag0[offset],
+                    frag0[offset + 1],
+                    frag0[offset + 2],
+                    frag0[offset + 3],
                 ]));
             }
         }
 
         for frag in &fragments[1..] {
             let data = &frag.data;
-            if data.len() < 8 { continue; }
+            if data.len() < 8 {
+                continue;
+            }
             let coeff_count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
             for i in 0..coeff_count {
                 let offset = 8 + i * 4;
                 if offset + 4 <= data.len() {
                     all_coeffs.push(f32::from_le_bytes([
-                        data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                        data[offset],
+                        data[offset + 1],
+                        data[offset + 2],
+                        data[offset + 3],
                     ]));
                 }
             }
@@ -560,7 +625,7 @@ fn compress_decompress_adaptive(
                     let offset = essential_start + i * 4;
                     let bytes = dequantized[coeff_idx].to_le_bytes();
                     if offset + 4 <= frag0.len() {
-                        frag0[offset..offset+4].copy_from_slice(&bytes);
+                        frag0[offset..offset + 4].copy_from_slice(&bytes);
                     }
                     coeff_idx += 1;
                 }
@@ -569,14 +634,16 @@ fn compress_decompress_adaptive(
 
         for frag in &mut fragments[1..] {
             let data = &mut frag.data;
-            if data.len() < 8 { continue; }
+            if data.len() < 8 {
+                continue;
+            }
             let coeff_count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
             for i in 0..coeff_count {
                 if coeff_idx < dequantized.len() {
                     let offset = 8 + i * 4;
                     let bytes = dequantized[coeff_idx].to_le_bytes();
                     if offset + 4 <= data.len() {
-                        data[offset..offset+4].copy_from_slice(&bytes);
+                        data[offset..offset + 4].copy_from_slice(&bytes);
                     }
                     coeff_idx += 1;
                 }
@@ -586,7 +653,9 @@ fn compress_decompress_adaptive(
 
     // Decode
     let mut decoder = CompressiveSpectralDecoder::new();
-    decoder.add_essentials(&fragments[0]).map_err(|e| format!("{:?}", e))?;
+    decoder
+        .add_essentials(&fragments[0])
+        .map_err(|e| format!("{:?}", e))?;
     for frag in &fragments[1..] {
         decoder.add_detail(frag).map_err(|e| format!("{:?}", e))?;
     }
@@ -631,10 +700,12 @@ fn compress_decompress_mixed_precision(
     let encoder = MixedPrecisionEncoder::new(retention, fp16_ratio);
     let decoder = MixedPrecisionDecoder::new();
 
-    let compressed = encoder.encode(&centered, width, height)
+    let compressed = encoder
+        .encode(&centered, width, height)
         .map_err(|e| format!("MixedPrecision encode failed: {:?}", e))?;
 
-    let mut reconstructed = decoder.decode(&compressed)
+    let mut reconstructed = decoder
+        .decode(&compressed)
         .map_err(|e| format!("MixedPrecision decode failed: {:?}", e))?;
 
     // Add mean back for 1D tensors
@@ -678,12 +749,14 @@ fn compress_decompress_importance(
     let tensor_retention = encoder.effective_retention(tensor_name);
 
     // Encode using importance-guided encoder
-    let compressed = encoder.encode(&centered, width, height, tensor_name)
+    let compressed = encoder
+        .encode(&centered, width, height, tensor_name)
         .map_err(|e| format!("Importance encode failed: {:?}", e))?;
 
     // Decode
     let decoder = ImportanceGuidedDecoder::new();
-    let mut reconstructed = decoder.decode(&compressed)
+    let mut reconstructed = decoder
+        .decode(&compressed)
         .map_err(|e| format!("Importance decode failed: {:?}", e))?;
 
     // If INT4 is enabled, apply additional quantization to the output
@@ -738,9 +811,14 @@ fn find_model_in_cache(model_name: &str) -> Option<Vec<PathBuf>> {
     if let Ok(entries) = fs::read_dir(&snapshot) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map(|e| e == "safetensors").unwrap_or(false) {
+            if path
+                .extension()
+                .map(|e| e == "safetensors")
+                .unwrap_or(false)
+            {
                 // Skip index files
-                if !path.file_name()
+                if !path
+                    .file_name()
                     .map(|n| n.to_string_lossy().contains("index"))
                     .unwrap_or(false)
                 {
@@ -753,7 +831,11 @@ fn find_model_in_cache(model_name: &str) -> Option<Vec<PathBuf>> {
     // Sort files for consistent ordering (model-00001, model-00002, etc.)
     files.sort();
 
-    if files.is_empty() { None } else { Some(files) }
+    if files.is_empty() {
+        None
+    } else {
+        Some(files)
+    }
 }
 
 fn main() {
@@ -802,8 +884,8 @@ fn run() -> Result<(), CompressionError> {
         .unwrap_or(0.90);
 
     // Get model name from environment or use default
-    let model_name = std::env::var("MODEL")
-        .unwrap_or_else(|_| "Qwen/Qwen2.5-0.5B-Instruct".to_string());
+    let model_name =
+        std::env::var("MODEL").unwrap_or_else(|_| "Qwen/Qwen2.5-0.5B-Instruct".to_string());
 
     // MAX_TENSORS limit for testing
     let max_tensors: Option<usize> = std::env::var("MAX_TENSORS")
@@ -814,7 +896,8 @@ fn run() -> Result<(), CompressionError> {
         .ok_or_else(|| CompressionError::ModelNotFound(model_name.clone()))?;
 
     // Use first path for display purposes
-    let display_path = input_paths.first()
+    let display_path = input_paths
+        .first()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
@@ -830,14 +913,32 @@ fn run() -> Result<(), CompressionError> {
     let output_path = PathBuf::from(format!(
         "/tmp/qwen-compressed-{}{:.0}pct{}.safetensors",
         mode_prefix,
-        if mode == CompressionMode::Adaptive { target_quality * 100.0 } else { base_retention * 100.0 },
-        if use_int4 && mode != CompressionMode::MixedPrecision && mode != CompressionMode::Importance { "-int4" }
-        else if use_int4 && mode == CompressionMode::Importance { "-int4pp" }  // INT4 post-processing
-        else { "" }
+        if mode == CompressionMode::Adaptive {
+            target_quality * 100.0
+        } else {
+            base_retention * 100.0
+        },
+        if use_int4
+            && mode != CompressionMode::MixedPrecision
+            && mode != CompressionMode::Importance
+        {
+            "-int4"
+        } else if use_int4 && mode == CompressionMode::Importance {
+            "-int4pp"
+        }
+        // INT4 post-processing
+        else {
+            ""
+        }
     ));
 
     println!("\n=== Creating Compressed Model ===\n");
-    println!("Input:  {} ({} shard{})", display_path, input_paths.len(), if input_paths.len() > 1 { "s" } else { "" });
+    println!(
+        "Input:  {} ({} shard{})",
+        display_path,
+        input_paths.len(),
+        if input_paths.len() > 1 { "s" } else { "" }
+    );
     println!("Output: {}", output_path.display());
     if let Some(max) = max_tensors {
         println!("Max tensors: {}", max);
@@ -851,15 +952,24 @@ fn run() -> Result<(), CompressionError> {
         CompressionMode::Hybrid => {
             println!("  - Layers 0, 23: 100% (critical)");
             println!("  - Layers 1-2, 21-22: 80% (near-critical)");
-            println!("  - Layers 3-20: {:.0}% (aggressive)", base_retention * 100.0);
+            println!(
+                "  - Layers 3-20: {:.0}% (aggressive)",
+                base_retention * 100.0
+            );
             println!("  - Layernorms/biases: 100%");
         }
         CompressionMode::LayerType => {
             println!("  - LayerNorm/Bias/Embed: 100% (critical)");
             println!("  - lm_head: 90%");
             println!("  - Attention Q/K: {:.0}% (base)", base_retention * 100.0);
-            println!("  - Attention V/O: {:.0}% (+10%)", (base_retention * 1.1).min(1.0) * 100.0);
-            println!("  - FFN/MLP: {:.0}% (aggressive)", (base_retention * 0.70).max(0.40) * 100.0);
+            println!(
+                "  - Attention V/O: {:.0}% (+10%)",
+                (base_retention * 1.1).min(1.0) * 100.0
+            );
+            println!(
+                "  - FFN/MLP: {:.0}% (aggressive)",
+                (base_retention * 0.70).max(0.40) * 100.0
+            );
         }
         CompressionMode::Adaptive => {
             println!("  - Target quality: {:.0}%", target_quality * 100.0);
@@ -868,8 +978,14 @@ fn run() -> Result<(), CompressionError> {
         }
         CompressionMode::MixedPrecision => {
             println!("  - Retention: {:.0}%", base_retention * 100.0);
-            println!("  - FP16 essentials: {:.0}% of retained coefficients", fp16_ratio * 100.0);
-            println!("  - INT4 details: {:.0}% of retained coefficients", (1.0 - fp16_ratio) * 100.0);
+            println!(
+                "  - FP16 essentials: {:.0}% of retained coefficients",
+                fp16_ratio * 100.0
+            );
+            println!(
+                "  - INT4 details: {:.0}% of retained coefficients",
+                (1.0 - fp16_ratio) * 100.0
+            );
             println!("  - Progressive decode: load FP16 first, then INT4");
         }
         CompressionMode::Importance => {
@@ -899,14 +1015,18 @@ fn run() -> Result<(), CompressionError> {
     let mut processed_tensors: Vec<(String, Vec<usize>, Vec<u8>)> = Vec::new();
     let mut skipped = 0;
     let mut processed = 0;
-    let mut retention_stats: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut retention_stats: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut total_input_size: u64 = 0;
 
     // Create importance encoder if in importance mode
     let importance_encoder = if mode == CompressionMode::Importance {
         let importance_map = if let Some(ref path) = importance_file {
             ImportanceMap::load(path).unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to load importance map: {}. Using heuristics.", e);
+                eprintln!(
+                    "Warning: Failed to load importance map: {}. Using heuristics.",
+                    e
+                );
                 ImportanceMap::heuristic_only()
             })
         } else {
@@ -922,17 +1042,24 @@ fn run() -> Result<(), CompressionError> {
     for input_path in &input_paths {
         let data = fs::read(input_path)
             .map_err(|e| CompressionError::FileReadError(input_path.display().to_string(), e))?;
-        let (_, tensors) = parse_safetensors_header(&data)
-            .map_err(CompressionError::HeaderParseError)?;
+        let (_, tensors) =
+            parse_safetensors_header(&data).map_err(CompressionError::HeaderParseError)?;
         total_tensors += tensors.len();
         total_input_size += data.len() as u64;
     }
 
-    let effective_total = max_tensors.map(|m| m.min(total_tensors)).unwrap_or(total_tensors);
-    println!("Found {} tensors across {} shard(s){}\n",
+    let effective_total = max_tensors
+        .map(|m| m.min(total_tensors))
+        .unwrap_or(total_tensors);
+    println!(
+        "Found {} tensors across {} shard(s){}\n",
         total_tensors,
         input_paths.len(),
-        if max_tensors.is_some() { format!(" (processing {})", effective_total) } else { String::new() }
+        if max_tensors.is_some() {
+            format!(" (processing {})", effective_total)
+        } else {
+            String::new()
+        }
     );
 
     // Create progress bar
@@ -960,15 +1087,18 @@ fn run() -> Result<(), CompressionError> {
         }
 
         if !quiet && input_paths.len() > 1 {
-            progress.println(format!("Processing shard {}/{}: {}",
-                shard_idx + 1, input_paths.len(),
-                input_path.file_name().unwrap_or_default().to_string_lossy()));
+            progress.println(format!(
+                "Processing shard {}/{}: {}",
+                shard_idx + 1,
+                input_paths.len(),
+                input_path.file_name().unwrap_or_default().to_string_lossy()
+            ));
         }
 
         let data = fs::read(input_path)
             .map_err(|e| CompressionError::FileReadError(input_path.display().to_string(), e))?;
-        let (data_start, tensors) = parse_safetensors_header(&data)
-            .map_err(CompressionError::HeaderParseError)?;
+        let (data_start, tensors) =
+            parse_safetensors_header(&data).map_err(CompressionError::HeaderParseError)?;
 
         // Sort tensors by name for consistent ordering
         let mut tensor_items: Vec<_> = tensors.iter().collect();
@@ -1020,7 +1150,8 @@ fn run() -> Result<(), CompressionError> {
 
             // Handle different compression modes
             if mode == CompressionMode::Adaptive {
-                match compress_decompress_adaptive(&values, width, height, target_quality, use_int4) {
+                match compress_decompress_adaptive(&values, width, height, target_quality, use_int4)
+                {
                     Ok((reconstructed, retention_used)) => {
                         let retention_key = format!("{:.0}%", retention_used * 100.0);
                         *retention_stats.entry(retention_key).or_insert(0) += 1;
@@ -1049,7 +1180,11 @@ fn run() -> Result<(), CompressionError> {
                     match compress_decompress(&values, width, height, &encoder, use_int4) {
                         Ok(reconstructed) => {
                             let output_bytes = f32_to_f16_bytes(&reconstructed);
-                            processed_tensors.push((name.clone(), info.shape.clone(), output_bytes));
+                            processed_tensors.push((
+                                name.clone(),
+                                info.shape.clone(),
+                                output_bytes,
+                            ));
                             processed += 1;
                         }
                         Err(e) => {
@@ -1058,18 +1193,32 @@ fn run() -> Result<(), CompressionError> {
                             }
                             let fallback_values = bytes_to_f32(tensor_data, &info.dtype)?;
                             let output_bytes = f32_to_f16_bytes(&fallback_values);
-                            processed_tensors.push((name.clone(), info.shape.clone(), output_bytes));
+                            processed_tensors.push((
+                                name.clone(),
+                                info.shape.clone(),
+                                output_bytes,
+                            ));
                             skipped += 1;
                         }
                     }
                 } else {
                     // Use mixed precision for smaller tensors
-                    match compress_decompress_mixed_precision(&values, width, height, base_retention, fp16_ratio) {
+                    match compress_decompress_mixed_precision(
+                        &values,
+                        width,
+                        height,
+                        base_retention,
+                        fp16_ratio,
+                    ) {
                         Ok(reconstructed) => {
                             let retention_key = format!("{:.0}%", base_retention * 100.0);
                             *retention_stats.entry(retention_key).or_insert(0) += 1;
                             let output_bytes = f32_to_f16_bytes(&reconstructed);
-                            processed_tensors.push((name.clone(), info.shape.clone(), output_bytes));
+                            processed_tensors.push((
+                                name.clone(),
+                                info.shape.clone(),
+                                output_bytes,
+                            ));
                             processed += 1;
                         }
                         Err(e) => {
@@ -1079,15 +1228,23 @@ fn run() -> Result<(), CompressionError> {
                             // Keep original on compression failure (graceful degradation)
                             let fallback_values = bytes_to_f32(tensor_data, &info.dtype)?;
                             let output_bytes = f32_to_f16_bytes(&fallback_values);
-                            processed_tensors.push((name.clone(), info.shape.clone(), output_bytes));
+                            processed_tensors.push((
+                                name.clone(),
+                                info.shape.clone(),
+                                output_bytes,
+                            ));
                             skipped += 1;
                         }
                     }
                 }
             } else if mode == CompressionMode::Importance {
                 // Importance-guided compression
-                let encoder = importance_encoder.as_ref().expect("importance_encoder should be initialized");
-                match compress_decompress_importance(&values, width, height, name, encoder, use_int4) {
+                let encoder = importance_encoder
+                    .as_ref()
+                    .expect("importance_encoder should be initialized");
+                match compress_decompress_importance(
+                    &values, width, height, name, encoder, use_int4,
+                ) {
                     Ok((reconstructed, retention_used)) => {
                         let retention_key = format!("{:.0}%", retention_used * 100.0);
                         *retention_stats.entry(retention_key).or_insert(0) += 1;
@@ -1158,21 +1315,35 @@ fn run() -> Result<(), CompressionError> {
 
     for (name, shape, bytes) in &processed_tensors {
         let mut tensor_info = serde_json::Map::new();
-        tensor_info.insert("dtype".to_string(), serde_json::Value::String("F16".to_string()));
-        tensor_info.insert("shape".to_string(), serde_json::Value::Array(
-            shape.iter().map(|&s| serde_json::Value::Number(s.into())).collect()
-        ));
+        tensor_info.insert(
+            "dtype".to_string(),
+            serde_json::Value::String("F16".to_string()),
+        );
+        tensor_info.insert(
+            "shape".to_string(),
+            serde_json::Value::Array(
+                shape
+                    .iter()
+                    .map(|&s| serde_json::Value::Number(s.into()))
+                    .collect(),
+            ),
+        );
         let end_offset = current_offset + bytes.len() as u64;
-        tensor_info.insert("data_offsets".to_string(), serde_json::Value::Array(vec![
-            serde_json::Value::Number(current_offset.into()),
-            serde_json::Value::Number(end_offset.into()),
-        ]));
+        tensor_info.insert(
+            "data_offsets".to_string(),
+            serde_json::Value::Array(vec![
+                serde_json::Value::Number(current_offset.into()),
+                serde_json::Value::Number(end_offset.into()),
+            ]),
+        );
         header_map.insert(name.clone(), serde_json::Value::Object(tensor_info));
         current_offset = end_offset;
     }
 
-    let header_json = serde_json::to_string(&serde_json::Value::Object(header_map))
-        .map_err(|e| CompressionError::EncodingError(format!("JSON serialization failed: {}", e)))?;
+    let header_json =
+        serde_json::to_string(&serde_json::Value::Object(header_map)).map_err(|e| {
+            CompressionError::EncodingError(format!("JSON serialization failed: {}", e))
+        })?;
     let header_bytes = header_json.as_bytes();
 
     // Pad header to 8-byte alignment
@@ -1184,22 +1355,27 @@ fn run() -> Result<(), CompressionError> {
     let mut writer = BufWriter::new(file);
 
     // Write header length
-    writer.write_all(&(padded_header_len as u64).to_le_bytes())
+    writer
+        .write_all(&(padded_header_len as u64).to_le_bytes())
         .map_err(|e| CompressionError::FileWriteError(output_path.display().to_string(), e))?;
     // Write header
-    writer.write_all(header_bytes)
+    writer
+        .write_all(header_bytes)
         .map_err(|e| CompressionError::FileWriteError(output_path.display().to_string(), e))?;
     // Write padding
-    writer.write_all(&vec![0x20u8; padding])
+    writer
+        .write_all(&vec![0x20u8; padding])
         .map_err(|e| CompressionError::FileWriteError(output_path.display().to_string(), e))?;
 
     // Write tensor data
     for (_, _, bytes) in &processed_tensors {
-        writer.write_all(bytes)
+        writer
+            .write_all(bytes)
             .map_err(|e| CompressionError::FileWriteError(output_path.display().to_string(), e))?;
     }
 
-    writer.flush()
+    writer
+        .flush()
         .map_err(|e| CompressionError::FileWriteError(output_path.display().to_string(), e))?;
 
     let elapsed = start.elapsed();
@@ -1209,12 +1385,18 @@ fn run() -> Result<(), CompressionError> {
 
     println!("\n=== Done ===\n");
     println!("Time: {:.1}s", elapsed.as_secs_f64());
-    println!("Input:  {:.2} MB", total_input_size as f64 / 1024.0 / 1024.0);
+    println!(
+        "Input:  {:.2} MB",
+        total_input_size as f64 / 1024.0 / 1024.0
+    );
     println!("Output: {:.2} MB", output_size as f64 / 1024.0 / 1024.0);
     println!("\nCompressed model saved to: {}", output_path.display());
     println!("\nTest with Python:");
-    println!("  python3 test_inference.py --original {} --compressed {}",
-             display_path, output_path.display());
+    println!(
+        "  python3 test_inference.py --original {} --compressed {}",
+        display_path,
+        output_path.display()
+    );
 
     Ok(())
 }

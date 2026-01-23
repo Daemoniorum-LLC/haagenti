@@ -1,34 +1,33 @@
 //! Verify FSE state-to-symbol mapping
 
-use haagenti_zstd::fse::{FseTable, FseDecoder};
+use haagenti_zstd::fse::{FseDecoder, FseTable};
 
 // Predefined distributions (from RFC 8878)
 const PREDEFINED_LL_DISTRIBUTION: [i16; 36] = [
-    4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 1, 1, 1, 1, 1,
+    4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 1, 1, 1, 1, 1,
     -1, -1, -1, -1,
 ];
 const PREDEFINED_LL_ACCURACY_LOG: u8 = 6;
 
 const PREDEFINED_OF_DISTRIBUTION: [i16; 29] = [
-    1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1,
+    1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1,
 ];
 const PREDEFINED_OF_ACCURACY_LOG: u8 = 5;
 
 const PREDEFINED_ML_DISTRIBUTION: [i16; 53] = [
-    1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1,
-    -1, -1, -1, -1, -1,
+    1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1,
 ];
 const PREDEFINED_ML_ACCURACY_LOG: u8 = 6;
 
 fn main() {
     // Build predefined tables
-    let ll_table = FseTable::from_predefined(&PREDEFINED_LL_DISTRIBUTION, PREDEFINED_LL_ACCURACY_LOG).unwrap();
-    let of_table = FseTable::from_predefined(&PREDEFINED_OF_DISTRIBUTION, PREDEFINED_OF_ACCURACY_LOG).unwrap();
-    let ml_table = FseTable::from_predefined(&PREDEFINED_ML_DISTRIBUTION, PREDEFINED_ML_ACCURACY_LOG).unwrap();
+    let ll_table =
+        FseTable::from_predefined(&PREDEFINED_LL_DISTRIBUTION, PREDEFINED_LL_ACCURACY_LOG).unwrap();
+    let of_table =
+        FseTable::from_predefined(&PREDEFINED_OF_DISTRIBUTION, PREDEFINED_OF_ACCURACY_LOG).unwrap();
+    let ml_table =
+        FseTable::from_predefined(&PREDEFINED_ML_DISTRIBUTION, PREDEFINED_ML_ACCURACY_LOG).unwrap();
 
     println!("=== State to Symbol Mapping ===\n");
 
@@ -45,22 +44,34 @@ fn main() {
     println!("LL table (state -> symbol):");
     for state in 0..10u32 {
         let entry = ll_table.decode(state as usize);
-        println!("  state {} -> symbol {}, num_bits={}", state, entry.symbol, entry.num_bits);
+        println!(
+            "  state {} -> symbol {}, num_bits={}",
+            state, entry.symbol, entry.num_bits
+        );
     }
 
     println!("\nOF table (state -> symbol):");
     for state in 0..10u32 {
         let entry = of_table.decode(state as usize);
-        println!("  state {} -> symbol {}, num_bits={}", state, entry.symbol, entry.num_bits);
+        println!(
+            "  state {} -> symbol {}, num_bits={}",
+            state, entry.symbol, entry.num_bits
+        );
     }
     // Also check state 23
     let entry = of_table.decode(23);
-    println!("  state 23 -> symbol {}, num_bits={}", entry.symbol, entry.num_bits);
+    println!(
+        "  state 23 -> symbol {}, num_bits={}",
+        entry.symbol, entry.num_bits
+    );
 
     println!("\nML table (state -> symbol):");
     for state in 30..40u32 {
         let entry = ml_table.decode(state as usize);
-        println!("  state {} -> symbol {}, num_bits={}", state, entry.symbol, entry.num_bits);
+        println!(
+            "  state {} -> symbol {}, num_bits={}",
+            state, entry.symbol, entry.num_bits
+        );
     }
 
     // Verify our specific case

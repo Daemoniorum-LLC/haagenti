@@ -91,16 +91,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Test sizes from small to large
-    let sizes = [
-        (64, 64),
-        (128, 128),
-        (256, 256),
-        (512, 512),
-        (1024, 1024),
-    ];
+    let sizes = [(64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)];
 
-    println!("\n{:>12} {:>12} {:>12} {:>12} {:>10}",
-             "Size", "CPU (ms)", "GPU (ms)", "Speedup", "Elements");
+    println!(
+        "\n{:>12} {:>12} {:>12} {:>12} {:>10}",
+        "Size", "CPU (ms)", "GPU (ms)", "Speedup", "Elements"
+    );
     println!("{}", "-".repeat(60));
 
     for (width, height) in sizes {
@@ -154,8 +150,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // IDCT benchmark
     println!("\n\nIDCT Benchmark:");
-    println!("{:>12} {:>12} {:>12} {:>12} {:>10}",
-             "Size", "CPU (ms)", "GPU (ms)", "Speedup", "Elements");
+    println!(
+        "{:>12} {:>12} {:>12} {:>12} {:>10}",
+        "Size", "CPU (ms)", "GPU (ms)", "Speedup", "Elements"
+    );
     println!("{}", "-".repeat(60));
 
     for (width, height) in sizes {
@@ -201,13 +199,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Batch benchmark
     if let Some(ref mut ctx) = gpu_ctx {
         println!("\n\nBatch DCT Benchmark (10 tensors at once):");
-        println!("{:>12} {:>12} {:>12} {:>12}",
-                 "Size", "CPU (ms)", "GPU (ms)", "Speedup");
+        println!(
+            "{:>12} {:>12} {:>12} {:>12}",
+            "Size", "CPU (ms)", "GPU (ms)", "Speedup"
+        );
         println!("{}", "-".repeat(50));
 
         for (width, height) in &[(64, 64), (128, 128), (256, 256)] {
             let tensors: Vec<Vec<f32>> = (0..10)
-                .map(|i| generate_test_data(*width, *height))
+                .map(|_| generate_test_data(*width, *height))
                 .collect();
             let tensor_refs: Vec<&[f32]> = tensors.iter().map(|t| t.as_slice()).collect();
 

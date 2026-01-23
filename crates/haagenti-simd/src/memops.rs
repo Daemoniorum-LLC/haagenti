@@ -44,7 +44,7 @@ pub fn copy_match(output: &mut Vec<u8>, offset: usize, length: usize) {
         if offset == 1 {
             // Run-length encoding: repeat single byte
             let byte = output[start];
-            output.extend(std::iter::repeat(byte).take(length));
+            output.extend(std::iter::repeat_n(byte, length));
         } else if offset < 8 {
             // Small offset: copy pattern repeatedly
             for i in 0..length {
@@ -92,7 +92,7 @@ pub fn fill_repeat(output: &mut Vec<u8>, pattern: &[u8], count: usize) {
 
     if pattern.len() == 1 {
         // Single byte: use extend with repeat iterator
-        output.extend(std::iter::repeat(pattern[0]).take(count));
+        output.extend(std::iter::repeat_n(pattern[0], count));
     } else {
         // Multi-byte pattern: copy repeatedly
         for _ in 0..count {
@@ -200,7 +200,10 @@ mod tests {
         copy_match(&mut output, 10, 25);
 
         // First 10 should be a copy of bytes 10-19
-        assert_eq!(&output[original_len..original_len + 10], &(10..20).collect::<Vec<u8>>());
+        assert_eq!(
+            &output[original_len..original_len + 10],
+            &(10..20).collect::<Vec<u8>>()
+        );
         // Pattern continues
         assert_eq!(output.len(), original_len + 25);
     }
