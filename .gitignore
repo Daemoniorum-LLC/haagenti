@@ -25,3 +25,4 @@ criterion/
 *.gcda
 *.gcno
 tarpaulin-report.html
+crates/haagenti/tests/*.proptest-regressions
