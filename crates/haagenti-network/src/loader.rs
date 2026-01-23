@@ -311,6 +311,7 @@ impl StreamingLoader {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     // Integration tests would use wiremock here

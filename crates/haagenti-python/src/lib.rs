@@ -616,10 +616,12 @@ impl HoloTensorEncoder {
 /// fragments are added.
 ///
 /// Example:
-///     decoder = HoloTensorDecoder(header)
-///     decoder.add_fragment(fragments[0])  # ~30% quality
-///     decoder.add_fragment(fragments[1])  # ~50% quality
-///     weights = decoder.reconstruct()
+/// ```python
+/// decoder = HoloTensorDecoder(header)
+/// decoder.add_fragment(fragments[0])  # ~30% quality
+/// decoder.add_fragment(fragments[1])  # ~50% quality
+/// weights = decoder.reconstruct()
+/// ```
 #[pyclass]
 pub struct HoloTensorDecoder {
     decoder: haagenti::HoloTensorDecoder,
