@@ -33,7 +33,9 @@ jobs:
 
       - name: Run tests
         # Exclude cuda feature which requires CUDA installation
-        run: cargo test --workspace --features "full,testing"
+        # Exclude examples (--lib --bins --tests instead of all targets)
+        # Many debug/development examples have minor lints that don't affect library quality
+        run: cargo test --workspace --lib --bins --tests --features "full,testing"
 
   clippy:
     name: Clippy

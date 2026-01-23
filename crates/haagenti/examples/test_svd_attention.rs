@@ -35,6 +35,7 @@ struct TensorInfo {
 
 /// Comparison results for a single tensor.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ComparisonResult {
     name: String,
     shape: Vec<usize>,
