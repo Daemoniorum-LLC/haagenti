@@ -141,6 +141,7 @@ fn quantize_int4_blocked(weights: &[f32], block_size: usize) -> Vec<u8> {
 
 /// Compression result for analysis.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct CompressionResult {
     algorithm: &'static str,
     original_size: usize,

@@ -20,11 +20,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write as IoWrite;
 use std::path::PathBuf;
-use std::time::Instant;
 
-use haagenti::adaptive::{AdaptiveBatchEncoder, AdaptiveSpectralDecoder, AdaptiveSpectralEncoder};
+use haagenti::adaptive::{AdaptiveSpectralDecoder, AdaptiveSpectralEncoder};
 use haagenti::compressive::{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
-use haagenti::spectral_analysis::SpectralAnalyzer;
 
 /// Number of fragments for encoding.
 const NUM_FRAGMENTS: u16 = 8;
@@ -42,6 +40,7 @@ struct TensorInfo {
 
 /// Results for comparing uniform vs adaptive.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ComparisonResult {
     name: String,
     shape: Vec<usize>,
@@ -205,7 +204,7 @@ fn reshape_to_2d(shape: &[usize]) -> (usize, usize) {
         // 1D tensor: make it square-ish
         let sqrt = (total as f64).sqrt() as usize;
         let width = sqrt.max(1);
-        let height = (total + width - 1) / width;
+        let height = total.div_ceil(width);
         (height, width)
     }
 }
@@ -356,7 +355,7 @@ fn main() {
         })
         .collect();
 
-    weight_tensors.sort_by_key(|(name, _)| name.clone());
+    weight_tensors.sort_by_key(|(name, _)| (*name).clone());
     weight_tensors.truncate(max_tensors);
 
     println!("Processing {} weight tensors...\n", weight_tensors.len());

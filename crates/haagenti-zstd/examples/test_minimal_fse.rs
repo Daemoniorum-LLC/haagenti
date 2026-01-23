@@ -42,7 +42,7 @@ fn test_case(name: &str, input: &[u8]) {
     );
 
     // Use the zstd crate to compress and see what it produces
-    let ref_compressed = match zstd::encode_all(&input[..], 1) {
+    let ref_compressed = match zstd::encode_all(input, 1) {
         Ok(c) => c,
         Err(e) => {
             println!("Reference compression failed: {}", e);

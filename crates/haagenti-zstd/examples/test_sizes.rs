@@ -41,7 +41,7 @@ fn main() {
     println!("=== Testing Reference Interop ===\n");
 
     // Uniform data
-    test_pattern("A*100", &vec![b'A'; 100]);
+    test_pattern("A*100", &[b'A'; 100]);
     test_pattern("A*1000", &vec![b'A'; 1000]);
     test_pattern("A*10000", &vec![b'A'; 10000]);
     test_pattern("A*65536", &vec![b'A'; 65536]);

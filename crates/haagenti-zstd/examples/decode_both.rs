@@ -107,7 +107,7 @@ fn decode_bitstream(bitstream: &[u8], seq_count: usize) {
         };
 
         let ll_value = get_ll_baseline(ll_code) + ll_extra as u32;
-        let of_value = (1u32 << of_code) + of_extra as u32;
+        let of_value = (1u32 << of_code) + of_extra;
         let ml_baseline = get_ml_baseline(ml_code);
         let ml_value = ml_baseline + ml_extra as u32;
 

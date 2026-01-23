@@ -13,7 +13,7 @@ fn main() {
         // Binary-like patterns
         &"01234567".repeat(10),
         // Random-ish but compressible
-        &"this is a test of the compression algorithm with some repeated words words words words",
+        "this is a test of the compression algorithm with some repeated words words words words",
     ];
 
     for input_str in &test_cases {

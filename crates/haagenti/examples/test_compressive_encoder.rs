@@ -214,7 +214,7 @@ fn main() {
     let mut tensor_count = 0usize;
 
     // Process each tensor
-    for (name, info) in tensors.iter() {
+    for (_name, info) in tensors.iter() {
         // Skip small tensors and non-weight tensors
         let num_elements: usize = info.shape.iter().product();
         if num_elements < 1024 {
@@ -336,7 +336,7 @@ fn main() {
         .filter_map(|(name, info)| {
             let num_elements: usize = info.shape.iter().product();
             // Skip very small and very large tensors (too slow for quality analysis)
-            if num_elements < 10_000 || num_elements > 1_000_000 {
+            if !(10_000..=1_000_000).contains(&num_elements) {
                 return None;
             }
             Some((name.clone(), info, num_elements))

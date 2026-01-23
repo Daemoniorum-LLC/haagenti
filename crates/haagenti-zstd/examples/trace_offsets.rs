@@ -13,7 +13,7 @@ fn main() {
         println!("\n=== {} ({} bytes) ===", name, input.len());
 
         // Get reference compression
-        let ref_compressed = zstd::encode_all(&input[..], 1).unwrap();
+        let ref_compressed = zstd::encode_all(input, 1).unwrap();
         println!("Reference: {} bytes", ref_compressed.len());
 
         // Get our compression

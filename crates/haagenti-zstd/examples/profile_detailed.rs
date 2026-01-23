@@ -123,8 +123,7 @@ fn main() {
     // Test 9: Chain table resize
     let start = Instant::now();
     for _ in 0..iterations {
-        let mut chain = Vec::<u32>::new();
-        chain.resize(65536, 0);
+        let mut chain = vec![0; 65536];
         std::hint::black_box(&mut chain);
     }
     let chain_resize = start.elapsed();

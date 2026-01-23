@@ -108,7 +108,7 @@ fn main() {
             (((seq_count - 128) << 8) | seq_data[1] as usize, 2)
         } else {
             (
-                (seq_data[1] as usize) | ((seq_data[2] as usize) << 8) + 0x7F00,
+                (seq_data[1] as usize) | (((seq_data[2] as usize) << 8) + 0x7F00),
                 3,
             )
         };
@@ -154,7 +154,7 @@ fn main() {
         );
     }
 
-    let (literals, sequences) = matches_to_sequences(&input, &matches);
+    let (_literals, sequences) = matches_to_sequences(&input, &matches);
     println!("Sequences: {}", sequences.len());
     for (i, s) in sequences.iter().enumerate() {
         let enc = EncodedSequence::from_sequence(s);
@@ -192,7 +192,7 @@ fn main() {
 
     // Decode reference's FSE bitstream to see what sequences it contains
     println!("\n=== Decoding Reference FSE Bitstream ===");
-    use haagenti_zstd::block::{LITERAL_LENGTH_BASELINE, MATCH_LENGTH_BASELINE};
+    use haagenti_zstd::block::LITERAL_LENGTH_BASELINE;
     use haagenti_zstd::fse::{
         BitReader, FseDecoder, FseTable, LITERAL_LENGTH_ACCURACY_LOG,
         LITERAL_LENGTH_DEFAULT_DISTRIBUTION, MATCH_LENGTH_ACCURACY_LOG,

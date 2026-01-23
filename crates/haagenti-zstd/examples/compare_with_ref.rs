@@ -66,7 +66,7 @@ fn analyze_frame(name: &str, data: &[u8]) {
     }
 
     // Check magic
-    if &data[0..4] == &[0x28, 0xb5, 0x2f, 0xfd] {
+    if data[0..4] == [0x28, 0xb5, 0x2f, 0xfd] {
         println!("  Magic: OK");
     } else {
         println!("  Magic: {:02x?} (expected 28 b5 2f fd)", &data[0..4]);
@@ -214,7 +214,7 @@ fn analyze_frame(name: &str, data: &[u8]) {
                                 mode_names.get(ml_mode as usize).unwrap_or(&"?")
                             );
 
-                            let bitstream_start = if mode_byte == 0 { 2 } else { 2 }; // Simplified
+                            let bitstream_start = 2; // Simplified - same for all modes
                             let bitstream = &seq_section[bitstream_start..];
                             println!(
                                 "    FSE bitstream ({} bytes): {:02x?}",

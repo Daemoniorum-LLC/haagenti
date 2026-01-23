@@ -337,8 +337,8 @@ fn f32_to_f16_bytes(values: &[f32]) -> Vec<u8> {
 }
 
 fn quantize_int4(weights: &[f32]) -> Vec<u8> {
-    let num_blocks = (weights.len() + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
-    let mut output = Vec::with_capacity(num_blocks * 2 + (weights.len() + 1) / 2);
+    let num_blocks = weights.len().div_ceil(Q4_BLOCK_SIZE);
+    let mut output = Vec::with_capacity(num_blocks * 2 + weights.len().div_ceil(2));
 
     let mut scales = Vec::with_capacity(num_blocks);
     for block in weights.chunks(Q4_BLOCK_SIZE) {
@@ -370,7 +370,7 @@ fn quantize_int4(weights: &[f32]) -> Vec<u8> {
 }
 
 fn dequantize_int4(data: &[u8], num_elements: usize) -> Vec<f32> {
-    let num_blocks = (num_elements + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
+    let num_blocks = num_elements.div_ceil(Q4_BLOCK_SIZE);
     let scales_bytes = num_blocks * 2;
 
     if data.len() < scales_bytes {
@@ -386,6 +386,7 @@ fn dequantize_int4(data: &[u8], num_elements: usize) -> Vec<f32> {
     let mut output = Vec::with_capacity(num_elements);
 
     let mut nibble_idx = 0;
+    #[allow(clippy::needless_range_loop)]
     for block_idx in 0..num_blocks {
         let scale = scales[block_idx];
         let block_size = Q4_BLOCK_SIZE.min(num_elements - block_idx * Q4_BLOCK_SIZE);
@@ -1118,7 +1119,7 @@ fn run() -> Result<(), CompressionError> {
             // Update progress bar with current tensor name
             progress.set_message(name.clone());
 
-            if num_elements < 256 || num_elements > MAX_ELEMENTS {
+            if !(256..=MAX_ELEMENTS).contains(&num_elements) {
                 // Keep original (just convert to F16 for consistency)
                 let values = bytes_to_f32(tensor_data, &info.dtype)?;
                 let output_bytes = f32_to_f16_bytes(&values);

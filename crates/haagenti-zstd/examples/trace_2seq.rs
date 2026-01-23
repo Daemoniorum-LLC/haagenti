@@ -17,7 +17,7 @@ fn trace(name: &str, data: &[u8]) {
         );
     }
 
-    let (literals, sequences) = matches_to_sequences(data, &matches);
+    let (_literals, sequences) = matches_to_sequences(data, &matches);
     println!(
         "\nSequences ({}): (offset is encoded as offset_value)",
         sequences.len()

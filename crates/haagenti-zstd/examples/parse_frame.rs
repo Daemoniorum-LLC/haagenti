@@ -97,7 +97,7 @@ fn main() {
 
     if block_type == 2 {
         // Compressed block
-        let block_start = pos;
+        let _block_start = pos;
         let block = &frame[pos..pos + block_size];
         println!(
             "\nBlock data ({} bytes): {:02x?}",

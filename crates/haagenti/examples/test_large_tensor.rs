@@ -50,7 +50,7 @@ fn parse_safetensors_header(data: &[u8]) -> Option<(usize, HashMap<String, Tenso
                 let dtype = info_obj.get("dtype")?.as_str()?.to_string();
 
                 let offsets = info_obj.get("data_offsets")?.as_array()?;
-                let start = offsets.get(0)?.as_u64()? as usize;
+                let start = offsets.first()?.as_u64()? as usize;
                 let end = offsets.get(1)?.as_u64()? as usize;
 
                 tensors.insert(
@@ -158,7 +158,7 @@ fn main() {
 
         // For very large tensors, we'll process in chunks
         let chunk_height = 1024.min(height);
-        let num_chunks = (height + chunk_height - 1) / chunk_height;
+        let num_chunks = height.div_ceil(chunk_height);
 
         println!(
             "\nCompressing {} chunks of {}x{} each...",

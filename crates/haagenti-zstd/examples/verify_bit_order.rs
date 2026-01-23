@@ -13,11 +13,11 @@ fn main() {
     // Seq 0: LL=9, OF_value=12, ML=8  (offset 9 encoded as 12)
     // Seq 1: LL=1, OF_value=1, ML=4   (repeat offset)
 
-    let sequences = vec![Sequence::new(9, 12, 8), Sequence::new(1, 1, 4)];
+    let sequences = [Sequence::new(9, 12, 8), Sequence::new(1, 1, 4)];
 
     let encoded: Vec<_> = sequences
         .iter()
-        .map(|s| EncodedSequence::from_sequence(s))
+        .map(EncodedSequence::from_sequence)
         .collect();
 
     println!("Encoded sequences:");

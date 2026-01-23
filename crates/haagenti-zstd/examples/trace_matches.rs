@@ -1,7 +1,7 @@
 //! Trace match finding for failing case
 
 use haagenti_core::CompressionLevel;
-use haagenti_zstd::compress::{CompressContext, Match};
+use haagenti_zstd::compress::CompressContext;
 
 fn main() {
     // The failing 2-line case
@@ -10,7 +10,7 @@ fn main() {
     println!("Data: {:?}", String::from_utf8_lossy(data));
 
     // Create compress context and find matches
-    let mut ctx = CompressContext::new(CompressionLevel::Fast);
+    let _ctx = CompressContext::new(CompressionLevel::Fast);
 
     // We need to access match_finder - let's create our own
     use haagenti_zstd::compress::MatchFinder;

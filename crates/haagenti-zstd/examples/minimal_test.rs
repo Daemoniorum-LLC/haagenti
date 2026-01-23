@@ -200,11 +200,11 @@ fn test_two_sequences() {
 
     // Seq 0: LL=9, OF_value=12 (offset 9 + 3), ML=8
     // Seq 1: LL=1, OF_value=1 (repeat offset), ML=4
-    let sequences = vec![Sequence::new(9, 12, 8), Sequence::new(1, 1, 4)];
+    let sequences = [Sequence::new(9, 12, 8), Sequence::new(1, 1, 4)];
 
     let encoded: Vec<_> = sequences
         .iter()
-        .map(|s| EncodedSequence::from_sequence(s))
+        .map(EncodedSequence::from_sequence)
         .collect();
 
     for (i, enc) in encoded.iter().enumerate() {

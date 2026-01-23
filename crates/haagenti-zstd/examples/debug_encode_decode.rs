@@ -11,14 +11,14 @@ fn main() {
     // Two sequences from failing case:
     // Seq 0: LL=8 (code=8), OF=3 (code=1), ML=7 (code=4)
     // Seq 1: LL=1 (code=1), OF=1 (code=0), ML=7 (code=4)
-    let sequences = vec![
+    let sequences = [
         Sequence::new(8, 3, 7), // OF=3 means offset_value=3, code=1
         Sequence::new(1, 1, 7), // OF=1 means repeat offset, code=0
     ];
 
     let encoded: Vec<_> = sequences
         .iter()
-        .map(|s| EncodedSequence::from_sequence(s))
+        .map(EncodedSequence::from_sequence)
         .collect();
 
     println!("=== Encoded sequences ===");

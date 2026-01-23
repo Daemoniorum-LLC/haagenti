@@ -13,7 +13,7 @@ fn trace_case(name: &str, sequences: &[Sequence]) {
 
     let encoded: Vec<_> = sequences
         .iter()
-        .map(|s| EncodedSequence::from_sequence(s))
+        .map(EncodedSequence::from_sequence)
         .collect();
 
     println!("\nSequences:");

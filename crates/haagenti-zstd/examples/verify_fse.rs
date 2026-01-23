@@ -36,9 +36,9 @@ fn main() {
     println!("Expected seq0: ll_code=4, of_code=1, ml_code=32\n");
 
     // Check what symbols these states map to
-    let ll_decoder = FseDecoder::new(&ll_table);
-    let of_decoder = FseDecoder::new(&of_table);
-    let ml_decoder = FseDecoder::new(&ml_table);
+    let _ll_decoder = FseDecoder::new(&ll_table);
+    let _of_decoder = FseDecoder::new(&of_table);
+    let _ml_decoder = FseDecoder::new(&ml_table);
 
     // Check a range of states
     println!("LL table (state -> symbol):");

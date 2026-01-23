@@ -34,6 +34,7 @@ struct TensorInfo {
 }
 
 /// Results for a single tensor.
+#[allow(dead_code)]
 struct TensorResult {
     name: String,
     shape: Vec<usize>,
@@ -137,8 +138,8 @@ fn bytes_to_f32(data: &[u8], dtype: &str) -> Vec<f32> {
 
 /// Quantize f32 weights to INT4 with per-block FP16 scaling.
 fn quantize_int4(weights: &[f32]) -> Vec<u8> {
-    let num_blocks = (weights.len() + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
-    let mut output = Vec::with_capacity(num_blocks * 2 + (weights.len() + 1) / 2);
+    let num_blocks = weights.len().div_ceil(Q4_BLOCK_SIZE);
+    let mut output = Vec::with_capacity(num_blocks * 2 + weights.len().div_ceil(2));
 
     // First pass: compute and store scales
     let mut scales = Vec::with_capacity(num_blocks);
@@ -174,7 +175,7 @@ fn quantize_int4(weights: &[f32]) -> Vec<u8> {
 
 /// Dequantize INT4 back to f32.
 fn dequantize_int4(data: &[u8], num_elements: usize) -> Vec<f32> {
-    let num_blocks = (num_elements + Q4_BLOCK_SIZE - 1) / Q4_BLOCK_SIZE;
+    let num_blocks = num_elements.div_ceil(Q4_BLOCK_SIZE);
     let scales_bytes = num_blocks * 2;
 
     if data.len() < scales_bytes {
@@ -192,6 +193,7 @@ fn dequantize_int4(data: &[u8], num_elements: usize) -> Vec<f32> {
     let mut output = Vec::with_capacity(num_elements);
 
     let mut nibble_idx = 0;
+    #[allow(clippy::needless_range_loop)]
     for block_idx in 0..num_blocks {
         let scale = scales[block_idx];
         let block_size = Q4_BLOCK_SIZE.min(num_elements - block_idx * Q4_BLOCK_SIZE);

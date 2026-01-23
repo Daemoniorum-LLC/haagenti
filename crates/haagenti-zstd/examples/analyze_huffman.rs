@@ -22,7 +22,7 @@ fn entropy(data: &[u8]) -> f64 {
 
 fn optimal_bits(data: &[u8]) -> usize {
     let h = entropy(data);
-    ((h * data.len() as f64) as usize + 7) / 8
+    ((h * data.len() as f64) as usize).div_ceil(8)
 }
 
 fn main() {
@@ -85,7 +85,7 @@ fn main() {
             println!("\n  Top 10 symbols (with optimal code lengths):");
             for &(byte, f) in sorted_freq.iter().take(10) {
                 let count = *f;
-                let char_repr = if byte >= 32 && byte < 127 {
+                let char_repr = if (32..127).contains(&byte) {
                     format!("'{}'", byte as u8 as char)
                 } else {
                     format!("0x{:02x}", byte)

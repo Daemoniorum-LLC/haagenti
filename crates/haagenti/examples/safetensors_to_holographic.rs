@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -207,7 +207,7 @@ fn convert_to_holographic(config: &HolographicConfig) -> Result<ConversionStats,
         let original_size = tensor_data.len() as u64;
 
         // Convert tensor name to safe filename
-        let safe_name = name.replace('/', "_").replace('.', "_");
+        let safe_name = name.replace(['/', '.'], "_");
         let output_path = config.output_dir.join(format!("{}.hct", safe_name));
 
         // Determine if tensor is suitable for holographic encoding

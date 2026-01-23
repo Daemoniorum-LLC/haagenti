@@ -130,8 +130,9 @@ fn main() {
     ];
 
     println!("State -> ML Code mapping from reference (baseVal -> code lookup):");
+    #[allow(clippy::needless_range_loop)]
     for state in 0..64 {
-        let (_, nb_add_bits, nb_bits, base_val) = ref_table[state];
+        let (_, nb_add_bits, _nb_bits, base_val) = ref_table[state];
 
         // Find which ML code has this baseline and extra bits
         let ml_code = ml_baselines

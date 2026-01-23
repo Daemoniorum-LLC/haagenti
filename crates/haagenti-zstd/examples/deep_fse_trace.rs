@@ -27,14 +27,14 @@ fn main() {
     .unwrap();
 
     // The failing case: 2 sequences
-    let sequences = vec![
+    let sequences = [
         Sequence::new(9, 12, 8), // LL=9, OF_value=12, ML=8
         Sequence::new(1, 1, 4),  // LL=1, OF_value=1, ML=4
     ];
 
     let encoded: Vec<_> = sequences
         .iter()
-        .map(|s| EncodedSequence::from_sequence(s))
+        .map(EncodedSequence::from_sequence)
         .collect();
 
     println!("Sequences:");
@@ -264,9 +264,9 @@ fn main() {
     println!("Checking FSE state update computation...");
 
     // Manually track decoder states (no FseDecoder.set_state available)
-    let mut ll_state_cur = ll_final as usize;
-    let mut of_state_cur = of_final as usize;
-    let mut ml_state_cur = ml_final as usize;
+    let ll_state_cur = ll_final as usize;
+    let of_state_cur = of_final as usize;
+    let ml_state_cur = ml_final as usize;
 
     println!(
         "\nDecoder states set to: LL={}, OF={}, ML={}",
@@ -310,7 +310,7 @@ fn main() {
         ll_entry.num_bits, ll_update_bits
     );
     let new_ll_state = ll_entry.baseline as usize + ll_update_bits as usize;
-    ll_state_cur = new_ll_state;
+    let _ = ll_state_cur; // Mark as intentionally unused after this point
     println!(
         "  New state: {} (baseline {} + bits {})",
         new_ll_state, ll_entry.baseline, ll_update_bits
@@ -330,7 +330,7 @@ fn main() {
         ml_entry.num_bits, ml_update_bits
     );
     let new_ml_state = ml_entry.baseline as usize + ml_update_bits as usize;
-    ml_state_cur = new_ml_state;
+    let _ = ml_state_cur; // Mark as intentionally unused after this point
     println!(
         "  New state: {} (baseline {} + bits {})",
         new_ml_state, ml_entry.baseline, ml_update_bits
@@ -350,7 +350,7 @@ fn main() {
         of_entry.num_bits, of_update_bits
     );
     let new_of_state = of_entry.baseline as usize + of_update_bits as usize;
-    of_state_cur = new_of_state;
+    let _ = of_state_cur; // Mark as intentionally unused after this point
     println!(
         "  New state: {} (baseline {} + bits {})",
         new_of_state, of_entry.baseline, of_update_bits
