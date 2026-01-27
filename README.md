@@ -4,7 +4,7 @@
 
 Haagenti is a pure Rust compression library that enables 70B+ parameter model inference on a single consumer GPU. Named after the 48th demon of the Ars Goetia who transmutes metals into gold, Haagenti transmutes expensive cloud infrastructure requirements into consumer-grade hardware.
 
-## Breakthrough Annoncement
+## Breakthrough Announcement
 
 **70B model inference on a single RTX 4500 Ada (24GB VRAM).**
 
