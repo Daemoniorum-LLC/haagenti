@@ -74,33 +74,33 @@ categories = ["compression", "encoding", "no-std"]
 # ═══════════════════════════════════════════════════════════════════════════════
 # INTERNAL CRATES
 # ═══════════════════════════════════════════════════════════════════════════════
-haagenti = { path = "crates/haagenti" }
-haagenti-core = { path = "crates/haagenti-core" }
-haagenti-lz4 = { path = "crates/haagenti-lz4" }
-haagenti-zstd = { path = "crates/haagenti-zstd" }
-haagenti-brotli = { path = "crates/haagenti-brotli" }
-haagenti-deflate = { path = "crates/haagenti-deflate" }
-haagenti-simd = { path = "crates/haagenti-simd" }
-haagenti-stream = { path = "crates/haagenti-stream" }
-haagenti-cuda = { path = "crates/haagenti-cuda" }
-haagenti-hct = { path = "crates/haagenti-hct" }
-haagenti-fragments = { path = "crates/haagenti-fragments" }
-haagenti-network = { path = "crates/haagenti-network" }
-haagenti-importance = { path = "crates/haagenti-importance" }
-haagenti-speculative = { path = "crates/haagenti-speculative" }
-haagenti-latent-cache = { path = "crates/haagenti-latent-cache" }
-haagenti-adaptive = { path = "crates/haagenti-adaptive" }
-haagenti-sparse = { path = "crates/haagenti-sparse" }
-haagenti-neural = { path = "crates/haagenti-neural" }
-haagenti-streaming = { path = "crates/haagenti-streaming" }
-haagenti-webgpu = { path = "crates/haagenti-webgpu" }
-haagenti-mobile = { path = "crates/haagenti-mobile" }
-haagenti-serverless = { path = "crates/haagenti-serverless" }
-haagenti-distributed = { path = "crates/haagenti-distributed" }
-haagenti-merging = { path = "crates/haagenti-merging" }
-haagenti-learning = { path = "crates/haagenti-learning" }
-haagenti-autoopt = { path = "crates/haagenti-autoopt" }
-haagenti-grpc = { path = "crates/haagenti-grpc" }
+haagenti = { version = "0.1.0", path = "crates/haagenti" }
+haagenti-core = { version = "0.1.0", path = "crates/haagenti-core" }
+haagenti-lz4 = { version = "0.1.0", path = "crates/haagenti-lz4" }
+haagenti-zstd = { version = "0.1.0", path = "crates/haagenti-zstd" }
+haagenti-brotli = { version = "0.1.0", path = "crates/haagenti-brotli" }
+haagenti-deflate = { version = "0.1.0", path = "crates/haagenti-deflate" }
+haagenti-simd = { version = "0.1.0", path = "crates/haagenti-simd" }
+haagenti-stream = { version = "0.1.0", path = "crates/haagenti-stream" }
+haagenti-cuda = { version = "0.1.0", path = "crates/haagenti-cuda" }
+haagenti-hct = { version = "0.1.0", path = "crates/haagenti-hct" }
+haagenti-fragments = { version = "0.1.0", path = "crates/haagenti-fragments" }
+haagenti-network = { version = "0.1.0", path = "crates/haagenti-network" }
+haagenti-importance = { version = "0.1.0", path = "crates/haagenti-importance" }
+haagenti-speculative = { version = "0.1.0", path = "crates/haagenti-speculative" }
+haagenti-latent-cache = { version = "0.1.0", path = "crates/haagenti-latent-cache" }
+haagenti-adaptive = { version = "0.1.0", path = "crates/haagenti-adaptive" }
+haagenti-sparse = { version = "0.1.0", path = "crates/haagenti-sparse" }
+haagenti-neural = { version = "0.1.0", path = "crates/haagenti-neural" }
+haagenti-streaming = { version = "0.1.0", path = "crates/haagenti-streaming" }
+haagenti-webgpu = { version = "0.1.0", path = "crates/haagenti-webgpu" }
+haagenti-mobile = { version = "0.1.0", path = "crates/haagenti-mobile" }
+haagenti-serverless = { version = "0.1.0", path = "crates/haagenti-serverless" }
+haagenti-distributed = { version = "0.1.0", path = "crates/haagenti-distributed" }
+haagenti-merging = { version = "0.1.0", path = "crates/haagenti-merging" }
+haagenti-learning = { version = "0.1.0", path = "crates/haagenti-learning" }
+haagenti-autoopt = { version = "0.1.0", path = "crates/haagenti-autoopt" }
+haagenti-grpc = { version = "0.1.0", path = "crates/haagenti-grpc" }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COMPRESSION ALGORITHMS (reference implementations)
