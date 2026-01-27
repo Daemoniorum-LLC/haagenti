@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Native Rust Zstandard compression for Haagenti (RFC 8878)"
+description = "Zstandard-inspired compression for Haagenti (internal format, not Zstd-compatible)"
 keywords = ["compression", "zstd", "zstandard", "pure-rust"]
 categories = ["compression", "encoding"]
 
