@@ -6,9 +6,11 @@ Haagenti is a pure Rust compression library that enables 70B+ parameter model in
 
 ## The Headline
 
-**70B model inference on a single RTX 4500 Ada (24GB VRAM) at 25 tokens/second.**
+**70B model inference on a single RTX 4500 Ada (24GB VRAM).**
 
-For context: a 70B model at FP16 requires ~140GB VRAM. Even INT4 quantization needs ~35GB. Haagenti's tensor compression enables inference within 24GB while maintaining quality and throughput.
+For context: a 70B model at FP16 requires ~140GB VRAM. Even INT4 quantization needs ~35GB. Haagenti's tensor compression enables inference within 24GB while maintaining output quality.
+
+Current throughput is bottlenecked by tensor library overhead (see [Candle Ceiling Analysis](docs/CANDLE-CEILING-ANALYSIS.md)), not compression. With our Sigil-based tensor library (Nihil), we project 25+ tokens/second on identical hardware.
 
 ## How It Works
 
