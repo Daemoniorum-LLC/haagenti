@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors = ["Daemoniorum LLC"]
 keywords = ["continuous-learning", "online-learning", "adaptation", "lora"]
-categories = ["science::machine-learning"]
+categories = ["algorithms", "science"]
 
 [dependencies]
 haagenti-core = { workspace = true }
