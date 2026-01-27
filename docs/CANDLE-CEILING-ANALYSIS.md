@@ -2,7 +2,7 @@
 
 **Document Version:** 1.1.0
 **Date:** 2026-01-23
-**Authors:** Claude (Opus 4.5) + Human
+**Authors:** Lilith Crook + Claude (Opus 4.5)
 **Methodology:** Spec-Driven Development (SDD) + Agent-TDD
 
 ---
