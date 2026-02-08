@@ -24,11 +24,19 @@
 //!     --output /tmp/compressed-turbo \
 //!     --retention 0.20 \
 //!     --gpu
+//!
+//! # Output as individual .hct files (for TieredHoloLoader)
+//! cargo run --release --features "cuda" --example compress_turbo -- \
+//!     --model meta-llama/Llama-3.1-70B \
+//!     --output /tmp/compressed-hct \
+//!     --retention 0.45 \
+//!     --gpu \
+//!     --output-format hct-dir
 //! ```
 
 use std::path::PathBuf;
 
-use haagenti::pipeline::turbo::{TurboConfig, TurboPipeline};
+use haagenti::pipeline::turbo::{OutputFormat, TurboConfig, TurboPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -61,6 +69,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i += 1;
                 config.gpu_device_id = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(0);
             }
+            "--output-format" | "-f" => {
+                i += 1;
+                config.output_format = match args.get(i).map(|s| s.as_str()) {
+                    Some("safetensors") => OutputFormat::Safetensors,
+                    Some("hct-dir") | Some("hct") => OutputFormat::HctDirectory,
+                    Some(other) => {
+                        eprintln!(
+                            "Unknown output format: {}. Use 'safetensors' or 'hct-dir'",
+                            other
+                        );
+                        std::process::exit(1);
+                    }
+                    None => OutputFormat::Safetensors,
+                };
+            }
+            "--max-size" => {
+                i += 1;
+                config.max_tensor_size = args
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(300_000_000);
+            }
             "--help" | "-h" => {
                 print_help();
                 return Ok(());
@@ -78,11 +108,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
+    let format_str = match config.output_format {
+        OutputFormat::Safetensors => "safetensors (single file)",
+        OutputFormat::HctDirectory => "hct-dir (individual .hct files)",
+    };
+
     println!("\nTurbo Model Compression Pipeline");
     println!("=================================");
     println!("Model:               {}", config.model);
     println!("Output:              {}", config.output_dir.display());
+    println!("Output Format:       {}", format_str);
     println!("Retention:           {:.0}%", config.retention * 100.0);
+    println!("Max Tensor Size:     {} elements", config.max_tensor_size);
     println!("Workers:             {}", config.num_workers);
     println!(
         "GPU:                 {}",
@@ -143,5 +180,10 @@ fn print_help() {
     println!("    -w, --workers <N>        Number of parallel workers [default: auto]");
     println!("    -g, --gpu                Enable GPU acceleration (requires cuda feature)");
     println!("        --gpu-device <ID>    GPU device ID [default: 0]");
+    println!("    -f, --output-format <FMT> Output format [default: safetensors]");
+    println!("                             - safetensors: Single file, loads entire tensor before decode");
+    println!("                             - hct-dir: Individual .hct files for TieredHoloLoader");
+    println!("                               Enables VRAM/RAM/Disk tiering, progressive quality");
+    println!("        --max-size <N>       Max tensor elements [default: 300000000]");
     println!("    -h, --help               Print help");
 }

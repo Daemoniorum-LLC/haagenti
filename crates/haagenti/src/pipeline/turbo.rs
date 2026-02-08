@@ -57,6 +57,19 @@ thread_local! {
     static GPU_DCT_CTX: RefCell<Option<GpuDctContext>> = const { RefCell::new(None) };
 }
 
+/// Output format for compressed models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OutputFormat {
+    /// Single safetensors file with dtype "hct_v3" (default).
+    /// Efficient for storage but loads entire tensor before decompression.
+    #[default]
+    Safetensors,
+    /// Individual .hct files per tensor (HTNS format).
+    /// Compatible with TieredHoloLoader for progressive/tiered loading.
+    /// Enables VRAM/RAM/Disk tiering and background quality improvement.
+    HctDirectory,
+}
+
 /// Configuration for turbo pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurboConfig {
@@ -82,6 +95,8 @@ pub struct TurboConfig {
     pub use_gpu: bool,
     /// GPU device ID (0 for first GPU).
     pub gpu_device_id: usize,
+    /// Output format (safetensors or hct-dir).
+    pub output_format: OutputFormat,
 }
 
 impl Default for TurboConfig {
@@ -95,9 +110,10 @@ impl Default for TurboConfig {
             num_workers: num_cpus::get().min(16),
             checkpoint_interval: 50,
             min_tensor_size: 256,
-            max_tensor_size: 100_000_000,
+            max_tensor_size: 300_000_000, // 300M elements, enough for 28672x8192 MLP layers
             use_gpu: false,
             gpu_device_id: 0,
+            output_format: OutputFormat::default(),
         }
     }
 }
@@ -273,9 +289,18 @@ impl TurboPipeline {
             }
         }
 
-        // Write output file
-        let output_path = self.config.output_dir.join("model.safetensors");
-        Self::write_output(&state, &output_path)?;
+        // Write output based on format
+        let output_path = match self.config.output_format {
+            OutputFormat::Safetensors => {
+                let path = self.config.output_dir.join("model.safetensors");
+                Self::write_safetensors(&state, &path)?;
+                path
+            }
+            OutputFormat::HctDirectory => {
+                Self::write_hct_directory(&state, &self.config)?;
+                self.config.output_dir.clone()
+            }
+        };
 
         let elapsed = self.start_time.elapsed().as_secs_f64();
         let input_bytes = state.input_bytes.load(Ordering::Relaxed);
@@ -417,8 +442,8 @@ impl TurboPipeline {
         })
     }
 
-    /// Write all compressed tensors to output file.
-    fn write_output(state: &SharedState, output_path: &std::path::Path) -> Result<()> {
+    /// Write all compressed tensors to a single safetensors file (HCT V3 format).
+    fn write_safetensors(state: &SharedState, output_path: &std::path::Path) -> Result<()> {
         use std::io::Write;
 
         let buffer = state.output_buffer.lock().unwrap();
@@ -458,6 +483,83 @@ impl TurboPipeline {
         // Write data
         file.write_all(&all_data)
             .map_err(|e| Error::io(format!("failed to write data: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Write compressed tensors as individual .hct files (for TieredHoloLoader).
+    ///
+    /// Each tensor becomes a separate file with the zstd-compressed HCT data.
+    /// A manifest.json file is created listing all tensors.
+    ///
+    /// Note: For full TieredHoloLoader compatibility with fragment-level loading,
+    /// use `--retention` carefully as the current implementation stores compressed
+    /// fragments rather than raw holographic encoding.
+    fn write_hct_directory(state: &SharedState, config: &TurboConfig) -> Result<()> {
+        use std::io::Write;
+
+        let buffer = state.output_buffer.lock().unwrap();
+
+        // Create manifest
+        let mut manifest: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+
+        // Progress bar
+        let pb = ProgressBar::new(buffer.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} Writing HCT files [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+
+        for (name, data, shape, _dtype) in buffer.iter() {
+            // Convert tensor name to filename (replace / and . with _)
+            let filename = format!(
+                "{}.hct",
+                name.replace('/', "_").replace('.', "_")
+            );
+            let file_path = config.output_dir.join(&filename);
+
+            // Write compressed data to .hct file
+            let mut file = std::fs::File::create(&file_path)
+                .map_err(|e| Error::io(format!("failed to create {}: {}", filename, e)))?;
+            file.write_all(data)
+                .map_err(|e| Error::io(format!("failed to write {}: {}", filename, e)))?;
+
+            // Add to manifest
+            let original_size = shape.iter().product::<usize>() * 4;
+            manifest.insert(
+                name.clone(),
+                serde_json::json!({
+                    "file": filename,
+                    "shape": shape,
+                    "compressed_size": data.len(),
+                    "original_size": original_size,
+                    "dtype": "hct_v3_zstd",
+                }),
+            );
+
+            pb.inc(1);
+            pb.set_message(name.chars().take(30).collect::<String>());
+        }
+
+        pb.finish_with_message("Done!");
+
+        // Write manifest file
+        let manifest_path = config.output_dir.join("manifest.json");
+        let manifest_json = serde_json::to_string_pretty(&manifest)
+            .map_err(|e| Error::corrupted(format!("failed to serialize manifest: {}", e)))?;
+        std::fs::write(&manifest_path, manifest_json)
+            .map_err(|e| Error::io(format!("failed to write manifest: {}", e)))?;
+
+        eprintln!(
+            "\nWrote {} .hct files to {}",
+            buffer.len(),
+            config.output_dir.display()
+        );
 
         Ok(())
     }

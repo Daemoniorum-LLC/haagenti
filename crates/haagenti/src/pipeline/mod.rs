@@ -71,4 +71,4 @@ pub use quality::{QualityReport, QualitySampler, QualitySummary};
 pub use shard_reader::{discover_shards, ShardReader, TensorEntry};
 
 #[cfg(feature = "parallel")]
-pub use turbo::{TurboConfig, TurboPipeline, TurboReport};
+pub use turbo::{OutputFormat, TurboConfig, TurboPipeline, TurboReport};

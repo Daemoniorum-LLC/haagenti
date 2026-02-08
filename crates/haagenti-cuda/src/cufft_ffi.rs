@@ -515,7 +515,7 @@ mod tests {
     #[test]
     #[ignore] // Requires CUDA GPU
     fn test_fft_dct_roundtrip() {
-        let mut ctx = FftDctContext::new(0).unwrap();
+        let mut ctx = FftDctContext::with_device_id(0).unwrap();
 
         let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let dct = ctx.dct_1d_fft(&input).unwrap();

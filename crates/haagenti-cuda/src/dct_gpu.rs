@@ -55,7 +55,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use cudarc::driver::{CudaDevice, CudaSlice, DeviceSlice, LaunchAsync, LaunchConfig};
+use cudarc::driver::{sys, CudaDevice, CudaSlice, DeviceSlice, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::Ptx;
 
 use crate::{CudaError, MemoryPool, Result};
@@ -81,6 +81,46 @@ fn hash_kernel_source(source: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     source.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+/// Convert compute capability (major, minor) to NVRTC architecture string.
+///
+/// This returns a static string reference for the NVRTC compiler.
+/// Coverage includes all CUDA architectures from Maxwell (5.x) through Ada Lovelace (8.9)
+/// and beyond.
+fn compute_capability_to_arch(major: usize, minor: usize) -> &'static str {
+    match (major, minor) {
+        // Maxwell (CUDA 6.0+)
+        (5, 0) => "sm_50",
+        (5, 2) => "sm_52",
+        (5, 3) => "sm_53",
+        // Pascal (CUDA 8.0+)
+        (6, 0) => "sm_60",
+        (6, 1) => "sm_61",
+        (6, 2) => "sm_62",
+        // Volta (CUDA 9.0+)
+        (7, 0) => "sm_70",
+        (7, 2) => "sm_72",
+        // Turing (CUDA 10.0+)
+        (7, 5) => "sm_75",
+        // Ampere (CUDA 11.0+)
+        (8, 0) => "sm_80",
+        (8, 6) => "sm_86",
+        (8, 7) => "sm_87",
+        // Ada Lovelace (CUDA 11.8+)
+        (8, 9) => "sm_89",
+        // Hopper (CUDA 12.0+)
+        (9, 0) => "sm_90",
+        // Blackwell (CUDA 12.4+) and future
+        (10, 0) => "sm_100",
+        // Default: use the highest known architecture for forward compatibility
+        _ if major >= 10 => "sm_100",
+        _ if major >= 9 => "sm_90",
+        _ if major >= 8 => "sm_89",
+        _ if major >= 7 => "sm_75",
+        _ if major >= 6 => "sm_61",
+        _ => "sm_52", // Fallback to Maxwell
+    }
 }
 
 /// Try to load cached PTX from disk.
@@ -1121,6 +1161,28 @@ impl GpuDctContext {
         })
     }
 
+    /// Gets the compute capability of the GPU.
+    ///
+    /// Returns (major, minor) version tuple, e.g., (8, 9) for sm_89 (Ada Lovelace).
+    fn get_compute_capability(&self) -> (usize, usize) {
+        let major = self
+            .device
+            .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)
+            .unwrap_or(5) as usize;
+        let minor = self
+            .device
+            .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)
+            .unwrap_or(2) as usize;
+        (major, minor)
+    }
+
+    /// Gets the device name for logging.
+    fn get_device_name(&self) -> String {
+        self.device
+            .name()
+            .unwrap_or_else(|_| "Unknown GPU".to_string())
+    }
+
     /// Sets the threshold for switching to FFT-based DCT.
     ///
     /// When tensor dimensions exceed this threshold and the `cufft` feature is enabled,
@@ -1303,12 +1365,22 @@ impl GpuDctContext {
     /// Load DCT kernels if not already loaded.
     ///
     /// Uses PTX caching for faster subsequent loads.
+    /// Automatically detects the GPU's compute capability and compiles kernels
+    /// for the correct architecture.
     fn ensure_kernels_loaded(&mut self) -> Result<()> {
         if self.kernels_loaded {
             return Ok(());
         }
 
-        let arch = "sm_52"; // Minimum compute capability
+        // Auto-detect GPU compute capability for optimal kernel compilation
+        let (major, minor) = self.get_compute_capability();
+        let arch = compute_capability_to_arch(major, minor);
+        tracing::info!(
+            "Detected GPU compute capability: {} ({})",
+            arch,
+            self.get_device_name()
+        );
+
         let source_hash = hash_kernel_source(DCT_KERNEL_CUDA);
 
         // Try to load from cache first
@@ -1317,7 +1389,7 @@ impl GpuDctContext {
             cached_ptx
         } else {
             // Compile CUDA C++ to PTX using NVRTC
-            tracing::info!("Compiling DCT kernels with NVRTC...");
+            tracing::info!("Compiling DCT kernels with NVRTC for {}...", arch);
             let start = std::time::Instant::now();
 
             let compiled_ptx = cudarc::nvrtc::compile_ptx_with_opts(
@@ -1328,7 +1400,9 @@ impl GpuDctContext {
                     ..Default::default()
                 },
             )
-            .map_err(|e| CudaError::KernelLoad(format!("NVRTC compilation failed: {}", e)))?;
+            .map_err(|e| {
+                CudaError::KernelLoad(format!("NVRTC compilation failed for {}: {}", arch, e))
+            })?;
 
             let elapsed = start.elapsed();
             tracing::info!(
