@@ -1,0 +1,8 @@
+PASS: Dimension reduction
+PASS: Projection deterministic
+PASS: Distance preservation
+PASS: Orthogonality preservation
+PASS: Zero vector
+PASS: Linearity
+PASS: Scaling
+PASS: Different seeds

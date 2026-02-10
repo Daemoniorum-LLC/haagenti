@@ -1,0 +1,331 @@
+// Test: Quantization for tensor compression
+// Spec: haagenti-hct quantization schemes
+// Priority: P1
+//
+// Purpose:
+// Validates quantization schemes for reducing precision
+// with controlled quality loss.
+//
+// Expected behavior:
+// Should print PASS for each test
+
+// ════════════════════════════════════════════════════════════════════════════
+// Quantization Schemes
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Uniform quantization: maps [min, max] to [0, levels-1]
+sigil UniformQuantizer {
+    min_val: f64,
+    max_val: f64,
+    levels: u32,
+}
+
+⊢ UniformQuantizer {
+    rite new(min_val: f64, max_val: f64, levels: u32) → Self {
+        Self {
+            min_val: min_val,
+            max_val: max_val,
+            levels: levels,
+        }
+    }
+
+    rite from_data(data: &[f64], levels: u32) → Self {
+        ≔ Δ min_v = data[0];
+        ≔ Δ max_v = data[0];
+        ∀ i ∈ 1..data.len() {
+            ⎇ data[i] < min_v { min_v = data[i]; }
+            ⎇ data[i] > max_v { max_v = data[i]; }
+        }
+        // Add small epsilon to avoid division by zero
+        ⎇ max_v == min_v { max_v = min_v + 1e-10; }
+        Self·new(min_v, max_v, levels)
+    }
+
+    rite quantize(&self, value: f64) → u32 {
+        ≔ normalized = (value - self.min_val) / (self.max_val - self.min_val);
+        ≔ clamped = normalized.max(0.0).min(1.0);
+        ≔ level = (clamped * (self.levels - 1) as f64).round() as u32;
+        level.min(self.levels - 1)
+    }
+
+    rite dequantize(&self, level: u32) → f64 {
+        ≔ normalized = level as f64 / (self.levels - 1) as f64;
+        self.min_val + normalized * (self.max_val - self.min_val)
+    }
+
+    rite step_size(&self) → f64 {
+        (self.max_val - self.min_val) / (self.levels - 1) as f64
+    }
+}
+
+⊢ Clone ∀ UniformQuantizer {
+    rite clone(&self) → Self {
+        Self {
+            min_val: self.min_val,
+            max_val: self.max_val,
+            levels: self.levels,
+        }
+    }
+}
+
+/// Symmetric quantization: maps [-max_abs, max_abs] to [-levels/2, levels/2]
+sigil SymmetricQuantizer {
+    max_abs: f64,
+    levels: u32,
+}
+
+⊢ SymmetricQuantizer {
+    rite new(max_abs: f64, levels: u32) → Self {
+        Self {
+            max_abs: max_abs,
+            levels: levels,
+        }
+    }
+
+    rite from_data(data: &[f64], levels: u32) → Self {
+        ≔ Δ max_a = 0.0;
+        ∀ i ∈ 0..data.len() {
+            ⎇ data[i].abs() > max_a { max_a = data[i].abs(); }
+        }
+        ⎇ max_a == 0.0 { max_a = 1e-10; }
+        Self·new(max_a, levels)
+    }
+
+    rite quantize(&self, value: f64) → i32 {
+        ≔ normalized = value / self.max_abs;
+        ≔ clamped = normalized.max(-1.0).min(1.0);
+        ≔ half = (self.levels / 2) as i32;
+        (clamped * half as f64).round() as i32
+    }
+
+    rite dequantize(&self, level: i32) → f64 {
+        ≔ half = (self.levels / 2) as f64;
+        (level as f64 / half) * self.max_abs
+    }
+}
+
+⊢ Clone ∀ SymmetricQuantizer {
+    rite clone(&self) → Self {
+        Self {
+            max_abs: self.max_abs,
+            levels: self.levels,
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Quality Metrics
+// ════════════════════════════════════════════════════════════════════════════
+
+rite mse(a: &[f64], b: &[f64]) → f64 {
+    ⎇ a.len() != b.len() { ⤺ 0.0; }
+    ⎇ a.len() == 0 { ⤺ 0.0; }
+
+    ≔ Δ sum_sq = 0.0;
+    ∀ i ∈ 0..a.len() {
+        ≔ diff = a[i] - b[i];
+        sum_sq = sum_sq + diff * diff;
+    }
+    sum_sq / a.len() as f64
+}
+
+rite max_error(a: &[f64], b: &[f64]) → f64 {
+    ≔ Δ max_e = 0.0;
+    ∀ i ∈ 0..a.len() {
+        ≔ e = (a[i] - b[i]).abs();
+        ⎇ e > max_e { max_e = e; }
+    }
+    max_e
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Test uniform quantization roundtrip
+rite test_uniform_roundtrip() → bool {
+    ≔ q = UniformQuantizer·new(0.0, 10.0, 256);
+
+    // Quantize and dequantize
+    ≔ values = vec![0.0, 2.5, 5.0, 7.5, 10.0];
+    ∀ i ∈ 0..values.len() {
+        ≔ level = q.quantize(values[i]);
+        ≔ recovered = q.dequantize(level);
+        ⎇ (values[i] - recovered).abs() > 0.05 {
+            ⤺ false;
+        }
+    }
+
+    true
+}
+
+/// Test uniform quantization clamps out-of-range values
+rite test_uniform_clamping() → bool {
+    ≔ q = UniformQuantizer·new(0.0, 10.0, 256);
+
+    ≔ level_low = q.quantize(-5.0);
+    ≔ level_high = q.quantize(15.0);
+
+    level_low == 0 && level_high == 255
+}
+
+/// Test symmetric quantization roundtrip
+rite test_symmetric_roundtrip() → bool {
+    ≔ q = SymmetricQuantizer·new(5.0, 256);
+
+    ≔ values = vec![-5.0, -2.5, 0.0, 2.5, 5.0];
+    ∀ i ∈ 0..values.len() {
+        ≔ level = q.quantize(values[i]);
+        ≔ recovered = q.dequantize(level);
+        ⎇ (values[i] - recovered).abs() > 0.05 {
+            ⤺ false;
+        }
+    }
+
+    true
+}
+
+/// Test symmetric quantization preserves sign
+rite test_symmetric_sign() → bool {
+    ≔ q = SymmetricQuantizer·new(10.0, 256);
+
+    ≔ pos = q.quantize(5.0);
+    ≔ neg = q.quantize(-5.0);
+
+    pos > 0 && neg < 0
+}
+
+/// Test zero maps to zero in symmetric quantization
+rite test_symmetric_zero() → bool {
+    ≔ q = SymmetricQuantizer·new(10.0, 256);
+    ≔ level = q.quantize(0.0);
+    level == 0
+}
+
+/// Test quantization step size
+rite test_step_size() → bool {
+    ≔ q = UniformQuantizer·new(0.0, 255.0, 256);
+    ≔ step = q.step_size();
+    (step - 1.0).abs() < 0.01
+}
+
+/// Test from_data constructs correct range
+rite test_from_data() → bool {
+    ≔ data = vec![1.0, 5.0, 3.0, 7.0, 2.0];
+    ≔ q = UniformQuantizer·from_data(&data, 256);
+
+    (q.min_val - 1.0).abs() < 0.01 && (q.max_val - 7.0).abs() < 0.01
+}
+
+/// Test more levels = less error
+rite test_levels_vs_error() → bool {
+    ≔ data = vec![0.1, 0.5, 0.9, 1.5, 2.0, 3.5, 4.0, 4.5];
+
+    // Quantize with 16 levels
+    ≔ q16 = UniformQuantizer·from_data(&data, 16);
+    ≔ Δ rec16 = Vec·with_capacity(data.len());
+    ∀ i ∈ 0..data.len() {
+        ≔ level = q16.quantize(data[i]);
+        rec16.push(q16.dequantize(level));
+    }
+
+    // Quantize with 256 levels
+    ≔ q256 = UniformQuantizer·from_data(&data, 256);
+    ≔ Δ rec256 = Vec·with_capacity(data.len());
+    ∀ i ∈ 0..data.len() {
+        ≔ level = q256.quantize(data[i]);
+        rec256.push(q256.dequantize(level));
+    }
+
+    ≔ mse16 = mse(&data, &rec16);
+    ≔ mse256 = mse(&data, &rec256);
+
+    // More levels = less error
+    mse256 < mse16
+}
+
+/// Test max error is bounded by half step size
+rite test_max_error_bound() → bool {
+    ≔ data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+    ≔ q = UniformQuantizer·from_data(&data, 256);
+
+    ≔ Δ reconstructed = Vec·with_capacity(data.len());
+    ∀ i ∈ 0..data.len() {
+        ≔ level = q.quantize(data[i]);
+        reconstructed.push(q.dequantize(level));
+    }
+
+    ≔ max_e = max_error(&data, &reconstructed);
+    ≔ step = q.step_size();
+
+    // Max error should be at most half the step size
+    max_e <= step / 2.0 + 0.01
+}
+
+/// Test 8-bit quantization (256 levels)
+rite test_8bit_quantization() → bool {
+    ≔ q = UniformQuantizer·new(0.0, 1.0, 256);
+
+    // All 256 levels should be representable
+    ≔ Δ all_valid = true;
+    ∀ i ∈ 0..256 {
+        ≔ value = i as f64 / 255.0;
+        ≔ level = q.quantize(value);
+        ⎇ level != i as u32 {
+            all_valid = false;
+        }
+    }
+
+    all_valid
+}
+
+/// Test 4-bit quantization (16 levels)
+rite test_4bit_quantization() → bool {
+    ≔ q = UniformQuantizer·new(0.0, 1.0, 16);
+
+    ≔ Δ all_valid = true;
+    ∀ i ∈ 0..16 {
+        ≔ value = i as f64 / 15.0;
+        ≔ level = q.quantize(value);
+        ⎇ level != i as u32 {
+            all_valid = false;
+        }
+    }
+
+    all_valid
+}
+
+rite main() {
+    ≔ r1 = ⎇ test_uniform_roundtrip() { "PASS: Uniform roundtrip" } ⎉ { "FAIL: Uniform roundtrip" };
+    println(r1);
+
+    ≔ r2 = ⎇ test_uniform_clamping() { "PASS: Uniform clamping" } ⎉ { "FAIL: Uniform clamping" };
+    println(r2);
+
+    ≔ r3 = ⎇ test_symmetric_roundtrip() { "PASS: Symmetric roundtrip" } ⎉ { "FAIL: Symmetric roundtrip" };
+    println(r3);
+
+    ≔ r4 = ⎇ test_symmetric_sign() { "PASS: Symmetric sign" } ⎉ { "FAIL: Symmetric sign" };
+    println(r4);
+
+    ≔ r5 = ⎇ test_symmetric_zero() { "PASS: Symmetric zero" } ⎉ { "FAIL: Symmetric zero" };
+    println(r5);
+
+    ≔ r6 = ⎇ test_step_size() { "PASS: Step size" } ⎉ { "FAIL: Step size" };
+    println(r6);
+
+    ≔ r7 = ⎇ test_from_data() { "PASS: From data" } ⎉ { "FAIL: From data" };
+    println(r7);
+
+    ≔ r8 = ⎇ test_levels_vs_error() { "PASS: Levels vs error" } ⎉ { "FAIL: Levels vs error" };
+    println(r8);
+
+    ≔ r9 = ⎇ test_max_error_bound() { "PASS: Max error bound" } ⎉ { "FAIL: Max error bound" };
+    println(r9);
+
+    ≔ r10 = ⎇ test_8bit_quantization() { "PASS: 8-bit quantization" } ⎉ { "FAIL: 8-bit quantization" };
+    println(r10);
+
+    ≔ r11 = ⎇ test_4bit_quantization() { "PASS: 4-bit quantization" } ⎉ { "FAIL: 4-bit quantization" };
+    println(r11);
+}

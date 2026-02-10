@@ -1,0 +1,11 @@
+PASS: Uniform roundtrip
+PASS: Uniform clamping
+PASS: Symmetric roundtrip
+PASS: Symmetric sign
+PASS: Symmetric zero
+PASS: Step size
+PASS: From data
+PASS: Levels vs error
+PASS: Max error bound
+PASS: 8-bit quantization
+PASS: 4-bit quantization
