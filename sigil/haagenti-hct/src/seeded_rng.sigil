@@ -1,0 +1,151 @@
+//! Seeded Random Number Generator
+//!
+//! Provides deterministic pseudo-random number generation for
+//! reproducible random projections and other holographic operations.
+//!
+//! Uses xorshift64* algorithm for fast, high-quality random numbers.
+
+use std·math·consts·PI
+
+/// Seeded random number generator using xorshift64*.
+///
+/// Produces deterministic sequences given the same seed.
+/// Suitable for random projection matrices and test data generation.
+☉ sigil SeededRng {
+    state: u64,
+}
+
+⊢ SeededRng {
+    /// Create a new RNG with the given seed.
+    ☉ rite new(seed: u64) → Self {
+        Self {
+            state: seed ^ 0x5DEECE66D!,
+        }
+    }
+
+    /// Generate the next 64-bit pseudo-random number.
+    ///
+    /// Uses xorshift64* algorithm.
+    ☉ rite next_u64(&mut self) → u64 {
+        self.state ^= self.state >> 12;
+        self.state ^= self.state << 25;
+        self.state ^= self.state >> 27;
+        self.state.wrapping_mul(0x2545F4914F6CDD1D)
+    }
+
+    /// Generate a random u32.
+    ☉ rite next_u32(&mut self) → u32 {
+        (self.next_u64() >> 32) as u32
+    }
+
+    /// Generate a random f32 in [0, 1).
+    ☉ rite next_f32(&mut self) → f32 {
+        // Use top 24 bits for f32 mantissa precision
+        (self.next_u64() >> 40) as f32 / 16777216.0
+    }
+
+    /// Generate a random f64 in [0, 1).
+    ☉ rite next_f64(&mut self) → f64 {
+        // Use top 53 bits for f64 mantissa precision
+        (self.next_u64() >> 11) as f64 / 9007199254740992.0
+    }
+
+    /// Generate a random f32 in [low, high).
+    ☉ rite next_range(&mut self, low: f32, high: f32) → f32 {
+        low + self.next_f32() * (high - low)
+    }
+
+    /// Generate an approximate standard normal value using Box-Muller transform.
+    ///
+    /// Returns a value with mean 0 and standard deviation 1.
+    ☉ rite next_normal(&mut self) → f32 {
+        ≔ u1 = self.next_f32().max(1e-10);  // Avoid log(0)
+        ≔ u2 = self.next_f32();
+        ≔ r = (-2.0 * u1.ln()).sqrt();
+        ≔ theta = 2.0 * PI * u2;
+        r * theta.cos()
+    }
+
+    /// Generate a pair of independent standard normal values.
+    ///
+    /// More efficient when you need two values (uses both Box-Muller outputs).
+    ☉ rite next_normal_pair(&mut self) → (f32, f32) {
+        ≔ u1 = self.next_f32().max(1e-10);
+        ≔ u2 = self.next_f32();
+        ≔ r = (-2.0 * u1.ln()).sqrt();
+        ≔ theta = 2.0 * PI * u2;
+        (r * theta.cos(), r * theta.sin())
+    }
+
+    /// Generate a random sign (+1.0 or -1.0).
+    ☉ rite next_sign(&mut self) → f32 {
+        if self.next_u64() & 1 == 0 { 1.0 } else { -1.0 }
+    }
+
+    /// Derive a new seeded RNG from this one.
+    ///
+    /// Useful for creating independent sub-streams.
+    ☉ rite derive(&mut self, extra_seed: u64) → Self {
+        Self::new(self.next_u64() ^ extra_seed)
+    }
+
+    /// Fill a slice with random f32 values in [0, 1).
+    ☉ rite fill_f32(&mut self, buf: &mut [f32]) {
+        for x in buf.iter_mut() {
+            *x = self.next_f32();
+        }
+    }
+
+    /// Fill a slice with random normal values.
+    ☉ rite fill_normal(&mut self, buf: &mut [f32]) {
+        ≔ mut i = 0;
+        while i + 1 < buf.len() {
+            ≔ (a, b) = self.next_normal_pair();
+            buf[i] = a;
+            buf[i + 1] = b;
+            i += 2;
+        }
+        if i < buf.len() {
+            buf[i] = self.next_normal();
+        }
+    }
+
+    /// Generate a random Gaussian projection matrix.
+    ///
+    /// Returns a matrix of shape (rows, cols) with entries from N(0, 1/cols).
+    ☉ rite gaussian_matrix(&mut self, rows: usize, cols: usize) → Vec<f32> {
+        ≔ scale = 1.0 / (cols as f32).sqrt();
+        ≔ mut matrix = vec![0.0f32; rows * cols];
+        self.fill_normal(&mut matrix);
+        for x in matrix.iter_mut() {
+            *x *= scale;
+        }
+        matrix
+    }
+
+    /// Generate a random sparse projection matrix.
+    ///
+    /// Each column has approximately `sparsity * cols` non-zero entries,
+    /// with values +/- 1/sqrt(sparsity * cols).
+    ☉ rite sparse_projection_matrix(&mut self, rows: usize, cols: usize, sparsity: f32) → Vec<f32> {
+        ≔ nnz_per_col = (sparsity * cols as f32).ceil() as usize;
+        ≔ scale = 1.0 / (nnz_per_col as f32).sqrt();
+        ≔ mut matrix = vec![0.0f32; rows * cols];
+
+        for col in 0..cols {
+            // Select nnz_per_col random rows for this column
+            for _ in 0..nnz_per_col {
+                ≔ row = (self.next_u32() as usize) % rows;
+                matrix[row * cols + col] = scale * self.next_sign();
+            }
+        }
+
+        matrix
+    }
+}
+
+⊢ Clone ∀ SeededRng {
+    rite clone(&self) → Self {
+        Self { state: self.state }
+    }
+}

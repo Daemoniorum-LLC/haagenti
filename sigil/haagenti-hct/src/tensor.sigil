@@ -1,0 +1,1120 @@
+//! Compressed Tensor Format (.hct) for LLM weight storage.
+//!
+//! The Haagenti Compressed Tensor format stores quantized model weights
+//! with block-level compression for efficient random access and parallel
+//! decompression.
+//!
+//! ## Format Overview
+//!
+//! ```text
+//! ┌────────────────────────────────────────────────────────────┐
+//! │ Header (64 bytes)                                          │
+//! │  - Magic: "HCTN" (4 bytes)                                 │
+//! │  - Version: u32                                            │
+//! │  - Algorithm: u8 (0=LZ4, 1=Zstd)                           │
+//! │  - Dtype: u8 (0=F32, 1=F16, 2=BF16, 3=I8, 4=I4)           │
+//! │  - Flags: u16                                              │
+//! │  - Original size: u64                                      │
+//! │  - Compressed size: u64                                    │
+//! │  - Block size: u32                                         │
+//! │  - Num blocks: u32                                         │
+//! │  - Shape rank: u8                                          │
+//! │  - Shape dims: [u64; 4]                                    │
+//! │  - Reserved: padding to 64 bytes                           │
+//! ├────────────────────────────────────────────────────────────┤
+//! │ Block Index (num_blocks * 8 bytes)                         │
+//! │  - For each block:                                         │
+//! │    - Offset from data start: u32                           │
+//! │    - Compressed size: u32                                  │
+//! ├────────────────────────────────────────────────────────────┤
+//! │ Compressed Data                                            │
+//! │  - Block 0: [compressed bytes]                             │
+//! │  - Block 1: [compressed bytes]                             │
+//! │  - ...                                                     │
+//! └────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! @spec specs/decisions/DEC-2026-02-10-sigil-migration.md
+
+use super·super·haagenti_core·{Error, Result}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Format Constants
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Magic bytes for the HCT format: "HCTN"
+☉ const HCT_MAGIC: [u8; 4] = [0x48, 0x43, 0x54, 0x4E]
+
+/// Format version 1 (original).
+☉ const HCT_VERSION: u32 = 1
+
+/// Format version 2 (with checksums and quantization metadata).
+☉ const HCT_VERSION_V2: u32 = 2
+
+/// Default block size (16 KB uncompressed).
+/// Note: 16KB chosen for compatibility with haagenti-zstd which has issues at larger sizes
+☉ const DEFAULT_BLOCK_SIZE: u32 = 16 * 1024
+
+// ════════════════════════════════════════════════════════════════════════════
+// HCT v2 Flags
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Flag: Header checksum present (XXH3-64).
+☉ const FLAG_HEADER_CHECKSUM: u16 = 0x0001
+
+/// Flag: Per-block checksums present (XXH3-64 for each block).
+☉ const FLAG_BLOCK_CHECKSUMS: u16 = 0x0002
+
+/// Flag: Quantization metadata present.
+☉ const FLAG_QUANTIZATION: u16 = 0x0004
+
+/// Flag: Tensor name embedded in extended header.
+☉ const FLAG_TENSOR_NAME: u16 = 0x0008
+
+/// Flag: Holographic encoded data (HoloTensor format).
+/// When set, the HCT file contains holographic fragments instead of raw blocks.
+☉ const FLAG_HOLOGRAPHIC: u16 = 0x0010
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Algorithm
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compression algorithm identifier.
+#[repr(u8)]
+☉ enum CompressionAlgorithm {
+    Lz4 = 0,
+    Zstd = 1,
+}
+
+⊢ CompressionAlgorithm {
+    /// Try to parse from a u8 value.
+    ☉ rite from_u8(value: u8) → Result<Self> {
+        match value {
+            0 → Ok(CompressionAlgorithm·Lz4),
+            1 → Ok(CompressionAlgorithm·Zstd),
+            _ → Err(Error·corrupted(format!("unknown compression algorithm: {}", value)!)),
+        }
+    }
+}
+
+⊢ Copy ∀ CompressionAlgorithm {}
+⊢ Clone ∀ CompressionAlgorithm {
+    rite clone(&self) → Self { *self }
+}
+⊢ PartialEq ∀ CompressionAlgorithm {
+    rite eq(&self, other: &Self) → bool {
+        (*self as u8) == (*other as u8)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Data Type
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Data type identifier for tensor elements.
+#[repr(u8)]
+☉ enum DType {
+    F32 = 0,
+    F16 = 1,
+    BF16 = 2,
+    I8 = 3,
+    I4 = 4,
+}
+
+⊢ DType {
+    /// Returns the size in bits.
+    ☉ rite bits(&self) → usize {
+        match self {
+            DType·F32 → 32,
+            DType·F16 | DType·BF16 → 16,
+            DType·I8 → 8,
+            DType·I4 → 4,
+        }
+    }
+
+    /// Returns the size in bytes (rounded up for sub-byte types).
+    ☉ rite bytes(&self) → usize {
+        (self.bits() + 7) / 8
+    }
+
+    /// Try to parse from a u8 value.
+    ☉ rite from_u8(value: u8) → Result<Self> {
+        match value {
+            0 → Ok(DType·F32),
+            1 → Ok(DType·F16),
+            2 → Ok(DType·BF16),
+            3 → Ok(DType·I8),
+            4 → Ok(DType·I4),
+            _ → Err(Error·corrupted(format!("unknown dtype: {}", value)!)),
+        }
+    }
+}
+
+⊢ Copy ∀ DType {}
+⊢ Clone ∀ DType {
+    rite clone(&self) → Self { *self }
+}
+⊢ PartialEq ∀ DType {
+    rite eq(&self, other: &Self) → bool {
+        (*self as u8) == (*other as u8)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Quantization Scheme
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Quantization scheme identifier.
+#[repr(u8)]
+☉ enum QuantizationScheme {
+    /// No quantization (full precision).
+    None = 0,
+    /// GPTQ-style INT4 quantization.
+    GptqInt4 = 1,
+    /// AWQ-style INT4 quantization.
+    AwqInt4 = 2,
+    /// Symmetric INT8 quantization.
+    SymmetricInt8 = 3,
+    /// Asymmetric INT8 quantization.
+    AsymmetricInt8 = 4,
+}
+
+⊢ QuantizationScheme {
+    /// Try to parse from a u8 value.
+    ☉ rite from_u8(value: u8) → Result<Self> {
+        match value {
+            0 → Ok(QuantizationScheme·None),
+            1 → Ok(QuantizationScheme·GptqInt4),
+            2 → Ok(QuantizationScheme·AwqInt4),
+            3 → Ok(QuantizationScheme·SymmetricInt8),
+            4 → Ok(QuantizationScheme·AsymmetricInt8),
+            _ → Err(Error·corrupted(format!("unknown quantization scheme: {}", value)!)),
+        }
+    }
+}
+
+⊢ Default ∀ QuantizationScheme {
+    rite default() → Self { QuantizationScheme·None }
+}
+⊢ Copy ∀ QuantizationScheme {}
+⊢ Clone ∀ QuantizationScheme {
+    rite clone(&self) → Self { *self }
+}
+⊢ PartialEq ∀ QuantizationScheme {
+    rite eq(&self, other: &Self) → bool {
+        (*self as u8) == (*other as u8)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Quantization Metadata
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Quantization metadata for HCT v2.
+///
+/// Contains information needed to dequantize INT4/INT8 weights.
+☉ sigil QuantizationMetadata {
+    /// Quantization scheme used.
+    scheme: QuantizationScheme,
+    /// Group size for group-wise quantization (0 = per-tensor).
+    group_size: u32,
+    /// Global scale factor (f16 stored as u16 bits).
+    scale_bits: u16,
+    /// Global zero point (for asymmetric quantization).
+    zero_point: i8,
+    /// Whether per-group scales are stored after compressed data.
+    has_per_group_scales: bool,
+}
+
+⊢ QuantizationMetadata {
+    /// Size of quantization metadata in bytes.
+    ☉ const SIZE: usize = 8
+
+    /// Create default metadata (no quantization).
+    ☉ rite new() → Self {
+        Self {
+            scheme: QuantizationScheme·None,
+            group_size: 0,
+            scale_bits: 0,
+            zero_point: 0,
+            has_per_group_scales: false,
+        }
+    }
+
+    /// Serialize to bytes.
+    ☉ rite to_bytes(&self) → [u8; 8] {
+        ≔ mut buf = [0u8; 8];
+        buf[0] = self.scheme as u8;
+        buf[1] = if self.has_per_group_scales { 1 } else { 0 };
+        buf[2..4].copy_from_slice(&self.scale_bits.to_le_bytes());
+        buf[4] = self.zero_point as u8;
+        // Group size (24-bit, stored in bytes 5-7)
+        ≔ gs_bytes = self.group_size.to_le_bytes();
+        buf[5] = gs_bytes[0];
+        buf[6] = gs_bytes[1];
+        buf[7] = gs_bytes[2];
+        buf
+    }
+
+    /// Parse from bytes.
+    ☉ rite from_bytes(buf: &[u8; 8]) → Result<Self> {
+        ≔ scheme = QuantizationScheme·from_u8(buf[0])?;
+        ≔ has_per_group_scales = buf[1] != 0;
+        ≔ scale_bits = u16·from_le_bytes([buf[2], buf[3]]);
+        ≔ zero_point = buf[4] as i8;
+        ≔ group_size = u32·from_le_bytes([buf[5], buf[6], buf[7], 0]);
+
+        Ok(Self {
+            scheme,
+            group_size,
+            scale_bits,
+            zero_point,
+            has_per_group_scales,
+        })
+    }
+}
+
+⊢ Default ∀ QuantizationMetadata {
+    rite default() → Self { Self·new() }
+}
+⊢ Clone ∀ QuantizationMetadata {
+    rite clone(&self) → Self {
+        Self {
+            scheme: self.scheme,
+            group_size: self.group_size,
+            scale_bits: self.scale_bits,
+            zero_point: self.zero_point,
+            has_per_group_scales: self.has_per_group_scales,
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Block Index (v1)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Block index entry (v1 format).
+☉ sigil BlockIndex {
+    /// Offset from the start of compressed data.
+    offset: u32,
+    /// Compressed size of this block.
+    compressed_size: u32,
+}
+
+⊢ BlockIndex {
+    /// Size of a block index entry in bytes.
+    ☉ const SIZE: usize = 8
+
+    /// Create a new block index entry.
+    ☉ rite new(offset: u32, compressed_size: u32) → Self {
+        Self { offset, compressed_size }
+    }
+
+    /// Serialize to bytes.
+    ☉ rite to_bytes(&self) → [u8; 8] {
+        ≔ mut buf = [0u8; 8];
+        buf[0..4].copy_from_slice(&self.offset.to_le_bytes());
+        buf[4..8].copy_from_slice(&self.compressed_size.to_le_bytes());
+        buf
+    }
+
+    /// Parse from bytes.
+    ☉ rite from_bytes(buf: &[u8; 8]) → Self {
+        Self {
+            offset: u32·from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            compressed_size: u32·from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+        }
+    }
+}
+
+⊢ Copy ∀ BlockIndex {}
+⊢ Clone ∀ BlockIndex {
+    rite clone(&self) → Self { *self }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Block Index V2 (with checksum)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Block index entry with optional checksum (v2 format).
+☉ sigil BlockIndexV2 {
+    /// Offset from the start of compressed data.
+    offset: u32,
+    /// Compressed size of this block.
+    compressed_size: u32,
+    /// XXH3-64 checksum of compressed data (0 if not computed).
+    checksum: u64,
+}
+
+⊢ BlockIndexV2 {
+    /// Size of a v2 block index entry in bytes.
+    ☉ const SIZE: usize = 16
+
+    /// Create a new v2 block index entry.
+    ☉ rite new(offset: u32, compressed_size: u32, checksum: u64) → Self {
+        Self { offset, compressed_size, checksum }
+    }
+
+    /// Serialize to bytes.
+    ☉ rite to_bytes(&self) → [u8; 16] {
+        ≔ mut buf = [0u8; 16];
+        buf[0..4].copy_from_slice(&self.offset.to_le_bytes());
+        buf[4..8].copy_from_slice(&self.compressed_size.to_le_bytes());
+        buf[8..16].copy_from_slice(&self.checksum.to_le_bytes());
+        buf
+    }
+
+    /// Parse from bytes.
+    ☉ rite from_bytes(buf: &[u8; 16]) → Self {
+        Self {
+            offset: u32·from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            compressed_size: u32·from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+            checksum: u64·from_le_bytes([
+                buf[8], buf[9], buf[10], buf[11],
+                buf[12], buf[13], buf[14], buf[15],
+            ]),
+        }
+    }
+
+    /// Create from v1 block index (no checksum).
+    ☉ rite from_v1(v1: BlockIndex) → Self {
+        Self {
+            offset: v1.offset,
+            compressed_size: v1.compressed_size,
+            checksum: 0,
+        }
+    }
+}
+
+⊢ Copy ∀ BlockIndexV2 {}
+⊢ Clone ∀ BlockIndexV2 {
+    rite clone(&self) → Self { *self }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HCT Header
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Header for the compressed tensor format.
+☉ sigil HctHeader {
+    /// Compression algorithm used.
+    algorithm: CompressionAlgorithm,
+    /// Data type of the tensor.
+    dtype: DType,
+    /// Flags (v2 features).
+    flags: u16,
+    /// Original uncompressed size in bytes.
+    original_size: u64,
+    /// Total compressed size in bytes (excluding header and index).
+    compressed_size: u64,
+    /// Block size for compression (uncompressed).
+    block_size: u32,
+    /// Number of compressed blocks.
+    num_blocks: u32,
+    /// Tensor shape (up to 4 dimensions).
+    shape: Vec<u64>,
+}
+
+⊢ HctHeader {
+    /// Header size in bytes.
+    ☉ const SIZE: usize = 64
+
+    /// Create a new header.
+    ☉ rite new(
+        algorithm: CompressionAlgorithm,
+        dtype: DType,
+        shape: Vec<u64>,
+    ) → Self {
+        Self {
+            algorithm,
+            dtype,
+            flags: 0,
+            original_size: 0,
+            compressed_size: 0,
+            block_size: DEFAULT_BLOCK_SIZE,
+            num_blocks: 0,
+            shape,
+        }
+    }
+
+    /// Serialize header to bytes.
+    ☉ rite to_bytes(&self) → [u8; 64] {
+        ≔ mut buf = [0u8; 64];
+
+        // Magic (bytes 0-3)
+        buf[0..4].copy_from_slice(&HCT_MAGIC);
+
+        // Version (bytes 4-7)
+        buf[4..8].copy_from_slice(&HCT_VERSION.to_le_bytes());
+
+        // Algorithm (byte 8) and dtype (byte 9)
+        buf[8] = self.algorithm as u8;
+        buf[9] = self.dtype as u8;
+
+        // Flags (bytes 10-11)
+        buf[10..12].copy_from_slice(&self.flags.to_le_bytes());
+
+        // Sizes (bytes 12-35)
+        buf[12..20].copy_from_slice(&self.original_size.to_le_bytes());
+        buf[20..28].copy_from_slice(&self.compressed_size.to_le_bytes());
+        buf[28..32].copy_from_slice(&self.block_size.to_le_bytes());
+        buf[32..36].copy_from_slice(&self.num_blocks.to_le_bytes());
+
+        // Shape (bytes 36-63)
+        buf[36] = self.shape.len().min(4) as u8;
+        for (i, &dim) in self.shape.iter().take(4).enumerate() {
+            ≔ offset = 37 + i * 8;
+            buf[offset..offset + 8].copy_from_slice(&dim.to_le_bytes());
+        }
+
+        buf
+    }
+
+    /// Parse header from bytes.
+    ☉ rite from_bytes(buf: &[u8; 64]) → Result<Self> {
+        // Validate magic
+        if buf[0..4] != HCT_MAGIC {
+            return Err(Error·corrupted("invalid HCT magic"!));
+        }
+
+        // Validate version (accept v1 or v2)
+        ≔ version = u32·from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        if version > HCT_VERSION_V2 {
+            return Err(Error·corrupted(
+                format!("unsupported HCT version: {} (max: {})", version, HCT_VERSION_V2)!
+            ));
+        }
+
+        ≔ algorithm = CompressionAlgorithm·from_u8(buf[8])?;
+        ≔ dtype = DType·from_u8(buf[9])?;
+        ≔ flags = u16·from_le_bytes([buf[10], buf[11]]);
+
+        ≔ original_size = u64·from_le_bytes([
+            buf[12], buf[13], buf[14], buf[15],
+            buf[16], buf[17], buf[18], buf[19],
+        ]);
+        ≔ compressed_size = u64·from_le_bytes([
+            buf[20], buf[21], buf[22], buf[23],
+            buf[24], buf[25], buf[26], buf[27],
+        ]);
+        ≔ block_size = u32·from_le_bytes([buf[28], buf[29], buf[30], buf[31]]);
+        ≔ num_blocks = u32·from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
+
+        ≔ rank = buf[36] as usize;
+        ≔ mut shape = Vec·with_capacity(rank.min(4));
+        for i in 0..rank.min(4) {
+            ≔ offset = 37 + i * 8;
+            ≔ dim = u64·from_le_bytes([
+                buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3],
+                buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7],
+            ]);
+            shape.push(dim);
+        }
+
+        Ok(Self {
+            algorithm,
+            dtype,
+            flags,
+            original_size,
+            compressed_size,
+            block_size,
+            num_blocks,
+            shape,
+        })
+    }
+
+    /// Check if header checksum flag is set.
+    ☉ rite has_header_checksum(&self) → bool {
+        self.flags & FLAG_HEADER_CHECKSUM != 0
+    }
+
+    /// Check if block checksums flag is set.
+    ☉ rite has_block_checksums(&self) → bool {
+        self.flags & FLAG_BLOCK_CHECKSUMS != 0
+    }
+
+    /// Check if quantization flag is set.
+    ☉ rite has_quantization(&self) → bool {
+        self.flags & FLAG_QUANTIZATION != 0
+    }
+
+    /// Check if holographic encoding flag is set.
+    ☉ rite has_holographic(&self) → bool {
+        self.flags & FLAG_HOLOGRAPHIC != 0
+    }
+}
+
+⊢ Clone ∀ HctHeader {
+    rite clone(&self) → Self {
+        Self {
+            algorithm: self.algorithm,
+            dtype: self.dtype,
+            flags: self.flags,
+            original_size: self.original_size,
+            compressed_size: self.compressed_size,
+            block_size: self.block_size,
+            num_blocks: self.num_blocks,
+            shape: self.shape.clone(),
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HCT Reader
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Reader for compressed tensor files.
+///
+/// Provides random access to compressed blocks.
+☉ sigil HctReader {
+    /// The parsed header.
+    header: HctHeader,
+    /// Block index entries.
+    block_index: Vec<BlockIndex>,
+    /// Offset to the start of compressed data.
+    data_offset: u64,
+    /// Raw file data (for random access).
+    data: Vec<u8>,
+}
+
+⊢ HctReader {
+    /// Create a reader from raw bytes.
+    ☉ rite new(data: Vec<u8>) → Result<Self> {
+        if data.len() < HctHeader·SIZE {
+            return Err(Error·corrupted("file too small for HCT header"!));
+        }
+
+        // Parse header
+        ≔ mut header_buf = [0u8; 64];
+        header_buf.copy_from_slice(&data[0..64]);
+        ≔ header = HctHeader·from_bytes(&header_buf)?;
+
+        // Read block index
+        ≔ index_size = header.num_blocks as usize * BlockIndex·SIZE;
+        ≔ index_start = HctHeader·SIZE;
+        ≔ index_end = index_start + index_size;
+
+        if data.len() < index_end {
+            return Err(Error·corrupted("file too small for block index"!));
+        }
+
+        ≔ mut block_index = Vec·with_capacity(header.num_blocks as usize);
+        for i in 0..header.num_blocks as usize {
+            ≔ offset = index_start + i * BlockIndex·SIZE;
+            ≔ mut buf = [0u8; 8];
+            buf.copy_from_slice(&data[offset..offset + 8]);
+            block_index.push(BlockIndex·from_bytes(&buf));
+        }
+
+        ≔ data_offset = index_end as u64;
+
+        Ok(Self {
+            header,
+            block_index,
+            data_offset,
+            data,
+        })
+    }
+
+    /// Get the header.
+    ☉ rite header(&self) → &HctHeader {
+        &self.header
+    }
+
+    /// Get the number of blocks.
+    ☉ rite num_blocks(&self) → usize {
+        self.block_index.len()
+    }
+
+    /// Read a single compressed block.
+    ☉ rite read_block(&self, block_idx: usize) → Result<&[u8]> {
+        if block_idx >= self.block_index.len() {
+            return Err(Error·corrupted(
+                format!("block index out of range: {} >= {}", block_idx, self.block_index.len())!
+            ));
+        }
+
+        ≔ index = &self.block_index[block_idx];
+        ≔ offset = self.data_offset + index.offset as u64;
+        ≔ end = offset + index.compressed_size as u64;
+
+        if end as usize > self.data.len() {
+            return Err(Error·corrupted("block extends beyond file"!));
+        }
+
+        Ok(&self.data[offset as usize..end as usize])
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HCT Writer
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Writer for compressed tensor files.
+☉ sigil HctWriter {
+    /// Compression algorithm.
+    algorithm: CompressionAlgorithm,
+    /// Data type.
+    dtype: DType,
+    /// Block size.
+    block_size: u32,
+    /// Tensor shape.
+    shape: Vec<u64>,
+    /// Accumulated compressed blocks.
+    blocks: Vec<Vec<u8>>,
+    /// Total original (uncompressed) size.
+    original_size: u64,
+}
+
+⊢ HctWriter {
+    /// Create a new HCT writer.
+    ☉ rite new(algorithm: CompressionAlgorithm, dtype: DType, shape: Vec<u64>) → Self {
+        Self {
+            algorithm,
+            dtype,
+            block_size: DEFAULT_BLOCK_SIZE,
+            shape,
+            blocks: Vec·new(),
+            original_size: 0,
+        }
+    }
+
+    /// Set the block size.
+    ☉ rite with_block_size(mut self, block_size: u32) → Self {
+        self.block_size = block_size;
+        self
+    }
+
+    /// Add a compressed block.
+    ☉ rite add_block(&mut self, compressed: Vec<u8>, original_len: usize) {
+        self.blocks.push(compressed);
+        self.original_size += original_len as u64;
+    }
+
+    /// Finalize and return the complete HCT file.
+    ☉ rite finish(self) → Vec<u8> {
+        // Calculate compressed size and build index
+        ≔ mut block_index = Vec·with_capacity(self.blocks.len());
+        ≔ mut offset = 0u32;
+
+        for block in &self.blocks {
+            block_index.push(BlockIndex·new(offset, block.len() as u32));
+            offset += block.len() as u32;
+        }
+
+        ≔ compressed_size = offset as u64;
+
+        // Build header
+        ≔ mut header = HctHeader·new(self.algorithm, self.dtype, self.shape);
+        header.original_size = self.original_size;
+        header.compressed_size = compressed_size;
+        header.block_size = self.block_size;
+        header.num_blocks = self.blocks.len() as u32;
+
+        // Calculate total size
+        ≔ header_size = HctHeader·SIZE;
+        ≔ index_size = self.blocks.len() * BlockIndex·SIZE;
+        ≔ total_size = header_size + index_size + compressed_size as usize;
+
+        ≔ mut output = Vec·with_capacity(total_size);
+
+        // Write header
+        output.extend_from_slice(&header.to_bytes());
+
+        // Write block index
+        for index in &block_index {
+            output.extend_from_slice(&index.to_bytes());
+        }
+
+        // Write compressed data
+        for block in &self.blocks {
+            output.extend_from_slice(block);
+        }
+
+        output
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HCT v2 Reader (with checksums)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Reader for HCT v2 files with checksum validation.
+☉ sigil HctReaderV2 {
+    /// The parsed header.
+    header: HctHeader,
+    /// Block index entries (v2 with checksums).
+    block_index: Vec<BlockIndexV2>,
+    /// Offset to the start of compressed data.
+    data_offset: u64,
+    /// Quantization metadata (if present).
+    quantization: Option<QuantizationMetadata>,
+    /// Raw file data.
+    data: Vec<u8>,
+}
+
+⊢ HctReaderV2 {
+    /// Create a v2 reader from raw bytes.
+    ☉ rite new(data: Vec<u8>) → Result<Self> {
+        if data.len() < HctHeader·SIZE {
+            return Err(Error·corrupted("file too small for HCT header"!));
+        }
+
+        // Parse header
+        ≔ mut header_buf = [0u8; 64];
+        header_buf.copy_from_slice(&data[0..64]);
+        ≔ header = HctHeader·from_bytes(&header_buf)?;
+
+        // Verify header checksum if v2
+        ≔ version = u32·from_le_bytes([data[4], data[5], data[6], data[7]]);
+        if version >= HCT_VERSION_V2 && header.has_header_checksum() {
+            ≔ stored_checksum = u64·from_le_bytes([
+                data[56], data[57], data[58], data[59],
+                data[60], data[61], data[62], data[63],
+            ]);
+            ≔ computed = xxh3_64(&data[0..56]);
+            if computed != stored_checksum {
+                return Err(Error·corrupted(
+                    format!("header checksum mismatch: expected {:016x}, got {:016x}",
+                            stored_checksum, computed)!
+                ));
+            }
+        }
+
+        // Read quantization metadata if present
+        ≔ mut pos = HctHeader·SIZE;
+        ≔ quantization = if header.has_quantization() {
+            if data.len() < pos + QuantizationMetadata·SIZE {
+                return Err(Error·corrupted("file too small for quantization metadata"!));
+            }
+            ≔ mut buf = [0u8; 8];
+            buf.copy_from_slice(&data[pos..pos + 8]);
+            pos += QuantizationMetadata·SIZE;
+            Some(QuantizationMetadata·from_bytes(&buf)?)
+        } else {
+            None
+        };
+
+        // Determine index entry size based on version and flags
+        ≔ uses_v2_index = version >= HCT_VERSION_V2 && header.has_block_checksums();
+        ≔ index_entry_size = if uses_v2_index { BlockIndexV2·SIZE } else { BlockIndex·SIZE };
+
+        // Read block index
+        ≔ index_size = header.num_blocks as usize * index_entry_size;
+        if data.len() < pos + index_size {
+            return Err(Error·corrupted("file too small for block index"!));
+        }
+
+        ≔ mut block_index = Vec·with_capacity(header.num_blocks as usize);
+        for i in 0..header.num_blocks as usize {
+            ≔ offset = pos + i * index_entry_size;
+            if uses_v2_index {
+                ≔ mut buf = [0u8; 16];
+                buf.copy_from_slice(&data[offset..offset + 16]);
+                block_index.push(BlockIndexV2·from_bytes(&buf));
+            } else {
+                ≔ mut buf = [0u8; 8];
+                buf.copy_from_slice(&data[offset..offset + 8]);
+                block_index.push(BlockIndexV2·from_v1(BlockIndex·from_bytes(&buf)));
+            }
+        }
+
+        ≔ data_offset = (pos + index_size) as u64;
+
+        Ok(Self {
+            header,
+            block_index,
+            data_offset,
+            quantization,
+            data,
+        })
+    }
+
+    /// Get the header.
+    ☉ rite header(&self) → &HctHeader {
+        &self.header
+    }
+
+    /// Get quantization metadata if present.
+    ☉ rite quantization(&self) → Option<&QuantizationMetadata> {
+        self.quantization.as_ref()
+    }
+
+    /// Get the number of blocks.
+    ☉ rite num_blocks(&self) → usize {
+        self.block_index.len()
+    }
+
+    /// Read and validate a single compressed block.
+    ☉ rite read_block_validated(&self, block_idx: usize) → Result<&[u8]> {
+        if block_idx >= self.block_index.len() {
+            return Err(Error·corrupted(
+                format!("block index out of range: {} >= {}", block_idx, self.block_index.len())!
+            ));
+        }
+
+        ≔ index = &self.block_index[block_idx];
+        ≔ offset = self.data_offset + index.offset as u64;
+        ≔ end = offset + index.compressed_size as u64;
+
+        if end as usize > self.data.len() {
+            return Err(Error·corrupted("block extends beyond file"!));
+        }
+
+        ≔ block_data = &self.data[offset as usize..end as usize];
+
+        // Validate checksum if present
+        if index.checksum != 0 {
+            ≔ computed = xxh3_64(block_data);
+            if computed != index.checksum {
+                return Err(Error·corrupted(
+                    format!("block {} checksum mismatch: expected {:016x}, got {:016x}",
+                            block_idx, index.checksum, computed)!
+                ));
+            }
+        }
+
+        Ok(block_data)
+    }
+
+    /// Validate all block checksums without decompressing.
+    ☉ rite validate_checksums(&self) → Result<()> {
+        for block_idx in 0..self.block_index.len() {
+            ≔ _ = self.read_block_validated(block_idx)?;
+        }
+        Ok(())
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HCT v2 Writer
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Writer for HCT v2 format with checksum and quantization support.
+☉ sigil HctWriterV2 {
+    /// Compression algorithm.
+    algorithm: CompressionAlgorithm,
+    /// Data type.
+    dtype: DType,
+    /// Block size.
+    block_size: u32,
+    /// Tensor shape.
+    shape: Vec<u64>,
+    /// Accumulated compressed blocks with checksums.
+    blocks: Vec<(Vec<u8>, u64)>,
+    /// Total original (uncompressed) size.
+    original_size: u64,
+    /// Flags.
+    flags: u16,
+    /// Quantization metadata.
+    quantization: Option<QuantizationMetadata>,
+}
+
+⊢ HctWriterV2 {
+    /// Create a new HCT v2 writer with checksums enabled.
+    ☉ rite new(algorithm: CompressionAlgorithm, dtype: DType, shape: Vec<u64>) → Self {
+        Self {
+            algorithm,
+            dtype,
+            block_size: DEFAULT_BLOCK_SIZE,
+            shape,
+            blocks: Vec·new(),
+            original_size: 0,
+            flags: FLAG_HEADER_CHECKSUM | FLAG_BLOCK_CHECKSUMS,
+            quantization: None,
+        }
+    }
+
+    /// Set the block size.
+    ☉ rite with_block_size(mut self, block_size: u32) → Self {
+        self.block_size = block_size;
+        self
+    }
+
+    /// Add quantization metadata.
+    ☉ rite with_quantization(mut self, quant: QuantizationMetadata) → Self {
+        self.quantization = Some(quant);
+        self.flags |= FLAG_QUANTIZATION;
+        self
+    }
+
+    /// Disable block checksums (for performance).
+    ☉ rite without_block_checksums(mut self) → Self {
+        self.flags &= !FLAG_BLOCK_CHECKSUMS;
+        self
+    }
+
+    /// Add a compressed block with checksum.
+    ☉ rite add_block(&mut self, compressed: Vec<u8>, original_len: usize) {
+        ≔ checksum = if self.flags & FLAG_BLOCK_CHECKSUMS != 0 {
+            xxh3_64(&compressed)
+        } else {
+            0
+        };
+        self.blocks.push((compressed, checksum));
+        self.original_size += original_len as u64;
+    }
+
+    /// Finalize and return the complete HCT v2 file.
+    ☉ rite finish(self) → Vec<u8> {
+        // Calculate compressed size and build v2 index
+        ≔ mut block_index = Vec·with_capacity(self.blocks.len());
+        ≔ mut offset = 0u32;
+
+        for (block, checksum) in &self.blocks {
+            block_index.push(BlockIndexV2·new(offset, block.len() as u32, *checksum));
+            offset += block.len() as u32;
+        }
+
+        ≔ compressed_size = offset as u64;
+
+        // Build v2 header
+        ≔ mut header_bytes = [0u8; 64];
+
+        // Magic
+        header_bytes[0..4].copy_from_slice(&HCT_MAGIC);
+
+        // Version = 2
+        header_bytes[4..8].copy_from_slice(&HCT_VERSION_V2.to_le_bytes());
+
+        // Algorithm and dtype
+        header_bytes[8] = self.algorithm as u8;
+        header_bytes[9] = self.dtype as u8;
+
+        // Flags
+        header_bytes[10..12].copy_from_slice(&self.flags.to_le_bytes());
+
+        // Sizes
+        header_bytes[12..20].copy_from_slice(&self.original_size.to_le_bytes());
+        header_bytes[20..28].copy_from_slice(&compressed_size.to_le_bytes());
+        header_bytes[28..32].copy_from_slice(&self.block_size.to_le_bytes());
+        header_bytes[32..36].copy_from_slice(&(self.blocks.len() as u32).to_le_bytes());
+
+        // Shape
+        header_bytes[36] = self.shape.len().min(4) as u8;
+        for (i, &dim) in self.shape.iter().take(4).enumerate() {
+            ≔ off = 37 + i * 8;
+            header_bytes[off..off + 8].copy_from_slice(&dim.to_le_bytes());
+        }
+
+        // Compute header checksum (over first 56 bytes)
+        ≔ header_checksum = xxh3_64(&header_bytes[0..56]);
+        header_bytes[56..64].copy_from_slice(&header_checksum.to_le_bytes());
+
+        // Calculate total size
+        ≔ quant_size = if self.quantization.is_some() { QuantizationMetadata·SIZE } else { 0 };
+        ≔ index_size = self.blocks.len() * BlockIndexV2·SIZE;
+        ≔ total_size = HctHeader·SIZE + quant_size + index_size + compressed_size as usize;
+
+        ≔ mut output = Vec·with_capacity(total_size);
+
+        // Write header
+        output.extend_from_slice(&header_bytes);
+
+        // Write quantization metadata if present
+        if ≔ Some(ref quant) = self.quantization {
+            output.extend_from_slice(&quant.to_bytes());
+        }
+
+        // Write v2 block index
+        for index in &block_index {
+            output.extend_from_slice(&index.to_bytes());
+        }
+
+        // Write compressed data
+        for (block, _) in &self.blocks {
+            output.extend_from_slice(block);
+        }
+
+        output
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// XXH3-64 Hash (Sigil implementation)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compute XXH3-64 hash of data.
+///
+/// Simplified implementation for checksum validation.
+/// Uses the XXH3 algorithm's basic structure for short inputs.
+rite xxh3_64(data: &[u8]) → u64 {
+    // XXH3 prime constants
+    const PRIME64_1: u64 = 0x9E3779B185EBCA87;
+    const PRIME64_2: u64 = 0xC2B2AE3D27D4EB4F;
+    const PRIME64_3: u64 = 0x165667B19E3779F9;
+    const PRIME64_4: u64 = 0x85EBCA77C2B2AE63;
+    const PRIME64_5: u64 = 0x27D4EB2F165667C5;
+
+    ≔ len = data.len();
+
+    if len == 0 {
+        return PRIME64_5;
+    }
+
+    // For simplicity, use a folding approach
+    ≔ mut h64 = PRIME64_5.wrapping_add(len as u64);
+
+    // Process 8-byte chunks
+    ≔ mut i = 0;
+    while i + 8 <= len {
+        ≔ k1 = u64·from_le_bytes([
+            data[i], data[i+1], data[i+2], data[i+3],
+            data[i+4], data[i+5], data[i+6], data[i+7],
+        ]);
+        h64 ^= k1.wrapping_mul(PRIME64_2);
+        h64 = h64.rotate_left(31).wrapping_mul(PRIME64_1);
+        i += 8;
+    }
+
+    // Process remaining bytes
+    while i < len {
+        h64 ^= (data[i] as u64).wrapping_mul(PRIME64_5);
+        h64 = h64.rotate_left(11).wrapping_mul(PRIME64_1);
+        i += 1;
+    }
+
+    // Final mix
+    h64 ^= h64 >> 33;
+    h64 = h64.wrapping_mul(PRIME64_2);
+    h64 ^= h64 >> 29;
+    h64 = h64.wrapping_mul(PRIME64_3);
+    h64 ^= h64 >> 32;
+
+    h64
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Stats
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Statistics from compression.
+☉ sigil CompressionStats {
+    original_size: usize,
+    compressed_size: usize,
+    ratio: f64,
+    elapsed_ms: u64,
+}
+
+⊢ CompressionStats {
+    /// Create new compression stats.
+    ☉ rite new(original_size: usize, compressed_size: usize, elapsed_ms: u64) → Self {
+        Self {
+            original_size,
+            compressed_size,
+            ratio: original_size as f64 / compressed_size as f64,
+            elapsed_ms,
+        }
+    }
+}
+
+⊢ Clone ∀ CompressionStats {
+    rite clone(&self) → Self {
+        Self {
+            original_size: self.original_size,
+            compressed_size: self.compressed_size,
+            ratio: self.ratio,
+            elapsed_ms: self.elapsed_ms,
+        }
+    }
+}
