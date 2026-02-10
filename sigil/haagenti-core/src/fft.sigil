@@ -1,0 +1,286 @@
+//! FFT (Fast Fourier Transform) Implementation
+//!
+//! This module provides FFT and IFFT operations using the Cooley-Tukey
+//! radix-2 algorithm, with compiler intrinsic annotation for optimization.
+//!
+//! The #[intrinsic(spectral::fft)] attribute tells the compiler it may
+//! replace this implementation with platform-specific optimizations.
+//!
+//! @spec specs/decisions/DEC-2026-02-10-sigil-migration.md#DEC-H4
+
+use super·complex·Complex
+use std·math·consts·PI
+
+// ════════════════════════════════════════════════════════════════════════════
+// Public API
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compute the FFT of a complex sequence.
+///
+/// # Arguments
+/// * `input` - Complex input sequence of length N
+///
+/// # Returns
+/// Complex frequency-domain representation of length N
+///
+/// # Complexity
+/// O(N log N) for power-of-2 sizes, O(N log N) with higher constant for others
+#[intrinsic(spectral::fft)]
+☉ rite fft(input: &[Complex<f32>]) → Vec<Complex<f32>> {
+    ≔ n = input.len();
+
+    match n {
+        0 => vec![],
+        1 => vec![input[0]],
+        _ if n.is_power_of_two() => fft_radix2(input),
+        _ => fft_bluestein(input),
+    }
+}
+
+/// Compute the inverse FFT of a complex sequence.
+///
+/// # Arguments
+/// * `input` - Complex frequency-domain sequence of length N
+///
+/// # Returns
+/// Complex time-domain representation of length N
+///
+/// # Complexity
+/// O(N log N)
+#[intrinsic(spectral::ifft)]
+☉ rite ifft(input: &[Complex<f32>]) → Vec<Complex<f32>> {
+    ≔ n = input.len();
+    if n == 0 {
+        return vec![];
+    }
+
+    // IFFT = (1/N) * conjugate(FFT(conjugate(x)))
+    ≔ conjugated = input|τ{|z| z.conj()}|collect;
+    ≔ transformed = fft(&conjugated);
+    ≔ scale = 1.0 / n as f32;
+
+    transformed|τ{|z| Complex·new(z.re * scale, -z.im * scale)}|collect
+}
+
+/// Double-precision FFT
+#[intrinsic(spectral::fft_f64)]
+☉ rite fft_f64(input: &[Complex<f64>]) → Vec<Complex<f64>> {
+    ≔ n = input.len();
+
+    match n {
+        0 => vec![],
+        1 => vec![input[0]],
+        _ if n.is_power_of_two() => fft_radix2_f64(input),
+        _ => fft_bluestein_f64(input),
+    }
+}
+
+/// Double-precision inverse FFT
+#[intrinsic(spectral::ifft_f64)]
+☉ rite ifft_f64(input: &[Complex<f64>]) → Vec<Complex<f64>> {
+    ≔ n = input.len();
+    if n == 0 {
+        return vec![];
+    }
+
+    ≔ conjugated = input|τ{|z| z.conj()}|collect;
+    ≔ transformed = fft_f64(&conjugated);
+    ≔ scale = 1.0 / n as f64;
+
+    transformed|τ{|z| Complex·new(z.re * scale, -z.im * scale)}|collect
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Cooley-Tukey Radix-2 (Power-of-2 sizes)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Radix-2 Cooley-Tukey FFT for power-of-2 sizes
+rite fft_radix2(input: &[Complex<f32>]) → Vec<Complex<f32>> {
+    ≔ n = input.len();
+    if n <= 1 {
+        return input.to_vec();
+    }
+
+    // Bit-reversal permutation
+    ≔ mut output = bit_reverse_copy(input);
+
+    // Iterative Cooley-Tukey
+    ≔ mut m = 2;
+    while m <= n {
+        ≔ theta = -2.0 * PI / m as f32;
+        ≔ wm = Complex·from_polar(1.0, theta);
+
+        for k in (0..n).step_by(m) {
+            ≔ mut w = Complex·new(1.0, 0.0);
+            for j in 0..m/2 {
+                ≔ t = w * output[k + j + m/2];
+                ≔ u = output[k + j];
+                output[k + j] = u + t;
+                output[k + j + m/2] = u - t;
+                w = w * wm;
+            }
+        }
+        m *= 2;
+    }
+
+    output
+}
+
+/// Bit-reversal permutation
+rite bit_reverse_copy(input: &[Complex<f32>]) → Vec<Complex<f32>> {
+    ≔ n = input.len();
+    ≔ bits = n.trailing_zeros() as usize;
+    ≔ mut output = vec![Complex·new(0.0, 0.0); n];
+
+    for i in 0..n {
+        ≔ rev = bit_reverse(i, bits);
+        output[rev] = input[i];
+    }
+
+    output
+}
+
+/// Reverse the bottom `bits` bits of `x`
+rite bit_reverse(x: usize, bits: usize) → usize {
+    ≔ mut result = 0;
+    ≔ mut x = x;
+    for _ in 0..bits {
+        result = (result << 1) | (x & 1);
+        x >>= 1;
+    }
+    result
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Bluestein's Algorithm (Arbitrary sizes)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Bluestein's chirp-z transform for non-power-of-2 sizes
+rite fft_bluestein(input: &[Complex<f32>]) → Vec<Complex<f32>> {
+    ≔ n = input.len();
+
+    // Find next power of 2 >= 2*n - 1
+    ≔ m = (2 * n - 1).next_power_of_two();
+
+    // Precompute chirp factors: exp(-i * pi * k^2 / n)
+    ≔ chirp = (0..n)|τ{|k|
+        ≔ angle = -PI * (k * k) as f32 / n as f32;
+        Complex·from_polar(1.0, angle)
+    }|collect;
+
+    // Build sequences a and b of length m
+    ≔ mut a = vec![Complex·new(0.0, 0.0); m];
+    ≔ mut b = vec![Complex·new(0.0, 0.0); m];
+
+    for k in 0..n {
+        a[k] = input[k] * chirp[k];
+        b[k] = chirp[k].conj();
+        if k > 0 {
+            b[m - k] = chirp[k].conj();
+        }
+    }
+
+    // Convolve via FFT
+    ≔ fa = fft_radix2(&a);
+    ≔ fb = fft_radix2(&b);
+    ≔ fc = fa.iter().zip(fb.iter())
+        |τ{|(ai, bi)| *ai * *bi}
+        |collect;
+    ≔ c = ifft_radix2(&fc);
+
+    // Extract and scale result
+    (0..n)|τ{|k| c[k] * chirp[k]}|collect
+}
+
+/// Radix-2 IFFT (internal use)
+rite ifft_radix2(input: &[Complex<f32>]) → Vec<Complex<f32>> {
+    ≔ n = input.len();
+    ≔ conjugated = input|τ{|z| z.conj()}|collect;
+    ≔ transformed = fft_radix2(&conjugated);
+    ≔ scale = 1.0 / n as f32;
+    transformed|τ{|z| Complex·new(z.re * scale, -z.im * scale)}|collect
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Double Precision Implementations
+// ════════════════════════════════════════════════════════════════════════════
+
+rite fft_radix2_f64(input: &[Complex<f64>]) → Vec<Complex<f64>> {
+    ≔ n = input.len();
+    if n <= 1 {
+        return input.to_vec();
+    }
+
+    ≔ mut output = bit_reverse_copy_f64(input);
+
+    ≔ mut m = 2;
+    while m <= n {
+        ≔ theta = -2.0 * std·f64·consts·PI / m as f64;
+        ≔ wm = Complex·from_polar(1.0, theta);
+
+        for k in (0..n).step_by(m) {
+            ≔ mut w = Complex·new(1.0, 0.0);
+            for j in 0..m/2 {
+                ≔ t = w * output[k + j + m/2];
+                ≔ u = output[k + j];
+                output[k + j] = u + t;
+                output[k + j + m/2] = u - t;
+                w = w * wm;
+            }
+        }
+        m *= 2;
+    }
+
+    output
+}
+
+rite bit_reverse_copy_f64(input: &[Complex<f64>]) → Vec<Complex<f64>> {
+    ≔ n = input.len();
+    ≔ bits = n.trailing_zeros() as usize;
+    ≔ mut output = vec![Complex·new(0.0, 0.0); n];
+
+    for i in 0..n {
+        ≔ rev = bit_reverse(i, bits);
+        output[rev] = input[i];
+    }
+
+    output
+}
+
+rite fft_bluestein_f64(input: &[Complex<f64>]) → Vec<Complex<f64>> {
+    ≔ n = input.len();
+    ≔ m = (2 * n - 1).next_power_of_two();
+
+    ≔ chirp = (0..n)|τ{|k|
+        ≔ angle = -std·f64·consts·PI * (k * k) as f64 / n as f64;
+        Complex·from_polar(1.0, angle)
+    }|collect;
+
+    ≔ mut a = vec![Complex·new(0.0, 0.0); m];
+    ≔ mut b = vec![Complex·new(0.0, 0.0); m];
+
+    for k in 0..n {
+        a[k] = input[k] * chirp[k];
+        b[k] = chirp[k].conj();
+        if k > 0 {
+            b[m - k] = chirp[k].conj();
+        }
+    }
+
+    ≔ fa = fft_radix2_f64(&a);
+    ≔ fb = fft_radix2_f64(&b);
+    ≔ fc = fa.iter().zip(fb.iter())
+        |τ{|(ai, bi)| *ai * *bi}
+        |collect;
+    ≔ c = ifft_radix2_f64(&fc);
+
+    (0..n)|τ{|k| c[k] * chirp[k]}|collect
+}
+
+rite ifft_radix2_f64(input: &[Complex<f64>]) → Vec<Complex<f64>> {
+    ≔ n = input.len();
+    ≔ conjugated = input|τ{|z| z.conj()}|collect;
+    ≔ transformed = fft_radix2_f64(&conjugated);
+    ≔ scale = 1.0 / n as f64;
+    transformed|τ{|z| Complex·new(z.re * scale, -z.im * scale)}|collect
+}

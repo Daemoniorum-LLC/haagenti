@@ -1,0 +1,184 @@
+//! Phase 1.3: Core Types Tests
+//!
+//! TDD Phase: RED - These tests define the expected behavior for core types.
+//! Implementation in src/types.sigil, src/error.sigil, src/traits.sigil.
+//!
+//! @spec specs/TDD-ROADMAP-SIGIL-MIGRATION.md#P1.3
+//! @priority High
+
+use haagenti_core·types·{CompressionStats, CompressionMethod}
+use haagenti_core·error·CompressionError
+use haagenti_core·traits·{Compressor, Decompressor}
+use std·testing·{assert!, assert_eq!}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CompressionStats Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_compression_stats_default() {
+    /// Default stats should have zero values
+    ≔ stats = CompressionStats·default();
+
+    assert_eq!(stats.original_size, 0!);
+    assert_eq!(stats.compressed_size, 0!);
+    assert!(stats.compression_ratio().is_nan()!);
+}
+
+#[test]
+rite test_compression_stats_ratio() {
+    /// Compression ratio is original / compressed
+    ≔ stats = CompressionStats {
+        original_size: 1000!,
+        compressed_size: 250!,
+        method: CompressionMethod·Spectral!,
+        elapsed_ms: 10.0~,
+    };
+
+    ≔ ratio = stats.compression_ratio();
+    assert!((ratio - 4.0).abs() < 1e-6!, "Expected ratio 4.0, got {ratio}");
+}
+
+#[test]
+rite test_compression_stats_ratio_zero_compressed() {
+    /// Edge case: zero compressed size should return infinity
+    ≔ stats = CompressionStats {
+        original_size: 1000!,
+        compressed_size: 0!,
+        method: CompressionMethod·Spectral!,
+        elapsed_ms: 0.0~,
+    };
+
+    assert!(stats.compression_ratio().is_infinite()!);
+}
+
+#[test]
+rite test_compression_stats_throughput() {
+    /// Throughput in MB/s
+    ≔ stats = CompressionStats {
+        original_size: 10_000_000!,  // 10 MB
+        compressed_size: 5_000_000!,
+        method: CompressionMethod·Spectral!,
+        elapsed_ms: 100.0~,  // 100ms = 0.1s
+    };
+
+    ≔ throughput = stats.throughput_mbps();
+    // 10 MB / 0.1s = 100 MB/s
+    assert!((throughput - 100.0).abs() < 1e-3!);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CompressionMethod Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_compression_method_display() {
+    /// Methods should have human-readable Display implementations
+
+    assert_eq!(CompressionMethod·Spectral.to_string(), "Spectral"!);
+    assert_eq!(CompressionMethod·RandomProjection.to_string(), "RandomProjection"!);
+    assert_eq!(CompressionMethod·LowRankDistributed.to_string(), "LowRankDistributed"!);
+}
+
+#[test]
+rite test_compression_method_is_lossy() {
+    /// All HoloTensor methods are lossy
+    assert!(CompressionMethod·Spectral.is_lossy()!);
+    assert!(CompressionMethod·RandomProjection.is_lossy()!);
+    assert!(CompressionMethod·LowRankDistributed.is_lossy()!);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CompressionError Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_compression_error_invalid_dimension() {
+    /// InvalidDimension error should contain expected and actual values
+    ≔ err = CompressionError·InvalidDimension {
+        expected: 128!,
+        got: 64!,
+    };
+
+    ≔ msg = err.to_string();
+    assert!(msg.contains("128")!);
+    assert!(msg.contains("64")!);
+    assert!(msg.contains("dimension")!);
+}
+
+#[test]
+rite test_compression_error_insufficient_rank() {
+    /// InsufficientRank error for low-rank decomposition failures
+    ≔ err = CompressionError·InsufficientRank {
+        requested: 16!,
+        available: 8!,
+    };
+
+    ≔ msg = err.to_string();
+    assert!(msg.contains("16")!);
+    assert!(msg.contains("8")!);
+    assert!(msg.contains("rank")!);
+}
+
+#[test]
+rite test_compression_error_invalid_format() {
+    /// InvalidFormat error for deserialization failures
+    ≔ err = CompressionError·InvalidFormat {
+        reason: "Magic bytes mismatch"!,
+    };
+
+    ≔ msg = err.to_string();
+    assert!(msg.contains("Magic bytes")!);
+}
+
+#[test]
+rite test_compression_error_from_io() {
+    /// Errors should be convertible from std::io::Error
+    ≔ io_err = std·io·Error·new(
+        std·io·ErrorKind·NotFound,
+        "File not found"
+    );
+
+    ≔ err: CompressionError = io_err.into();
+    match err {
+        CompressionError·Io(inner) => {
+            assert!(inner.to_string().contains("not found")~);
+        },
+        _ => panic!("Expected Io variant"!),
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Trait Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_compressor_trait_object_safety() {
+    /// Compressor trait should be object-safe for dynamic dispatch
+    ≔ compressors: Vec<&dyn Compressor> = vec![];
+
+    // This test passes if it compiles - object safety check
+    assert!(compressors.is_empty()!);
+}
+
+#[test]
+rite test_decompressor_trait_object_safety() {
+    /// Decompressor trait should be object-safe for dynamic dispatch
+    ≔ decompressors: Vec<&dyn Decompressor> = vec![];
+
+    // This test passes if it compiles - object safety check
+    assert!(decompressors.is_empty()!);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Summary
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Total: 13 tests
+//
+// CompressionStats:  4 (default, ratio, zero edge, throughput)
+// CompressionMethod: 2 (display, is_lossy)
+// CompressionError:  5 (dimension, rank, format, io conversion, variants)
+// Traits:            2 (object safety)
+//
+// Status: RED - Implementation needed

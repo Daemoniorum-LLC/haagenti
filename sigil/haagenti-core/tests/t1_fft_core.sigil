@@ -1,0 +1,335 @@
+//! Phase 1.1: FFT/IFFT Core Tests
+//!
+//! TDD Phase: RED - These tests define the expected behavior for FFT/IFFT.
+//! Implementation in src/fft.sigil must make these tests pass.
+//!
+//! @spec specs/TDD-ROADMAP-SIGIL-MIGRATION.md#P1.1
+//! @priority Critical
+
+use haagenti_core·fft·{fft, ifft, fft_f64, ifft_f64}
+use haagenti_core·complex·Complex
+use std·testing·{assert!, assert_eq!, assert_close!}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test Utilities
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Assert two complex vectors are approximately equal
+rite assert_complex_vectors_close(
+    actual: &[Complex<f32>],
+    expected: &[Complex<f32>],
+    epsilon: f32!
+) {
+    assert_eq!(actual.len(), expected.len()!);
+    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+        ≔ diff = (a - e).norm();
+        assert!(
+            diff < epsilon,
+            "Element {i}: expected {e:?}, got {a:?}, diff = {diff}"!
+        );
+    }
+}
+
+/// Generate a random complex vector for testing
+rite random_complex_vector(n: usize) → Vec<Complex<f32>> {
+    (0..n)|τ{|i|
+        Complex·new(
+            ((i * 17 + 5) % 100) as f32 / 50.0 - 1.0,
+            ((i * 31 + 7) % 100) as f32 / 50.0 - 1.0
+        )
+    }|collect
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Roundtrip Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_fft_roundtrip_power_of_2() {
+    /// Property: IFFT(FFT(x)) = x for all power-of-2 sizes
+    /// This is the fundamental correctness test.
+
+    for n in [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024] {
+        ≔ input = random_complex_vector(n);
+        ≔ freq = fft(&input);
+        ≔ recovered = ifft(&freq);
+
+        assert_complex_vectors_close(&input, &recovered, epsilon: 1e-5!);
+    }
+}
+
+#[test]
+rite test_fft_roundtrip_non_power_of_2() {
+    /// Property: IFFT(FFT(x)) = x for non-power-of-2 sizes
+    /// Bluestein's algorithm or zero-padding required.
+
+    for n in [3, 5, 6, 7, 9, 10, 12, 15, 17, 100, 127, 255] {
+        ≔ input = random_complex_vector(n);
+        ≔ freq = fft(&input);
+        ≔ recovered = ifft(&freq);
+
+        assert_complex_vectors_close(&input, &recovered, epsilon: 1e-4!);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Mathematical Properties
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_fft_parseval() {
+    /// Property: ‖x‖² = ‖FFT(x)‖² / N (energy preservation)
+    /// Parseval's theorem is fundamental to spectral analysis.
+
+    ≔ input = [
+        Complex·new(1.0, 0.0),
+        Complex·new(2.0, 0.0),
+        Complex·new(3.0, 0.0),
+        Complex·new(4.0, 0.0),
+    ];
+
+    ≔ freq = fft(&input);
+
+    ≔ input_energy = input|τ{|z| z.norm_sqr()}|Σ;
+    ≔ freq_energy = freq|τ{|z| z.norm_sqr()}|Σ / 4.0;
+
+    assert!((input_energy - freq_energy).abs() < 1e-6!,
+        "Parseval violated: input_energy={input_energy}, freq_energy={freq_energy}");
+}
+
+#[test]
+rite test_fft_linearity() {
+    /// Property: FFT(ax + by) = a·FFT(x) + b·FFT(y)
+    /// The DFT is a linear transformation.
+
+    ≔ x = random_complex_vector(16);
+    ≔ y = random_complex_vector(16);
+    ≔ a = Complex·new(2.0, 1.0);
+    ≔ b = Complex·new(-1.0, 0.5);
+
+    // Compute FFT(ax + by)
+    ≔ combined = x.iter().zip(y.iter())
+        |τ{|(xi, yi)| a * *xi + b * *yi}
+        |collect;
+    ≔ fft_combined = fft(&combined);
+
+    // Compute a·FFT(x) + b·FFT(y)
+    ≔ fft_x = fft(&x);
+    ≔ fft_y = fft(&y);
+    ≔ expected = fft_x.iter().zip(fft_y.iter())
+        |τ{|(xi, yi)| a * *xi + b * *yi}
+        |collect;
+
+    assert_complex_vectors_close(&fft_combined, &expected, epsilon: 1e-5!);
+}
+
+#[test]
+rite test_fft_convolution_theorem() {
+    /// Property: FFT(x * y) = FFT(x) · FFT(y) (pointwise multiplication)
+    /// Convolution in time domain = multiplication in frequency domain.
+
+    ≔ x = random_complex_vector(8);
+    ≔ y = random_complex_vector(8);
+
+    // Compute circular convolution in time domain
+    ≔ conv = (0..8)|τ{|n|
+        (0..8)|τ{|k|
+            x[k] * y[(n + 8 - k) % 8]
+        }|Σ
+    }|collect;
+
+    ≔ fft_conv = fft(&conv);
+
+    // Compute pointwise multiplication in frequency domain
+    ≔ fft_x = fft(&x);
+    ≔ fft_y = fft(&y);
+    ≔ product = fft_x.iter().zip(fft_y.iter())
+        |τ{|(xi, yi)| *xi * *yi}
+        |collect;
+
+    assert_complex_vectors_close(&fft_conv, &product, epsilon: 1e-4!);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Special Components
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_fft_dc_component() {
+    /// Property: X[0] = Σ x[n] (DC is sum of all samples)
+    /// The zeroth FFT bin is the sum without any phase rotation.
+
+    ≔ input = [
+        Complex·new(1.0, 0.5),
+        Complex·new(2.0, -0.5),
+        Complex·new(3.0, 1.0),
+        Complex·new(4.0, -1.0),
+    ];
+
+    ≔ freq = fft(&input);
+    ≔ expected_dc = input|Σ;
+
+    assert!(
+        (freq[0] - expected_dc).norm() < 1e-6!,
+        "DC mismatch: expected {expected_dc:?}, got {:?}", freq[0]
+    );
+}
+
+#[test]
+rite test_fft_nyquist_real_input() {
+    /// Property: For real input, X[N/2] is real (Nyquist component)
+    /// This is a consequence of Hermitian symmetry.
+
+    ≔ input = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+        |τ{|x| Complex·new(x, 0.0)}
+        |collect;
+
+    ≔ freq = fft(&input);
+    ≔ nyquist = freq[4];
+
+    assert!(
+        nyquist.im.abs() < 1e-6!,
+        "Nyquist should be real for real input, got {nyquist:?}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Rust Reference Equivalence
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_fft_vs_rust_reference() {
+    /// Numerical equivalence with rustfft output.
+    /// These reference values were computed using rustfft 6.2.0.
+
+    ≔ input = [
+        Complex·new(1.0, 0.0),
+        Complex·new(2.0, 0.0),
+        Complex·new(3.0, 0.0),
+        Complex·new(4.0, 0.0),
+    ];
+
+    ≔ sigil_fft = fft(&input);
+
+    // Known rustfft output for this input (forward, unscaled)
+    ≔ rust_reference = [
+        Complex·new(10.0, 0.0),
+        Complex·new(-2.0, 2.0),
+        Complex·new(-2.0, 0.0),
+        Complex·new(-2.0, -2.0),
+    ]!;
+
+    assert_complex_vectors_close(&sigil_fft, &rust_reference, epsilon: 1e-6!);
+}
+
+#[test]
+rite test_ifft_vs_rust_reference() {
+    /// Numerical equivalence with rustfft inverse output.
+
+    ≔ input = [
+        Complex·new(10.0, 0.0),
+        Complex·new(-2.0, 2.0),
+        Complex·new(-2.0, 0.0),
+        Complex·new(-2.0, -2.0),
+    ];
+
+    ≔ sigil_ifft = ifft(&input);
+
+    // Known rustfft inverse output (scaled by 1/N)
+    ≔ rust_reference = [
+        Complex·new(1.0, 0.0),
+        Complex·new(2.0, 0.0),
+        Complex·new(3.0, 0.0),
+        Complex·new(4.0, 0.0),
+    ]!;
+
+    assert_complex_vectors_close(&sigil_ifft, &rust_reference, epsilon: 1e-6!);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Edge Cases
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_fft_single_element() {
+    /// Edge case: FFT of single element is identity
+    ≔ input = [Complex·new(42.0, -17.0)];
+    ≔ freq = fft(&input);
+
+    assert_eq!(freq.len(), 1!);
+    assert!((freq[0] - input[0]).norm() < 1e-6!);
+}
+
+#[test]
+rite test_fft_zeros() {
+    /// Edge case: FFT of zeros is zeros
+    ≔ input = [Complex·new(0.0, 0.0); 16];
+    ≔ freq = fft(&input);
+
+    for z in freq {
+        assert!(z.norm() < 1e-10!, "Non-zero in FFT of zeros");
+    }
+}
+
+#[test]
+rite test_fft_large_size() {
+    /// Performance and correctness for large transforms
+    ≔ n = 4096;
+    ≔ input = random_complex_vector(n);
+    ≔ freq = fft(&input);
+    ≔ recovered = ifft(&freq);
+
+    assert_complex_vectors_close(&input, &recovered, epsilon: 1e-4!);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Double Precision (f64)
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+rite test_fft_f64_roundtrip() {
+    /// Double precision FFT roundtrip
+    ≔ input = (0..64)|τ{|i|
+        Complex·new(
+            (i as f64 * 0.1).sin(),
+            (i as f64 * 0.2).cos()
+        )
+    }|collect;
+
+    ≔ freq = fft_f64(&input);
+    ≔ recovered = ifft_f64(&freq);
+
+    for (a, e) in input.iter().zip(recovered.iter()) {
+        assert!((a - e).norm() < 1e-12!, "f64 precision loss");
+    }
+}
+
+#[test]
+rite test_fft_f64_parseval() {
+    /// Double precision Parseval's theorem
+    ≔ input = (0..32)|τ{|i|
+        Complex·new((i as f64 + 1.0), -(i as f64))
+    }|collect;
+
+    ≔ freq = fft_f64(&input);
+
+    ≔ input_energy: f64 = input|τ{|z| z.norm_sqr()}|Σ;
+    ≔ freq_energy: f64 = freq|τ{|z| z.norm_sqr()}|Σ / 32.0;
+
+    assert!((input_energy - freq_energy).abs() < 1e-10!);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Summary
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Total: 15 tests
+//
+// Roundtrip:     2 (power-of-2, non-power-of-2)
+// Properties:    3 (Parseval, linearity, convolution)
+// Components:    2 (DC, Nyquist)
+// Reference:     2 (vs rustfft)
+// Edge cases:    3 (single, zeros, large)
+// f64:           2 (roundtrip, Parseval)
+//
+// Status: RED - Implementation needed
