@@ -1,0 +1,160 @@
+// Test: FFT basic roundtrip
+// Spec: haagenti-core FFT module
+// Priority: P0
+//
+// Purpose:
+// Validates that FFT -> IFFT roundtrip preserves values.
+//
+// Expected behavior:
+// Should print PASS for each test
+
+// Complex number type for FFT
+sigil Complex {
+    re: f64,
+    im: f64,
+}
+
+⊢ Complex {
+    rite new(re: f64, im: f64) → Self {
+        Self { re, im }
+    }
+
+    rite add(&self, other: &Self) → Self {
+        Self·new(self.re + other.re, self.im + other.im)
+    }
+
+    rite sub(&self, other: &Self) → Self {
+        Self·new(self.re - other.re, self.im - other.im)
+    }
+
+    rite mul(&self, other: &Self) → Self {
+        Self·new(
+            self.re * other.re - self.im * other.im,
+            self.re * other.im + self.im * other.re,
+        )
+    }
+
+    rite from_polar(r: f64, theta: f64) → Self {
+        Self·new(r * theta.cos(), r * theta.sin())
+    }
+
+    rite magnitude(&self) → f64 {
+        (self.re * self.re + self.im * self.im).sqrt()
+    }
+}
+
+// Simple radix-2 Cooley-Tukey FFT
+rite fft(input: &[Complex]) → Vec<Complex> {
+    ≔ n = input.len();
+
+    // Base case
+    ⎇ n <= 1 { ⤺ input.to_vec(); }
+
+    // Split into even and odd
+    ≔ Δ even = Vec·with_capacity(n / 2);
+    ≔ Δ odd = Vec·with_capacity(n / 2);
+    ∀ i ∈ 0..n / 2 {
+        even.push(input[i * 2].clone());
+        odd.push(input[i * 2 + 1].clone());
+    }
+
+    // Recursive FFT
+    ≔ even_fft = fft(&even);
+    ≔ odd_fft = fft(&odd);
+
+    // Combine - allocate result vector
+    ≔ Δ result = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        result.push(Complex·new(0.0, 0.0));
+    }
+    ∀ k ∈ 0..n / 2 {
+        ≔ theta = -2.0 * PI() * (k as f64) / (n as f64);
+        ≔ twiddle = Complex·from_polar(1.0, theta);
+        ≔ t = twiddle.mul(&odd_fft[k]);
+        result[k] = even_fft[k].add(&t);
+        result[k + n / 2] = even_fft[k].sub(&t);
+    }
+
+    result
+}
+
+// Inverse FFT
+rite ifft(input: &[Complex]) → Vec<Complex> {
+    ≔ n = input.len();
+
+    // Conjugate input
+    ≔ Δ conjugated = Vec·with_capacity(n);
+    ∀ c ∈ input {
+        conjugated.push(Complex·new(c.re, -c.im));
+    }
+
+    // Forward FFT
+    ≔ Δ result = fft(&conjugated);
+
+    // Conjugate and scale
+    ∀ i ∈ 0..result.len() {
+        result[i].re = result[i].re / (n as f64);
+        result[i].im = -result[i].im / (n as f64);
+    }
+
+    result
+}
+
+// Test FFT roundtrip
+rite test_fft_roundtrip() → bool {
+    // Simple 4-element test
+    ≔ input = vec![
+        Complex·new(1.0, 0.0),
+        Complex·new(2.0, 0.0),
+        Complex·new(3.0, 0.0),
+        Complex·new(4.0, 0.0),
+    ];
+
+    ≔ transformed = fft(&input);
+    ≔ recovered = ifft(&transformed);
+
+    // Check that recovered matches input within tolerance
+    ≔ tolerance = 1e-10;
+    ∀ i ∈ 0..4 {
+        ≔ diff_re = (recovered[i].re - input[i].re).abs();
+        ≔ diff_im = (recovered[i].im - input[i].im).abs();
+        ⎇ diff_re > tolerance || diff_im > tolerance { ⤺ false; }
+    }
+
+    true
+}
+
+// Test FFT of constant signal (DC only)
+rite test_fft_dc_signal() → bool {
+    ≔ input = vec![
+        Complex·new(5.0, 0.0),
+        Complex·new(5.0, 0.0),
+        Complex·new(5.0, 0.0),
+        Complex·new(5.0, 0.0),
+    ];
+
+    ≔ transformed = fft(&input);
+
+    // DC component should be 4 * 5 = 20
+    ≔ dc_expected = 20.0;
+    ≔ tolerance = 1e-10;
+
+    ⎇ (transformed[0].re - dc_expected).abs() > tolerance { ⤺ false; }
+
+    // All other components should be zero
+    ∀ i ∈ 1..4 {
+        ⎇ transformed[i].magnitude() > tolerance { ⤺ false; }
+    }
+
+    true
+}
+
+rite main() {
+    // Test 1: FFT roundtrip
+    ≔ result1 = ⎇ test_fft_roundtrip() { "PASS: FFT roundtrip" } ⎉ { "FAIL: FFT roundtrip" };
+    println(result1);
+
+    // Test 2: DC signal
+    ≔ result2 = ⎇ test_fft_dc_signal() { "PASS: FFT DC signal" } ⎉ { "FAIL: FFT DC signal" };
+    println(result2);
+}

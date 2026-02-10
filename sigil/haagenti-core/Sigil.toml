@@ -1,0 +1,13 @@
+[project]
+name = "haagenti-core"
+version = "0.2.0"
+edition = "2025"
+sigil-version = "0.2.0"
+description = "Core primitives for holographic tensor compression"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Core has no external dependencies
+
+[features]
+default = []

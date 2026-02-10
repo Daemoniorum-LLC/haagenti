@@ -1,0 +1,13 @@
+[project]
+name = "haagenti-hct"
+version = "0.2.0"
+edition = "2025"
+sigil-version = "0.2.0"
+description = "Haagenti Compressed Tensor format with HoloTensor holographic compression"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+haagenti-core = { path = "../haagenti-core" }
+
+[features]
+default = []

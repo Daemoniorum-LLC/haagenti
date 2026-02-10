@@ -1,0 +1,19 @@
+# Haagenti Sigil Workspace
+# Holographic tensor compression for neural network weights
+
+[workspace]
+members = [
+    "haagenti-core",
+    "haagenti-hct",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2025"
+sigil-version = "0.2.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Daemoniorum-LLC/haagenti"
+
+[profile.release]
+opt-level = 3
+lto = true
