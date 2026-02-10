@@ -172,8 +172,9 @@ rite test_dct_vs_rust_reference() {
     dct_1d(&input, &mut sigil_dct);
 
     // Known haagenti-core dct_1d output for this input (orthonormal)
-    // Computed via: cargo test test_dct_reference --nocapture
-    ≔ rust_reference = [5.0f32, -2.23044, 0.0, -0.15851]!;
+    // Computed via: rustc dct_reference.rs && ./dct_ref
+    // Output: [5.0, -2.2304428, 8.4293697e-7, -0.15851396]
+    ≔ rust_reference = [5.0f32, -2.2304428, 0.0, -0.15851396]!;
 
     assert_vectors_close(&sigil_dct, &rust_reference, epsilon: 1e-4!);
 }
