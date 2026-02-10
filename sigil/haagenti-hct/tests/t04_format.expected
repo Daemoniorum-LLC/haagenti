@@ -1,0 +1,11 @@
+PASS: DType roundtrip
+PASS: DType sizes
+PASS: DType names
+PASS: Algorithm roundtrip
+PASS: BlockIndex new
+PASS: BlockIndex end_offset
+PASS: BlockIndex checksum
+PASS: Header new
+PASS: Header validation
+PASS: Compression ratio
+PASS: Compression ratio zero

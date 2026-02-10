@@ -1,0 +1,8 @@
+PASS: Monotonic degradation
+PASS: Smooth signal compression
+PASS: High freq compression
+PASS: PSNR improvement
+PASS: DC-only constant
+PASS: Full retention lossless
+PASS: Quality curve smooth
+PASS: Mean preservation

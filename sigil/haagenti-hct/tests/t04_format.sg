@@ -1,0 +1,342 @@
+// Test: HoloTensor file format structures
+// Spec: haagenti-hct HCT file format
+// Priority: P0
+//
+// Purpose:
+// Validates core format structures: headers, dtypes,
+// compression algorithms, block indices.
+//
+// Expected behavior:
+// Should print PASS for each test
+
+// ════════════════════════════════════════════════════════════════════════════
+// DType - Data types for tensor storage
+// ════════════════════════════════════════════════════════════════════════════
+
+ᛈ DType {
+    F32 = 0,
+    F16 = 1,
+    BF16 = 2,
+    I8 = 3,
+    I4 = 4,
+}
+
+⊢ DType {
+    rite from_u8(v: u8) → Self {
+        ⎇ v == 0 { DType·F32 }
+        ⎉ ⎇ v == 1 { DType·F16 }
+        ⎉ ⎇ v == 2 { DType·BF16 }
+        ⎉ ⎇ v == 3 { DType·I8 }
+        ⎉ ⎇ v == 4 { DType·I4 }
+        ⎉ { DType·F32 }
+    }
+
+    rite to_u8(&self) → u8 {
+        ⎇ *self == DType·F32 { 0 }
+        ⎉ ⎇ *self == DType·F16 { 1 }
+        ⎉ ⎇ *self == DType·BF16 { 2 }
+        ⎉ ⎇ *self == DType·I8 { 3 }
+        ⎉ ⎇ *self == DType·I4 { 4 }
+        ⎉ { 0 }
+    }
+
+    rite size_bytes(&self) → usize {
+        ⎇ *self == DType·F32 { 4 }
+        ⎉ ⎇ *self == DType·F16 { 2 }
+        ⎉ ⎇ *self == DType·BF16 { 2 }
+        ⎉ ⎇ *self == DType·I8 { 1 }
+        ⎉ ⎇ *self == DType·I4 { 1 }  // packed as nibbles
+        ⎉ { 4 }
+    }
+
+    rite name(&self) → &str {
+        ⎇ *self == DType·F32 { "f32" }
+        ⎉ ⎇ *self == DType·F16 { "f16" }
+        ⎉ ⎇ *self == DType·BF16 { "bf16" }
+        ⎉ ⎇ *self == DType·I8 { "i8" }
+        ⎉ ⎇ *self == DType·I4 { "i4" }
+        ⎉ { "unknown" }
+    }
+}
+
+⊢ Clone ∀ DType {
+    rite clone(&self) → Self {
+        ⎇ *self == DType·F32 { DType·F32 }
+        ⎉ ⎇ *self == DType·F16 { DType·F16 }
+        ⎉ ⎇ *self == DType·BF16 { DType·BF16 }
+        ⎉ ⎇ *self == DType·I8 { DType·I8 }
+        ⎉ ⎇ *self == DType·I4 { DType·I4 }
+        ⎉ { DType·F32 }
+    }
+}
+
+⊢ PartialEq ∀ DType {
+    rite eq(&self, other: &Self) → bool {
+        self.to_u8() == other.to_u8()
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CompressionAlgorithm
+// ════════════════════════════════════════════════════════════════════════════
+
+ᛈ CompressionAlgorithm {
+    None = 0,
+    Spectral = 1,      // DCT-based
+    RandomProjection = 2,  // Johnson-Lindenstrauss
+    LowRank = 3,       // SVD-based
+}
+
+⊢ CompressionAlgorithm {
+    rite from_u8(v: u8) → Self {
+        ⎇ v == 0 { CompressionAlgorithm·None }
+        ⎉ ⎇ v == 1 { CompressionAlgorithm·Spectral }
+        ⎉ ⎇ v == 2 { CompressionAlgorithm·RandomProjection }
+        ⎉ ⎇ v == 3 { CompressionAlgorithm·LowRank }
+        ⎉ { CompressionAlgorithm·None }
+    }
+
+    rite to_u8(&self) → u8 {
+        ⎇ *self == CompressionAlgorithm·None { 0 }
+        ⎉ ⎇ *self == CompressionAlgorithm·Spectral { 1 }
+        ⎉ ⎇ *self == CompressionAlgorithm·RandomProjection { 2 }
+        ⎉ ⎇ *self == CompressionAlgorithm·LowRank { 3 }
+        ⎉ { 0 }
+    }
+}
+
+⊢ Clone ∀ CompressionAlgorithm {
+    rite clone(&self) → Self {
+        CompressionAlgorithm·from_u8(self.to_u8())
+    }
+}
+
+⊢ PartialEq ∀ CompressionAlgorithm {
+    rite eq(&self, other: &Self) → bool {
+        self.to_u8() == other.to_u8()
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BlockIndex - For block-based access
+// ════════════════════════════════════════════════════════════════════════════
+
+sigil BlockIndex {
+    block_id: u32,
+    offset: u64,
+    size: u32,
+    checksum: u32,
+}
+
+⊢ BlockIndex {
+    rite new(block_id: u32, offset: u64, size: u32) → Self {
+        Self {
+            block_id: block_id,
+            offset: offset,
+            size: size,
+            checksum: 0,
+        }
+    }
+
+    rite with_checksum(block_id: u32, offset: u64, size: u32, checksum: u32) → Self {
+        Self {
+            block_id: block_id,
+            offset: offset,
+            size: size,
+            checksum: checksum,
+        }
+    }
+
+    rite end_offset(&self) → u64 {
+        self.offset + self.size as u64
+    }
+}
+
+⊢ Clone ∀ BlockIndex {
+    rite clone(&self) → Self {
+        Self {
+            block_id: self.block_id,
+            offset: self.offset,
+            size: self.size,
+            checksum: self.checksum,
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HctHeader - File header structure
+// ════════════════════════════════════════════════════════════════════════════
+
+sigil HctHeader {
+    magic: u32,           // 0x48435401 = "HCT\x01"
+    version: u16,
+    flags: u16,
+    algorithm: CompressionAlgorithm,
+    dtype: DType,
+    original_size: u64,
+    compressed_size: u64,
+    num_blocks: u32,
+    block_size: u32,
+}
+
+⊢ HctHeader {
+    rite magic() → u32 { 0x48435401 }
+    rite version() → u16 { 1 }
+
+    rite new() → Self {
+        Self {
+            magic: Self·magic(),
+            version: Self·version(),
+            flags: 0,
+            algorithm: CompressionAlgorithm·None,
+            dtype: DType·F32,
+            original_size: 0,
+            compressed_size: 0,
+            num_blocks: 0,
+            block_size: 0,
+        }
+    }
+
+    rite is_valid(&self) → bool {
+        self.magic == Self·magic() && self.version <= Self·version()
+    }
+
+    rite compression_ratio(&self) → f64 {
+        ⎇ self.compressed_size == 0 { ⤺ 0.0; }
+        self.original_size as f64 / self.compressed_size as f64
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Test DType roundtrip conversion
+rite test_dtype_roundtrip() → bool {
+    ∀ i ∈ 0..5 {
+        ≔ dt = DType·from_u8(i as u8);
+        ⎇ dt.to_u8() != i as u8 { ⤺ false; }
+    }
+    true
+}
+
+/// Test DType size_bytes
+rite test_dtype_sizes() → bool {
+    DType·F32.size_bytes() == 4 &&
+    DType·F16.size_bytes() == 2 &&
+    DType·BF16.size_bytes() == 2 &&
+    DType·I8.size_bytes() == 1 &&
+    DType·I4.size_bytes() == 1
+}
+
+/// Test DType names
+rite test_dtype_names() → bool {
+    DType·F32.name() == "f32" &&
+    DType·F16.name() == "f16" &&
+    DType·BF16.name() == "bf16" &&
+    DType·I8.name() == "i8" &&
+    DType·I4.name() == "i4"
+}
+
+/// Test CompressionAlgorithm roundtrip
+rite test_algorithm_roundtrip() → bool {
+    ∀ i ∈ 0..4 {
+        ≔ algo = CompressionAlgorithm·from_u8(i as u8);
+        ⎇ algo.to_u8() != i as u8 { ⤺ false; }
+    }
+    true
+}
+
+/// Test BlockIndex construction
+rite test_block_index_new() → bool {
+    ≔ block = BlockIndex·new(5, 1024, 512);
+    block.block_id == 5 &&
+    block.offset == 1024 &&
+    block.size == 512 &&
+    block.checksum == 0
+}
+
+/// Test BlockIndex end_offset
+rite test_block_index_end_offset() → bool {
+    ≔ block = BlockIndex·new(0, 100, 50);
+    block.end_offset() == 150
+}
+
+/// Test BlockIndex with checksum
+rite test_block_index_checksum() → bool {
+    ≔ block = BlockIndex·with_checksum(1, 0, 256, 0xDEADBEEF);
+    block.checksum == 0xDEADBEEF
+}
+
+/// Test HctHeader default construction
+rite test_header_new() → bool {
+    ≔ header = HctHeader·new();
+    header.magic == 0x48435401 &&
+    header.version == 1 &&
+    header.flags == 0 &&
+    header.algorithm == CompressionAlgorithm·None &&
+    header.dtype == DType·F32
+}
+
+/// Test HctHeader validation
+rite test_header_validation() → bool {
+    ≔ valid = HctHeader·new();
+    ≔ Δ invalid = HctHeader·new();
+    invalid.magic = 0xBADCAFE;
+
+    valid.is_valid() && !invalid.is_valid()
+}
+
+/// Test compression ratio calculation
+rite test_compression_ratio() → bool {
+    ≔ Δ header = HctHeader·new();
+    header.original_size = 1000;
+    header.compressed_size = 250;
+
+    ≔ ratio = header.compression_ratio();
+    (ratio - 4.0).abs() < 0.01
+}
+
+/// Test zero compressed size edge case
+rite test_compression_ratio_zero() → bool {
+    ≔ Δ header = HctHeader·new();
+    header.original_size = 1000;
+    header.compressed_size = 0;
+
+    header.compression_ratio() == 0.0
+}
+
+rite main() {
+    ≔ r1 = ⎇ test_dtype_roundtrip() { "PASS: DType roundtrip" } ⎉ { "FAIL: DType roundtrip" };
+    println(r1);
+
+    ≔ r2 = ⎇ test_dtype_sizes() { "PASS: DType sizes" } ⎉ { "FAIL: DType sizes" };
+    println(r2);
+
+    ≔ r3 = ⎇ test_dtype_names() { "PASS: DType names" } ⎉ { "FAIL: DType names" };
+    println(r3);
+
+    ≔ r4 = ⎇ test_algorithm_roundtrip() { "PASS: Algorithm roundtrip" } ⎉ { "FAIL: Algorithm roundtrip" };
+    println(r4);
+
+    ≔ r5 = ⎇ test_block_index_new() { "PASS: BlockIndex new" } ⎉ { "FAIL: BlockIndex new" };
+    println(r5);
+
+    ≔ r6 = ⎇ test_block_index_end_offset() { "PASS: BlockIndex end_offset" } ⎉ { "FAIL: BlockIndex end_offset" };
+    println(r6);
+
+    ≔ r7 = ⎇ test_block_index_checksum() { "PASS: BlockIndex checksum" } ⎉ { "FAIL: BlockIndex checksum" };
+    println(r7);
+
+    ≔ r8 = ⎇ test_header_new() { "PASS: Header new" } ⎉ { "FAIL: Header new" };
+    println(r8);
+
+    ≔ r9 = ⎇ test_header_validation() { "PASS: Header validation" } ⎉ { "FAIL: Header validation" };
+    println(r9);
+
+    ≔ r10 = ⎇ test_compression_ratio() { "PASS: Compression ratio" } ⎉ { "FAIL: Compression ratio" };
+    println(r10);
+
+    ≔ r11 = ⎇ test_compression_ratio_zero() { "PASS: Compression ratio zero" } ⎉ { "FAIL: Compression ratio zero" };
+    println(r11);
+}

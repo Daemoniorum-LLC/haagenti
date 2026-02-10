@@ -1,0 +1,277 @@
+// Test: Spectral (DCT-based) encoding for HoloTensor
+// Spec: haagenti-hct holotensor spectral encoding
+// Priority: P0
+//
+// Purpose:
+// Validates DCT-based holographic compression that enables
+// progressive reconstruction from spectral fragments.
+//
+// Expected behavior:
+// Should print PASS for each test
+
+// ════════════════════════════════════════════════════════════════════════════
+// DCT Implementation (from haagenti-core)
+// ════════════════════════════════════════════════════════════════════════════
+
+rite dct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = PI();
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        output.push(0.0);
+    }
+
+    ∀ k ∈ 0..n {
+        ≔ Δ sum = 0.0_f64;
+        ∀ i ∈ 0..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+        }
+        output[k] = sum * scale;
+    }
+
+    output[0] = output[0] / sqrt2;
+    output
+}
+
+rite idct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = PI();
+    ≔ scale_dc = (1.0 / n as f64).sqrt();
+    ≔ scale_ac = (2.0 / n as f64).sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        output.push(0.0);
+    }
+
+    ∀ i ∈ 0..n {
+        ≔ Δ sum = input[0] * scale_dc;
+
+        ∀ k ∈ 1..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[k] * scale_ac * cos(angle);
+        }
+
+        output[i] = sum;
+    }
+
+    output
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Spectral Encoder
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Encode a 1D signal into spectral fragments.
+/// Returns a vector of fragments, each containing a portion of the spectrum.
+rite spectral_encode(input: &[f64], num_fragments: usize) → Vec<Vec<f64>> {
+    ≔ coeffs = dct_1d(input);
+    ≔ n = coeffs.len();
+    ≔ coeffs_per_fragment = (n + num_fragments - 1) / num_fragments;
+
+    ≔ Δ fragments = Vec·with_capacity(num_fragments);
+
+    ∀ f ∈ 0..num_fragments {
+        ≔ start = f * coeffs_per_fragment;
+        ≔ end = ⎇ (f + 1) * coeffs_per_fragment > n { n } ⎉ { (f + 1) * coeffs_per_fragment };
+
+        ≔ Δ fragment = Vec·with_capacity(n);
+        // Pad with zeros for positions before this fragment
+        ∀ _ ∈ 0..start {
+            fragment.push(0.0);
+        }
+        // Copy coefficients for this fragment
+        ∀ i ∈ start..end {
+            fragment.push(coeffs[i]);
+        }
+        // Pad with zeros for positions after this fragment
+        ∀ _ ∈ end..n {
+            fragment.push(0.0);
+        }
+
+        fragments.push(fragment);
+    }
+
+    fragments
+}
+
+/// Decode from a subset of spectral fragments.
+/// Progressive reconstruction - quality improves with more fragments.
+rite spectral_decode(fragments: &[Vec<f64>], n: usize) → Vec<f64> {
+    ≔ Δ combined = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        combined.push(0.0);
+    }
+
+    // Sum all fragment contributions
+    ∀ f ∈ 0..fragments.len() {
+        ∀ i ∈ 0..n {
+            ⎇ i < fragments[f].len() {
+                combined[i] = combined[i] + fragments[f][i];
+            }
+        }
+    }
+
+    // Inverse DCT
+    idct_1d(&combined)
+}
+
+/// Compute mean squared error between two vectors.
+rite mse(a: &[f64], b: &[f64]) → f64 {
+    ⎇ a.len() != b.len() { ⤺ 0.0; }
+    ⎇ a.len() == 0 { ⤺ 0.0; }
+
+    ≔ Δ sum_sq = 0.0;
+    ∀ i ∈ 0..a.len() {
+        ≔ diff = a[i] - b[i];
+        sum_sq = sum_sq + diff * diff;
+    }
+    sum_sq / a.len() as f64
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Test spectral roundtrip with all fragments
+rite test_spectral_full_roundtrip() → bool {
+    ≔ input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    ≔ fragments = spectral_encode(&input, 4);
+    ≔ recovered = spectral_decode(&fragments, 8);
+
+    ≔ error = mse(&input, &recovered);
+    error < 1e-10
+}
+
+/// Test progressive quality - more fragments = better reconstruction
+rite test_progressive_quality() → bool {
+    ≔ input = vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0, 1.5, 7.0];
+    ≔ fragments = spectral_encode(&input, 4);
+
+    // 1 fragment (DC + first few coefficients)
+    ≔ partial1 = spectral_decode(&fragments[0..1].to_vec(), 8);
+    ≔ mse1 = mse(&input, &partial1);
+
+    // 2 fragments
+    ≔ partial2 = spectral_decode(&fragments[0..2].to_vec(), 8);
+    ≔ mse2 = mse(&input, &partial2);
+
+    // 4 fragments (full)
+    ≔ full = spectral_decode(&fragments, 8);
+    ≔ mse4 = mse(&input, &full);
+
+    // Quality should improve monotonically
+    mse1 >= mse2 && mse2 >= mse4
+}
+
+/// Test DC-only reconstruction gives mean
+rite test_dc_only_reconstruction() → bool {
+    ≔ input = vec![2.0, 4.0, 6.0, 8.0];
+    ≔ mean_val = 5.0;  // (2+4+6+8)/4
+
+    ≔ fragments = spectral_encode(&input, 4);
+
+    // First fragment contains DC (index 0)
+    ≔ dc_only = spectral_decode(&fragments[0..1].to_vec(), 4);
+
+    // Each element should be approximately the mean
+    ≔ tolerance = 1e-10;
+    ≔ Δ all_close = true;
+    ∀ i ∈ 0..4 {
+        ⎇ (dc_only[i] - mean_val).abs() > tolerance {
+            all_close = false;
+        }
+    }
+
+    all_close
+}
+
+/// Test energy concentration in low frequencies
+rite test_energy_concentration() → bool {
+    // Smooth signal has most energy in low frequencies
+    ≔ input = vec![1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5];
+    ≔ fragments = spectral_encode(&input, 4);
+
+    // Compute energy in each fragment
+    ≔ Δ energy = Vec·with_capacity(4);
+    ∀ f ∈ 0..4 {
+        ≔ Δ e = 0.0;
+        ∀ i ∈ 0..fragments[f].len() {
+            e = e + fragments[f][i] * fragments[f][i];
+        }
+        energy.push(e);
+    }
+
+    // First fragment (lowest frequencies) should have most energy
+    energy[0] > energy[1] + energy[2] + energy[3]
+}
+
+/// Test different fragment counts
+rite test_fragment_counts() → bool {
+    ≔ input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+
+    // Test with 1, 2, 4, 8 fragments
+    ∀ num_frags ∈ [1, 2, 4, 8] {
+        ≔ fragments = spectral_encode(&input, num_frags);
+        ≔ recovered = spectral_decode(&fragments, 8);
+        ≔ error = mse(&input, &recovered);
+
+        ⎇ error > 1e-10 { ⤺ false; }
+    }
+
+    true
+}
+
+/// Test lossy compression with retained coefficients
+rite test_lossy_compression() → bool {
+    // High-frequency signal (harder to compress)
+    ≔ input = vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
+    ≔ fragments = spectral_encode(&input, 4);
+
+    // Use only first 2 fragments (50% of spectrum)
+    ≔ partial = spectral_decode(&fragments[0..2].to_vec(), 8);
+    ≔ mse_val = mse(&input, &partial);
+
+    // High-frequency signals lose quality with truncation
+    // But error should still be bounded
+    mse_val < 2.0  // Generous bound for 50% compression
+}
+
+/// Test that constant signal requires only DC
+rite test_constant_signal() → bool {
+    ≔ input = vec![5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0];
+    ≔ fragments = spectral_encode(&input, 4);
+
+    // First fragment alone should perfectly reconstruct
+    ≔ dc_only = spectral_decode(&fragments[0..1].to_vec(), 8);
+    ≔ error = mse(&input, &dc_only);
+
+    error < 1e-10
+}
+
+rite main() {
+    ≔ r1 = ⎇ test_spectral_full_roundtrip() { "PASS: Spectral full roundtrip" } ⎉ { "FAIL: Spectral full roundtrip" };
+    println(r1);
+
+    ≔ r2 = ⎇ test_progressive_quality() { "PASS: Progressive quality" } ⎉ { "FAIL: Progressive quality" };
+    println(r2);
+
+    ≔ r3 = ⎇ test_dc_only_reconstruction() { "PASS: DC-only reconstruction" } ⎉ { "FAIL: DC-only reconstruction" };
+    println(r3);
+
+    ≔ r4 = ⎇ test_energy_concentration() { "PASS: Energy concentration" } ⎉ { "FAIL: Energy concentration" };
+    println(r4);
+
+    ≔ r5 = ⎇ test_fragment_counts() { "PASS: Fragment counts" } ⎉ { "FAIL: Fragment counts" };
+    println(r5);
+
+    ≔ r6 = ⎇ test_lossy_compression() { "PASS: Lossy compression" } ⎉ { "FAIL: Lossy compression" };
+    println(r6);
+
+    ≔ r7 = ⎇ test_constant_signal() { "PASS: Constant signal" } ⎉ { "FAIL: Constant signal" };
+    println(r7);
+}

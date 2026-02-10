@@ -1,0 +1,7 @@
+PASS: Spectral full roundtrip
+PASS: Progressive quality
+PASS: DC-only reconstruction
+PASS: Energy concentration
+PASS: Fragment counts
+PASS: Lossy compression
+PASS: Constant signal

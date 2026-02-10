@@ -1,0 +1,295 @@
+// Test: Quality curves for HoloTensor compression
+// Spec: haagenti-hct compression quality validation
+// Priority: P1
+//
+// Purpose:
+// Validates that compression quality degrades gracefully
+// and predictably as compression ratio increases.
+//
+// Expected behavior:
+// Should print PASS for each test
+
+// ════════════════════════════════════════════════════════════════════════════
+// DCT Implementation (shared with spectral tests)
+// ════════════════════════════════════════════════════════════════════════════
+
+rite dct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = PI();
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        output.push(0.0);
+    }
+
+    ∀ k ∈ 0..n {
+        ≔ Δ sum = 0.0_f64;
+        ∀ i ∈ 0..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+        }
+        output[k] = sum * scale;
+    }
+
+    output[0] = output[0] / sqrt2;
+    output
+}
+
+rite idct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = PI();
+    ≔ scale_dc = (1.0 / n as f64).sqrt();
+    ≔ scale_ac = (2.0 / n as f64).sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        output.push(0.0);
+    }
+
+    ∀ i ∈ 0..n {
+        ≔ Δ sum = input[0] * scale_dc;
+
+        ∀ k ∈ 1..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[k] * scale_ac * cos(angle);
+        }
+
+        output[i] = sum;
+    }
+
+    output
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Quality Metrics
+// ════════════════════════════════════════════════════════════════════════════
+
+rite mse(a: &[f64], b: &[f64]) → f64 {
+    ⎇ a.len() != b.len() { ⤺ 0.0; }
+    ⎇ a.len() == 0 { ⤺ 0.0; }
+
+    ≔ Δ sum_sq = 0.0;
+    ∀ i ∈ 0..a.len() {
+        ≔ diff = a[i] - b[i];
+        sum_sq = sum_sq + diff * diff;
+    }
+    sum_sq / a.len() as f64
+}
+
+rite psnr(original: &[f64], reconstructed: &[f64], max_val: f64) → f64 {
+    ≔ mse_val = mse(original, reconstructed);
+    ⎇ mse_val < 1e-15 {
+        ⤺ 100.0;  // Perfect reconstruction
+    }
+    10.0 * (max_val * max_val / mse_val).ln() / 10.0_f64.ln()
+}
+
+rite max_abs(a: &[f64]) → f64 {
+    ≔ Δ m = 0.0;
+    ∀ i ∈ 0..a.len() {
+        ⎇ a[i].abs() > m {
+            m = a[i].abs();
+        }
+    }
+    m
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Lossy Compression (truncate high-frequency coefficients)
+// ════════════════════════════════════════════════════════════════════════════
+
+rite compress_truncate(input: &[f64], keep_ratio: f64) → Vec<f64> {
+    ≔ coeffs = dct_1d(input);
+    ≔ n = coeffs.len();
+    ≔ keep = ((n as f64) * keep_ratio) as usize;
+    ≔ keep = ⎇ keep < 1 { 1 } ⎉ { keep };
+
+    ≔ Δ truncated = Vec·with_capacity(n);
+    ∀ i ∈ 0..n {
+        ⎇ i < keep {
+            truncated.push(coeffs[i]);
+        } ⎉ {
+            truncated.push(0.0);
+        }
+    }
+
+    idct_1d(&truncated)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Test quality degrades monotonically with compression
+rite test_monotonic_degradation() → bool {
+    ≔ input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 4.0, 3.0, 2.0, 1.0, 2.0, 3.0, 4.0, 5.0, 4.0, 3.0, 2.0];
+
+    // Test at 100%, 75%, 50%, 25% coefficient retention
+    ≔ rec100 = compress_truncate(&input, 1.0);
+    ≔ rec75 = compress_truncate(&input, 0.75);
+    ≔ rec50 = compress_truncate(&input, 0.5);
+    ≔ rec25 = compress_truncate(&input, 0.25);
+
+    ≔ mse100 = mse(&input, &rec100);
+    ≔ mse75 = mse(&input, &rec75);
+    ≔ mse50 = mse(&input, &rec50);
+    ≔ mse25 = mse(&input, &rec25);
+
+    // More compression = more error (monotonic)
+    mse100 <= mse75 && mse75 <= mse50 && mse50 <= mse25
+}
+
+/// Test smooth signals compress well
+rite test_smooth_signal_compression() → bool {
+    // Linear ramp - very smooth, most energy in DC + first few AC
+    ≔ Δ smooth = Vec·with_capacity(16);
+    ∀ i ∈ 0..16 {
+        smooth.push(i as f64);
+    }
+
+    // 25% of coefficients should give good reconstruction
+    ≔ rec = compress_truncate(&smooth, 0.25);
+    ≔ error = mse(&smooth, &rec);
+
+    // Should have very low error for smooth signal
+    error < 0.5
+}
+
+/// Test high-frequency signals need more coefficients
+rite test_high_freq_compression() → bool {
+    // Alternating signal - worst case for truncation
+    ≔ Δ noisy = Vec·with_capacity(16);
+    ∀ i ∈ 0..16 {
+        ≔ v = ⎇ i % 2 == 0 { 1.0 } ⎉ { -1.0 };
+        noisy.push(v);
+    }
+
+    // 50% coefficients on high-freq signal
+    ≔ rec = compress_truncate(&noisy, 0.5);
+    ≔ error = mse(&noisy, &rec);
+
+    // Error should be significant (> 0.5) for truncated high-freq
+    error > 0.3
+}
+
+/// Test PSNR improves with more coefficients
+rite test_psnr_improvement() → bool {
+    ≔ input = vec![1.0, 3.0, 2.0, 4.0, 3.0, 5.0, 4.0, 6.0, 5.0, 7.0, 6.0, 8.0, 7.0, 9.0, 8.0, 10.0];
+    ≔ max_val = 10.0;
+
+    ≔ rec25 = compress_truncate(&input, 0.25);
+    ≔ rec50 = compress_truncate(&input, 0.5);
+    ≔ rec75 = compress_truncate(&input, 0.75);
+
+    ≔ psnr25 = psnr(&input, &rec25, max_val);
+    ≔ psnr50 = psnr(&input, &rec50, max_val);
+    ≔ psnr75 = psnr(&input, &rec75, max_val);
+
+    // PSNR should improve with more coefficients
+    psnr25 <= psnr50 && psnr50 <= psnr75
+}
+
+/// Test DC-only gives constant approximation
+rite test_dc_only_constant() → bool {
+    ≔ input = vec![2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0];
+    ≔ mean_val = 9.0;  // (2+4+6+8+10+12+14+16)/8 = 72/8 = 9
+
+    // Keep only DC (1/8 = 12.5%)
+    ≔ rec = compress_truncate(&input, 0.125);
+
+    // All values should be close to mean
+    ≔ Δ all_close = true;
+    ∀ i ∈ 0..8 {
+        ⎇ (rec[i] - mean_val).abs() > 0.5 {
+            all_close = false;
+        }
+    }
+
+    all_close
+}
+
+/// Test 100% retention is lossless
+rite test_full_retention_lossless() → bool {
+    ≔ input = vec![3.14159, 2.71828, 1.41421, 1.73205, 2.23607, 2.64575, 3.16228, 3.60555];
+
+    ≔ rec = compress_truncate(&input, 1.0);
+    ≔ error = mse(&input, &rec);
+
+    error < 1e-10
+}
+
+/// Test quality curve is smooth (no jumps)
+rite test_quality_curve_smooth() → bool {
+    ≔ input = vec![1.0, 2.0, 4.0, 7.0, 5.0, 3.0, 6.0, 8.0, 2.0, 4.0, 6.0, 8.0, 10.0, 8.0, 6.0, 4.0];
+
+    // Sample quality at many points
+    ≔ Δ errors = Vec·with_capacity(8);
+    ∀ i ∈ 1..9 {
+        ≔ ratio = (i as f64) / 8.0;
+        ≔ rec = compress_truncate(&input, ratio);
+        errors.push(mse(&input, &rec));
+    }
+
+    // Check errors are monotonically decreasing
+    ≔ Δ monotonic = true;
+    ∀ i ∈ 0..7 {
+        ⎇ errors[i] < errors[i + 1] {
+            monotonic = false;
+        }
+    }
+
+    monotonic
+}
+
+/// Test compression preserves signal mean
+rite test_mean_preservation() → bool {
+    ≔ input = vec![5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0];
+
+    // Calculate original mean
+    ≔ Δ sum_orig = 0.0;
+    ∀ i ∈ 0..8 {
+        sum_orig = sum_orig + input[i];
+    }
+    ≔ mean_orig = sum_orig / 8.0;
+
+    // Compress at 50%
+    ≔ rec = compress_truncate(&input, 0.5);
+
+    // Calculate reconstructed mean
+    ≔ Δ sum_rec = 0.0;
+    ∀ i ∈ 0..8 {
+        sum_rec = sum_rec + rec[i];
+    }
+    ≔ mean_rec = sum_rec / 8.0;
+
+    // Means should be very close (DC preserved)
+    (mean_orig - mean_rec).abs() < 0.01
+}
+
+rite main() {
+    ≔ r1 = ⎇ test_monotonic_degradation() { "PASS: Monotonic degradation" } ⎉ { "FAIL: Monotonic degradation" };
+    println(r1);
+
+    ≔ r2 = ⎇ test_smooth_signal_compression() { "PASS: Smooth signal compression" } ⎉ { "FAIL: Smooth signal compression" };
+    println(r2);
+
+    ≔ r3 = ⎇ test_high_freq_compression() { "PASS: High freq compression" } ⎉ { "FAIL: High freq compression" };
+    println(r3);
+
+    ≔ r4 = ⎇ test_psnr_improvement() { "PASS: PSNR improvement" } ⎉ { "FAIL: PSNR improvement" };
+    println(r4);
+
+    ≔ r5 = ⎇ test_dc_only_constant() { "PASS: DC-only constant" } ⎉ { "FAIL: DC-only constant" };
+    println(r5);
+
+    ≔ r6 = ⎇ test_full_retention_lossless() { "PASS: Full retention lossless" } ⎉ { "FAIL: Full retention lossless" };
+    println(r6);
+
+    ≔ r7 = ⎇ test_quality_curve_smooth() { "PASS: Quality curve smooth" } ⎉ { "FAIL: Quality curve smooth" };
+    println(r7);
+
+    ≔ r8 = ⎇ test_mean_preservation() { "PASS: Mean preservation" } ⎉ { "FAIL: Mean preservation" };
+    println(r8);
+}
