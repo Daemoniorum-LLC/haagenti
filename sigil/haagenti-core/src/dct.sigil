@@ -3,8 +3,18 @@
 //! FFT-based DCT-II and IDCT (DCT-III) for efficient spectral compression.
 //! Uses the Makhoul algorithm to compute DCT via FFT in O(N log N).
 //!
-//! For small sizes (N ≤ 32), direct O(N²) computation is used as FFT
-//! overhead exceeds the algorithmic benefit.
+//! ## Algorithm Selection
+//!
+//! | Size N  | Algorithm   | Complexity | Notes                    |
+//! |---------|-------------|------------|--------------------------|
+//! | N ≤ 32  | Direct      | O(N²)      | FFT overhead too high    |
+//! | N > 32  | FFT-based   | O(N log N) | Makhoul via radix-2 FFT  |
+//!
+//! ## Orthonormal Scaling
+//!
+//! Uses orthonormal DCT which preserves L2 norm (Parseval's theorem!):
+//! - `‖x‖² = ‖DCT(x)‖²`
+//! - Enables symmetric autograd: `∂L/∂x = IDCT(∂L/∂X)`
 //!
 //! @spec specs/decisions/DEC-2026-02-10-sigil-migration.md
 
