@@ -1,0 +1,196 @@
+// Test: Statistical functions
+// Spec: haagenti-core stats module
+// Priority: P0
+//
+// Purpose:
+// Validates mean, variance, and error metrics used for quality assessment.
+//
+// Expected behavior:
+// Should print PASS for each test
+
+// ════════════════════════════════════════════════════════════════════════════
+// Statistical Functions
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compute the mean of a slice.
+rite mean(data: &[f64]) → f64 {
+    ⎇ data.len() == 0 { ⤺ 0.0; }
+
+    ≔ Δ sum = 0.0;
+    ∀ i ∈ 0..data.len() {
+        sum = sum + data[i];
+    }
+    sum / data.len() as f64
+}
+
+/// Compute the variance of a slice (population variance).
+rite variance(data: &[f64]) → f64 {
+    ⎇ data.len() == 0 { ⤺ 0.0; }
+
+    ≔ m = mean(data);
+    ≔ Δ sum_sq = 0.0;
+    ∀ i ∈ 0..data.len() {
+        ≔ diff = data[i] - m;
+        sum_sq = sum_sq + diff * diff;
+    }
+    sum_sq / data.len() as f64
+}
+
+/// Compute the standard deviation.
+rite std_dev(data: &[f64]) → f64 {
+    variance(data).sqrt()
+}
+
+/// Compute the mean squared error between two slices.
+rite mse(a: &[f64], b: &[f64]) → f64 {
+    ⎇ a.len() != b.len() { ⤺ 0.0; }
+    ⎇ a.len() == 0 { ⤺ 0.0; }
+
+    ≔ Δ sum_sq = 0.0;
+    ∀ i ∈ 0..a.len() {
+        ≔ diff = a[i] - b[i];
+        sum_sq = sum_sq + diff * diff;
+    }
+    sum_sq / a.len() as f64
+}
+
+/// Compute the root mean squared error.
+rite rmse(a: &[f64], b: &[f64]) → f64 {
+    mse(a, b).sqrt()
+}
+
+/// Compute the peak signal-to-noise ratio in dB.
+rite psnr(original: &[f64], reconstructed: &[f64]) → f64 {
+    ≔ mse_val = mse(original, reconstructed);
+    ⎇ mse_val < 1e-15 { ⤺ 100.0; }  // Perfect reconstruction
+
+    // Find max value for peak signal
+    ≔ Δ max_val = 0.0;
+    ∀ i ∈ 0..original.len() {
+        ⎇ original[i].abs() > max_val {
+            max_val = original[i].abs();
+        }
+    }
+    ⎇ max_val < 1e-15 { ⤺ 0.0; }
+
+    10.0 * (max_val * max_val / mse_val).log10()
+}
+
+/// Compute the sum of a slice.
+rite sum(data: &[f64]) → f64 {
+    ≔ Δ total = 0.0;
+    ∀ i ∈ 0..data.len() {
+        total = total + data[i];
+    }
+    total
+}
+
+/// Compute the L2 norm (Euclidean norm) of a slice.
+rite l2_norm(data: &[f64]) → f64 {
+    ≔ Δ sum_sq = 0.0;
+    ∀ i ∈ 0..data.len() {
+        sum_sq = sum_sq + data[i] * data[i];
+    }
+    sum_sq.sqrt()
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite approx_eq(a: f64, b: f64, tol: f64) → bool {
+    (a - b).abs() < tol
+}
+
+rite test_mean() → bool {
+    ≔ data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    ≔ m = mean(&data);
+    approx_eq(m, 3.0, 1e-10)
+}
+
+rite test_variance() → bool {
+    // Variance of [1, 2, 3, 4, 5] with mean 3:
+    // ((1-3)² + (2-3)² + (3-3)² + (4-3)² + (5-3)²) / 5
+    // = (4 + 1 + 0 + 1 + 4) / 5 = 10/5 = 2
+    ≔ data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    ≔ v = variance(&data);
+    approx_eq(v, 2.0, 1e-10)
+}
+
+rite test_std_dev() → bool {
+    ≔ data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    ≔ s = std_dev(&data);
+    approx_eq(s, 2.0_f64.sqrt(), 1e-10)
+}
+
+rite test_mse_identical() → bool {
+    ≔ a = vec![1.0, 2.0, 3.0];
+    ≔ b = vec![1.0, 2.0, 3.0];
+    ≔ e = mse(&a, &b);
+    approx_eq(e, 0.0, 1e-15)
+}
+
+rite test_mse_different() → bool {
+    ≔ a = vec![1.0, 2.0, 3.0];
+    ≔ b = vec![2.0, 3.0, 4.0];
+    // MSE = ((1-2)² + (2-3)² + (3-4)²) / 3 = (1 + 1 + 1) / 3 = 1
+    ≔ e = mse(&a, &b);
+    approx_eq(e, 1.0, 1e-10)
+}
+
+rite test_rmse() → bool {
+    ≔ a = vec![1.0, 2.0, 3.0];
+    ≔ b = vec![2.0, 3.0, 4.0];
+    ≔ e = rmse(&a, &b);
+    approx_eq(e, 1.0, 1e-10)
+}
+
+rite test_psnr_perfect() → bool {
+    ≔ a = vec![1.0, 2.0, 3.0];
+    ≔ b = vec![1.0, 2.0, 3.0];
+    ≔ p = psnr(&a, &b);
+    // Perfect reconstruction should give high PSNR
+    p >= 100.0
+}
+
+rite test_sum() → bool {
+    ≔ data = vec![1.0, 2.0, 3.0, 4.0];
+    ≔ s = sum(&data);
+    approx_eq(s, 10.0, 1e-10)
+}
+
+rite test_l2_norm() → bool {
+    // ||[3, 4]|| = sqrt(9 + 16) = 5
+    ≔ data = vec![3.0, 4.0];
+    ≔ n = l2_norm(&data);
+    approx_eq(n, 5.0, 1e-10)
+}
+
+rite main() {
+    ≔ r1 = ⎇ test_mean() { "PASS: Mean" } ⎉ { "FAIL: Mean" };
+    println(r1);
+
+    ≔ r2 = ⎇ test_variance() { "PASS: Variance" } ⎉ { "FAIL: Variance" };
+    println(r2);
+
+    ≔ r3 = ⎇ test_std_dev() { "PASS: Std dev" } ⎉ { "FAIL: Std dev" };
+    println(r3);
+
+    ≔ r4 = ⎇ test_mse_identical() { "PASS: MSE identical" } ⎉ { "FAIL: MSE identical" };
+    println(r4);
+
+    ≔ r5 = ⎇ test_mse_different() { "PASS: MSE different" } ⎉ { "FAIL: MSE different" };
+    println(r5);
+
+    ≔ r6 = ⎇ test_rmse() { "PASS: RMSE" } ⎉ { "FAIL: RMSE" };
+    println(r6);
+
+    ≔ r7 = ⎇ test_psnr_perfect() { "PASS: PSNR perfect" } ⎉ { "FAIL: PSNR perfect" };
+    println(r7);
+
+    ≔ r8 = ⎇ test_sum() { "PASS: Sum" } ⎉ { "FAIL: Sum" };
+    println(r8);
+
+    ≔ r9 = ⎇ test_l2_norm() { "PASS: L2 norm" } ⎉ { "FAIL: L2 norm" };
+    println(r9);
+}

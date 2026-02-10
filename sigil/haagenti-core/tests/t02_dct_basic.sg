@@ -1,0 +1,177 @@
+// Test: DCT basic roundtrip
+// Spec: haagenti-core DCT module
+// Priority: P0
+//
+// Purpose:
+// Validates that DCT -> IDCT roundtrip preserves values.
+// Tests orthonormal DCT which preserves L2 norm (Parseval's theorem).
+//
+// Expected behavior:
+// Should print PASS for each test
+
+// ════════════════════════════════════════════════════════════════════════════
+// 1D DCT-II (Direct O(N²) implementation for testing)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// 1D Discrete Cosine Transform Type-II.
+/// Uses orthonormal scaling for energy preservation.
+rite dct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = PI();
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        output.push(0.0);
+    }
+
+    ∀ k ∈ 0..n {
+        ≔ Δ sum = 0.0_f64;
+        ∀ i ∈ 0..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+        }
+        output[k] = sum * scale;
+    }
+
+    // Orthonormal DC scaling
+    output[0] = output[0] / sqrt2;
+
+    output
+}
+
+/// 1D Inverse DCT (DCT-III).
+/// For orthonormal DCT: IDCT is the transpose of DCT.
+rite idct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = PI();
+    ≔ scale_dc = (1.0 / n as f64).sqrt();
+    ≔ scale_ac = (2.0 / n as f64).sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        output.push(0.0);
+    }
+
+    ∀ i ∈ 0..n {
+        // DC term with sqrt(1/N) scaling
+        ≔ Δ sum = input[0] * scale_dc;
+
+        // AC terms with sqrt(2/N) scaling
+        ∀ k ∈ 1..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[k] * scale_ac * cos(angle);
+        }
+
+        output[i] = sum;
+    }
+
+    output
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Test DCT -> IDCT roundtrip preserves values
+rite test_dct_roundtrip() → bool {
+    ≔ input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+
+    ≔ transformed = dct_1d(&input);
+    ≔ recovered = idct_1d(&transformed);
+
+    // Check roundtrip accuracy
+    ≔ tolerance = 1e-10;
+    ∀ i ∈ 0..8 {
+        ≔ diff = (recovered[i] - input[i]).abs();
+        ⎇ diff > tolerance { ⤺ false; }
+    }
+
+    true
+}
+
+/// Test DCT energy preservation (Parseval's theorem)
+/// For orthonormal DCT: ||x||² = ||DCT(x)||²
+rite test_dct_energy_preservation() → bool {
+    ≔ input = vec![1.0, 2.0, 3.0, 4.0];
+
+    ≔ transformed = dct_1d(&input);
+
+    // Compute input energy
+    ≔ Δ input_energy = 0.0_f64;
+    ∀ i ∈ 0..4 {
+        input_energy = input_energy + input[i] * input[i];
+    }
+
+    // Compute DCT energy
+    ≔ Δ dct_energy = 0.0_f64;
+    ∀ i ∈ 0..4 {
+        dct_energy = dct_energy + transformed[i] * transformed[i];
+    }
+
+    // Should be equal within tolerance
+    ≔ tolerance = 1e-10;
+    ≔ diff = (input_energy - dct_energy).abs();
+    diff < tolerance
+}
+
+/// Test DCT of constant signal (should concentrate in DC)
+rite test_dct_dc_concentration() → bool {
+    // Constant signal of all 3.0s
+    ≔ input = vec![3.0, 3.0, 3.0, 3.0];
+
+    ≔ transformed = dct_1d(&input);
+
+    // DC coefficient should have all the energy
+    // DC = sum * sqrt(1/N) for orthonormal DCT
+    // For [3,3,3,3]: DC = 3*4 * sqrt(2/4) / sqrt(2) = 12 * sqrt(0.5) / sqrt(2) = 6
+    ≔ expected_dc = 6.0;
+    ≔ tolerance = 1e-10;
+
+    ⎇ (transformed[0] - expected_dc).abs() > tolerance { ⤺ false; }
+
+    // All other coefficients should be zero
+    ∀ i ∈ 1..4 {
+        ⎇ transformed[i].abs() > tolerance { ⤺ false; }
+    }
+
+    true
+}
+
+/// Test DCT symmetry property
+rite test_dct_symmetric_signal() → bool {
+    // Symmetric signal: [1, 2, 2, 1]
+    ≔ input = vec![1.0, 2.0, 2.0, 1.0];
+
+    ≔ transformed = dct_1d(&input);
+
+    // Verify roundtrip works
+    ≔ recovered = idct_1d(&transformed);
+    ≔ tolerance = 1e-10;
+
+    ∀ i ∈ 0..4 {
+        ≔ diff = (recovered[i] - input[i]).abs();
+        ⎇ diff > tolerance { ⤺ false; }
+    }
+
+    true
+}
+
+rite main() {
+    // Test 1: DCT roundtrip
+    ≔ r1 = ⎇ test_dct_roundtrip() { "PASS: DCT roundtrip" } ⎉ { "FAIL: DCT roundtrip" };
+    println(r1);
+
+    // Test 2: Energy preservation
+    ≔ r2 = ⎇ test_dct_energy_preservation() { "PASS: DCT energy preservation" } ⎉ { "FAIL: DCT energy preservation" };
+    println(r2);
+
+    // Test 3: DC concentration
+    ≔ r3 = ⎇ test_dct_dc_concentration() { "PASS: DCT DC concentration" } ⎉ { "FAIL: DCT DC concentration" };
+    println(r3);
+
+    // Test 4: Symmetric signal
+    ≔ r4 = ⎇ test_dct_symmetric_signal() { "PASS: DCT symmetric signal" } ⎉ { "FAIL: DCT symmetric signal" };
+    println(r4);
+}

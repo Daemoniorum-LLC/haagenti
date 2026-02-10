@@ -1,0 +1,9 @@
+PASS: Complex add
+PASS: Complex sub
+PASS: Complex mul
+PASS: Complex div
+PASS: Complex conj
+PASS: Complex magnitude
+PASS: Euler identity
+PASS: i squared
+PASS: Polar conversion

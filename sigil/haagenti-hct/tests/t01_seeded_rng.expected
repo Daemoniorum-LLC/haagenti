@@ -1,0 +1,8 @@
+PASS: Determinism
+PASS: Different seeds
+PASS: f32 generation
+PASS: f64 generation
+PASS: Range function
+PASS: Sign function
+PASS: Normal mean
+PASS: Derive

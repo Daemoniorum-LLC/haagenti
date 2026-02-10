@@ -1,0 +1,202 @@
+// Test: Complex number operations
+// Spec: haagenti-core Complex module
+// Priority: P0
+//
+// Purpose:
+// Validates complex number arithmetic used by FFT.
+//
+// Expected behavior:
+// Should print PASS for each test
+
+// ════════════════════════════════════════════════════════════════════════════
+// Complex Number Type
+// ════════════════════════════════════════════════════════════════════════════
+
+sigil Complex {
+    re: f64,
+    im: f64,
+}
+
+⊢ Complex {
+    rite new(re: f64, im: f64) → Self {
+        Self { re, im }
+    }
+
+    rite zero() → Self {
+        Self { re: 0.0, im: 0.0 }
+    }
+
+    rite one() → Self {
+        Self { re: 1.0, im: 0.0 }
+    }
+
+    rite i() → Self {
+        Self { re: 0.0, im: 1.0 }
+    }
+
+    rite from_polar(r: f64, theta: f64) → Self {
+        Self·new(r * cos(theta), r * sin(theta))
+    }
+
+    rite add(&self, other: &Self) → Self {
+        Self·new(self.re + other.re, self.im + other.im)
+    }
+
+    rite sub(&self, other: &Self) → Self {
+        Self·new(self.re - other.re, self.im - other.im)
+    }
+
+    rite mul(&self, other: &Self) → Self {
+        Self·new(
+            self.re * other.re - self.im * other.im,
+            self.re * other.im + self.im * other.re,
+        )
+    }
+
+    rite div(&self, other: &Self) → Self {
+        ≔ denom = other.re * other.re + other.im * other.im;
+        Self·new(
+            (self.re * other.re + self.im * other.im) / denom,
+            (self.im * other.re - self.re * other.im) / denom,
+        )
+    }
+
+    rite conj(&self) → Self {
+        Self·new(self.re, -self.im)
+    }
+
+    rite magnitude(&self) → f64 {
+        (self.re * self.re + self.im * self.im).sqrt()
+    }
+
+    rite phase(&self) → f64 {
+        atan2(self.im, self.re)
+    }
+
+    rite scale(&self, s: f64) → Self {
+        Self·new(self.re * s, self.im * s)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite approx_eq(a: f64, b: f64, tol: f64) → bool {
+    (a - b).abs() < tol
+}
+
+rite complex_approx_eq(a: &Complex, b: &Complex, tol: f64) → bool {
+    approx_eq(a.re, b.re, tol) && approx_eq(a.im, b.im, tol)
+}
+
+/// Test complex addition
+rite test_complex_add() → bool {
+    ≔ a = Complex·new(1.0, 2.0);
+    ≔ b = Complex·new(3.0, 4.0);
+    ≔ c = a.add(&b);
+    ≔ expected = Complex·new(4.0, 6.0);
+    complex_approx_eq(&c, &expected, 1e-10)
+}
+
+/// Test complex subtraction
+rite test_complex_sub() → bool {
+    ≔ a = Complex·new(5.0, 7.0);
+    ≔ b = Complex·new(2.0, 3.0);
+    ≔ c = a.sub(&b);
+    ≔ expected = Complex·new(3.0, 4.0);
+    complex_approx_eq(&c, &expected, 1e-10)
+}
+
+/// Test complex multiplication
+rite test_complex_mul() → bool {
+    // (1+2i) * (3+4i) = 3 + 4i + 6i + 8i² = 3 + 10i - 8 = -5 + 10i
+    ≔ a = Complex·new(1.0, 2.0);
+    ≔ b = Complex·new(3.0, 4.0);
+    ≔ c = a.mul(&b);
+    ≔ expected = Complex·new(-5.0, 10.0);
+    complex_approx_eq(&c, &expected, 1e-10)
+}
+
+/// Test complex division
+rite test_complex_div() → bool {
+    // (1+2i) / (3+4i) = (1+2i)(3-4i) / 25 = (3 + 8 + 6i - 4i) / 25 = (11 + 2i) / 25
+    ≔ a = Complex·new(1.0, 2.0);
+    ≔ b = Complex·new(3.0, 4.0);
+    ≔ c = a.div(&b);
+    ≔ expected = Complex·new(11.0 / 25.0, 2.0 / 25.0);
+    complex_approx_eq(&c, &expected, 1e-10)
+}
+
+/// Test complex conjugate
+rite test_complex_conj() → bool {
+    ≔ a = Complex·new(3.0, 4.0);
+    ≔ c = a.conj();
+    ≔ expected = Complex·new(3.0, -4.0);
+    complex_approx_eq(&c, &expected, 1e-10)
+}
+
+/// Test complex magnitude
+rite test_complex_magnitude() → bool {
+    // |3 + 4i| = 5
+    ≔ a = Complex·new(3.0, 4.0);
+    approx_eq(a.magnitude(), 5.0, 1e-10)
+}
+
+/// Test Euler's identity: e^(i*pi) + 1 = 0
+rite test_eulers_identity() → bool {
+    ≔ pi = PI();
+    ≔ e_i_pi = Complex·from_polar(1.0, pi);
+    ≔ one = Complex·one();
+    ≔ result = e_i_pi.add(&one);
+    // Result should be approximately zero
+    result.magnitude() < 1e-10
+}
+
+/// Test i² = -1
+rite test_i_squared() → bool {
+    ≔ i = Complex·i();
+    ≔ i_squared = i.mul(&i);
+    ≔ expected = Complex·new(-1.0, 0.0);
+    complex_approx_eq(&i_squared, &expected, 1e-10)
+}
+
+/// Test polar <-> rectangular conversion
+rite test_polar_conversion() → bool {
+    ≔ pi = PI();
+    // 45 degrees, magnitude 2
+    ≔ r = 2.0_f64.sqrt();
+    ≔ theta = pi / 4.0;
+    ≔ c = Complex·from_polar(r, theta);
+    // Should be (1, 1)
+    approx_eq(c.re, 1.0, 1e-10) && approx_eq(c.im, 1.0, 1e-10)
+}
+
+rite main() {
+    ≔ r1 = ⎇ test_complex_add() { "PASS: Complex add" } ⎉ { "FAIL: Complex add" };
+    println(r1);
+
+    ≔ r2 = ⎇ test_complex_sub() { "PASS: Complex sub" } ⎉ { "FAIL: Complex sub" };
+    println(r2);
+
+    ≔ r3 = ⎇ test_complex_mul() { "PASS: Complex mul" } ⎉ { "FAIL: Complex mul" };
+    println(r3);
+
+    ≔ r4 = ⎇ test_complex_div() { "PASS: Complex div" } ⎉ { "FAIL: Complex div" };
+    println(r4);
+
+    ≔ r5 = ⎇ test_complex_conj() { "PASS: Complex conj" } ⎉ { "FAIL: Complex conj" };
+    println(r5);
+
+    ≔ r6 = ⎇ test_complex_magnitude() { "PASS: Complex magnitude" } ⎉ { "FAIL: Complex magnitude" };
+    println(r6);
+
+    ≔ r7 = ⎇ test_eulers_identity() { "PASS: Euler identity" } ⎉ { "FAIL: Euler identity" };
+    println(r7);
+
+    ≔ r8 = ⎇ test_i_squared() { "PASS: i squared" } ⎉ { "FAIL: i squared" };
+    println(r8);
+
+    ≔ r9 = ⎇ test_polar_conversion() { "PASS: Polar conversion" } ⎉ { "FAIL: Polar conversion" };
+    println(r9);
+}

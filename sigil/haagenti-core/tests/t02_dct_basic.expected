@@ -1,0 +1,4 @@
+PASS: DCT roundtrip
+PASS: DCT energy preservation
+PASS: DCT DC concentration
+PASS: DCT symmetric signal

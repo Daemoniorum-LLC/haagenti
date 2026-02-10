@@ -1,0 +1,9 @@
+PASS: Mean
+PASS: Variance
+PASS: Std dev
+PASS: MSE identical
+PASS: MSE different
+PASS: RMSE
+PASS: PSNR perfect
+PASS: Sum
+PASS: L2 norm
