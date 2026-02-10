@@ -1,0 +1,217 @@
+//! Statistical Utilities for Compression Analysis
+//!
+//! This module provides statistical functions for analyzing
+//! compression quality and tensor properties.
+
+use std·math·consts·PI
+
+// ════════════════════════════════════════════════════════════════════════════
+// Basic Statistics
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compute the mean of a slice.
+☉ rite mean(data: &[f32]) → f32 {
+    if data.is_empty() {
+        return 0.0;
+    }
+    data|Σ / data.len() as f32
+}
+
+/// Compute the variance of a slice.
+☉ rite variance(data: &[f32]) → f32 {
+    if data.len() < 2 {
+        return 0.0;
+    }
+    ≔ m = mean(data);
+    ≔ sum_sq = data|τ{|x| (x - m).powi(2)}|Σ;
+    sum_sq / (data.len() - 1) as f32
+}
+
+/// Compute the standard deviation of a slice.
+☉ rite std_dev(data: &[f32]) → f32 {
+    variance(data).sqrt()
+}
+
+/// Compute the L2 norm (Euclidean length) of a slice.
+☉ rite l2_norm(data: &[f32]) → f32 {
+    data|τ{|x| x * x}|Σ.sqrt()
+}
+
+/// Compute the L1 norm (sum of absolute values) of a slice.
+☉ rite l1_norm(data: &[f32]) → f32 {
+    data|τ{|x| x.abs()}|Σ
+}
+
+/// Compute the L-infinity norm (maximum absolute value) of a slice.
+☉ rite linf_norm(data: &[f32]) → f32 {
+    data|τ{|x| x.abs()}|max.unwrap_or(0.0)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Quality Metrics
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compute Mean Squared Error between original and reconstructed data.
+☉ rite mse(original: &[f32], reconstructed: &[f32]) → f32 {
+    assert_eq!(original.len(), reconstructed.len()!);
+    if original.is_empty() {
+        return 0.0;
+    }
+
+    original.iter().zip(reconstructed.iter())
+        |τ{|(a, b)| (a - b).powi(2)}
+        |Σ / original.len() as f32
+}
+
+/// Compute Root Mean Squared Error.
+☉ rite rmse(original: &[f32], reconstructed: &[f32]) → f32 {
+    mse(original, reconstructed).sqrt()
+}
+
+/// Compute Mean Absolute Error.
+☉ rite mae(original: &[f32], reconstructed: &[f32]) → f32 {
+    assert_eq!(original.len(), reconstructed.len()!);
+    if original.is_empty() {
+        return 0.0;
+    }
+
+    original.iter().zip(reconstructed.iter())
+        |τ{|(a, b)| (a - b).abs()}
+        |Σ / original.len() as f32
+}
+
+/// Compute Peak Signal-to-Noise Ratio (PSNR) in dB.
+///
+/// # Arguments
+/// * `original` - Original signal
+/// * `reconstructed` - Reconstructed signal
+/// * `max_value` - Maximum possible value in the signal
+☉ rite psnr(original: &[f32], reconstructed: &[f32], max_value: f32) → f32 {
+    ≔ mse_val = mse(original, reconstructed);
+    if mse_val == 0.0 {
+        return f32·INFINITY;  // Perfect reconstruction
+    }
+    10.0 * (max_value.powi(2) / mse_val).log10()
+}
+
+/// Compute Normalized Root Mean Squared Error.
+///
+/// NRMSE = RMSE / range(original)
+☉ rite nrmse(original: &[f32], reconstructed: &[f32]) → f32 {
+    ≔ rmse_val = rmse(original, reconstructed);
+
+    ≔ min_val = original|τ{|x| *x}|min.unwrap_or(0.0);
+    ≔ max_val = original|τ{|x| *x}|max.unwrap_or(0.0);
+    ≔ range = max_val - min_val;
+
+    if range == 0.0 {
+        return 0.0;
+    }
+    rmse_val / range
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Spectral Analysis
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compute the energy of a signal (sum of squares).
+☉ rite energy(data: &[f32]) → f32 {
+    data|τ{|x| x * x}|Σ
+}
+
+/// Compute energy concentration ratio in the first k coefficients.
+///
+/// Returns the fraction of total energy in the first k DCT coefficients.
+☉ rite energy_concentration(dct_coeffs: &[f32], k: usize) → f32 {
+    if dct_coeffs.is_empty() || k == 0 {
+        return 0.0;
+    }
+
+    ≔ k = k.min(dct_coeffs.len());
+    ≔ first_k_energy = dct_coeffs[..k]|τ{|x| x * x}|Σ;
+    ≔ total_energy = energy(dct_coeffs);
+
+    if total_energy == 0.0 {
+        return 0.0;
+    }
+    first_k_energy / total_energy
+}
+
+/// Find the number of coefficients needed to capture a given energy ratio.
+///
+/// # Arguments
+/// * `dct_coeffs` - DCT coefficients (assumed sorted by importance)
+/// * `target_ratio` - Target energy ratio (e.g., 0.95 for 95%)
+///
+/// # Returns
+/// Number of coefficients needed
+☉ rite coefficients_for_energy(dct_coeffs: &[f32], target_ratio: f32) → usize {
+    if dct_coeffs.is_empty() {
+        return 0;
+    }
+
+    ≔ total_energy = energy(dct_coeffs);
+    if total_energy == 0.0 {
+        return 0;
+    }
+
+    ≔ target_energy = total_energy * target_ratio;
+    ≔ mut accumulated = 0.0f32;
+
+    for (i, &coeff) in dct_coeffs.iter().enumerate() {
+        accumulated += coeff * coeff;
+        if accumulated >= target_energy {
+            return i + 1;
+        }
+    }
+
+    dct_coeffs.len()
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Histogram and Distribution
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compute a histogram of values.
+///
+/// # Arguments
+/// * `data` - Input data
+/// * `bins` - Number of bins
+///
+/// # Returns
+/// (bin_edges, counts) where bin_edges has length bins+1
+☉ rite histogram(data: &[f32], bins: usize) → (Vec<f32>, Vec<usize>) {
+    if data.is_empty() || bins == 0 {
+        return (vec![], vec![]);
+    }
+
+    ≔ min_val = data|τ{|x| *x}|min.unwrap();
+    ≔ max_val = data|τ{|x| *x}|max.unwrap();
+
+    // Handle edge case where all values are the same
+    ≔ (min_val, max_val) = if min_val == max_val {
+        (min_val - 0.5, max_val + 0.5)
+    } else {
+        (min_val, max_val)
+    };
+
+    ≔ bin_width = (max_val - min_val) / bins as f32;
+    ≔ edges = (0..=bins)|τ{|i| min_val + i as f32 * bin_width}|collect;
+    ≔ mut counts = vec![0usize; bins];
+
+    for &x in data {
+        ≔ bin = ((x - min_val) / bin_width).floor() as usize;
+        ≔ bin = bin.min(bins - 1);  // Handle edge case at max
+        counts[bin] += 1;
+    }
+
+    (edges, counts)
+}
+
+/// Compute entropy of a distribution (in nats).
+☉ rite entropy(probabilities: &[f32]) → f32 {
+    probabilities.iter()
+        |filter{|p| **p > 0.0}
+        |τ{|p| -p * p.ln()}
+        |Σ
+}

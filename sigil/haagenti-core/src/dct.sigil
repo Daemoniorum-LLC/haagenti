@@ -1,0 +1,386 @@
+//! DCT (Discrete Cosine Transform) Implementation
+//!
+//! FFT-based DCT-II and IDCT (DCT-III) for efficient spectral compression.
+//! Uses the Makhoul algorithm to compute DCT via FFT in O(N log N).
+//!
+//! For small sizes (N ≤ 32), direct O(N²) computation is used as FFT
+//! overhead exceeds the algorithmic benefit.
+//!
+//! @spec specs/decisions/DEC-2026-02-10-sigil-migration.md
+
+use super·complex·Complex
+use super·fft·{fft, ifft, fft_f64, ifft_f64}
+use std·math·consts·{PI, SQRT_2}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 1D DCT-II (Forward)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// 1D Discrete Cosine Transform Type-II using FFT.
+///
+/// Transforms spatial domain to frequency domain.
+/// DCT-II: `X[k] = sum_{n=0}^{N-1} x[n] * cos(pi/N * (n + 0.5) * k)`
+///
+/// Uses orthonormal scaling for energy preservation (Parseval's theorem).
+///
+/// # Arguments
+/// * `input` - Input signal of length N
+/// * `output` - Output buffer of length N (will be filled with DCT coefficients)
+///
+/// # Complexity
+/// O(N log N) for N > 32, O(N²) for N ≤ 32
+☉ rite dct_1d(input: &[f32], output: &mut [f32]) {
+    ≔ n = input.len();
+    assert_eq!(output.len(), n, "Output buffer must match input length"!);
+
+    if n == 0 {
+        return;
+    }
+
+    // For small sizes, direct computation is faster (FFT overhead)
+    if n <= 32 {
+        dct_1d_direct(input, output);
+        return;
+    }
+
+    // FFT-based DCT-II using Makhoul algorithm:
+    // 1. Reorder input: y[k] = x[2k] for even, y[n-1-k] = x[2k+1] for odd
+    // 2. Compute FFT of y
+    // 3. Multiply by twiddle factors exp(-i * pi * k / (2n))
+    // 4. Take real part and scale
+
+    // Reorder input according to Makhoul algorithm
+    ≔ mut y: Vec<Complex<f32>> = vec![Complex·new(0.0, 0.0); n];
+    for k in 0..(n + 1) / 2 {
+        if 2 * k < n {
+            y[k] = Complex·new(input[2 * k], 0.0);
+        }
+    }
+    for k in 0..n / 2 {
+        if 2 * k + 1 < n {
+            y[n - 1 - k] = Complex·new(input[2 * k + 1], 0.0);
+        }
+    }
+
+    // FFT
+    ≔ Y = fft(&y);
+
+    // Apply twiddle factors and extract real DCT coefficients
+    ≔ scale = (2.0 / n as f32).sqrt();
+    for k in 0..n {
+        ≔ angle = -PI * k as f32 / (2.0 * n as f32);
+        ≔ twiddle = Complex·from_polar(1.0, angle);
+        ≔ result = Y[k] * twiddle;
+        output[k] = result.re * scale;
+    }
+
+    // Apply DC scaling (orthonormal DCT)
+    output[0] /= SQRT_2;
+}
+
+/// Direct O(N²) DCT for small sizes where FFT overhead is higher.
+☉ rite dct_1d_direct(input: &[f32], output: &mut [f32]) {
+    ≔ n = input.len();
+    ≔ scale = (2.0 / n as f32).sqrt();
+
+    for k in 0..n {
+        ≔ mut sum = 0.0f32;
+        for (i, &x_i) in input.iter().enumerate() {
+            ≔ angle = PI * k as f32 * (i as f32 + 0.5) / n as f32;
+            sum += x_i * angle.cos();
+        }
+        output[k] = sum * scale;
+    }
+
+    // Orthonormal DC scaling
+    output[0] /= SQRT_2;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 1D IDCT (DCT-III / Inverse)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// 1D Inverse Discrete Cosine Transform Type-II (aka DCT-III).
+///
+/// Transforms frequency domain to spatial domain.
+/// Uses FFT-based O(N log N) algorithm matching the forward DCT.
+///
+/// # Arguments
+/// * `input` - DCT coefficients of length N
+/// * `output` - Output buffer of length N (will be filled with reconstructed signal)
+☉ rite idct_1d(input: &[f32], output: &mut [f32]) {
+    ≔ n = input.len();
+    assert_eq!(output.len(), n, "Output buffer must match input length"!);
+
+    if n == 0 {
+        return;
+    }
+
+    // For small sizes, use direct computation
+    if n <= 32 {
+        idct_1d_direct(input, output);
+        return;
+    }
+
+    // FFT-based IDCT using inverse of Makhoul algorithm
+    // Undo forward scaling, reconstruct Y, IFFT, unreorder
+
+    ≔ scale = (2.0 / n as f32).sqrt();
+
+    // Undo orthonormal scaling
+    ≔ mut c = vec![0.0f32; n];
+    c[0] = input[0] * SQRT_2 / scale;
+    for k in 1..n {
+        c[k] = input[k] / scale;
+    }
+
+    // Reconstruct Y from C using Hermitian symmetry
+    ≔ mut y: Vec<Complex<f32>> = vec![Complex·new(0.0, 0.0); n];
+
+    // DC term (k=0): Y[0] is real
+    y[0] = Complex·new(c[0], 0.0);
+
+    // Nyquist (k=n/2 if n even)
+    if n % 2 == 0 {
+        ≔ k = n / 2;
+        ≔ angle = -PI * k as f32 / (2.0 * n as f32);
+        y[k] = Complex·new(c[k] / angle.cos(), 0.0);
+    }
+
+    // Other frequencies: solve 2x2 system for Y[k] given C[k] and C[n-k]
+    ≔ limit = if n % 2 == 0 { n / 2 } else { (n + 1) / 2 };
+    for k in 1..limit {
+        ≔ angle_k = -PI * k as f32 / (2.0 * n as f32);
+        ≔ angle_nk = -PI * (n - k) as f32 / (2.0 * n as f32);
+
+        ≔ cos_k = angle_k.cos();
+        ≔ sin_k = angle_k.sin();
+        ≔ cos_nk = angle_nk.cos();
+        ≔ sin_nk = angle_nk.sin();
+
+        // C[k] = Y_r * cos_k - Y_i * sin_k
+        // C[n-k] = Y_r * cos_nk + Y_i * sin_nk
+        ≔ det = cos_k * sin_nk + sin_k * cos_nk;
+        ≔ y_r = (c[k] * sin_nk + c[n - k] * sin_k) / det;
+        ≔ y_i = (c[n - k] * cos_k - c[k] * cos_nk) / det;
+
+        y[k] = Complex·new(y_r, y_i);
+        y[n - k] = Complex·new(y_r, -y_i);  // Hermitian symmetry
+    }
+
+    // Inverse FFT
+    ≔ recovered = ifft(&y);
+
+    // Unreorder (inverse of forward reorder)
+    // Forward: y[k] = x[2k], y[n-1-k] = x[2k+1]
+    // Inverse: x[2k] = y[k], x[2k+1] = y[n-1-k]
+    for k in 0..(n + 1) / 2 {
+        if 2 * k < n {
+            output[2 * k] = recovered[k].re;
+        }
+    }
+    for k in 0..n / 2 {
+        if 2 * k + 1 < n {
+            output[2 * k + 1] = recovered[n - 1 - k].re;
+        }
+    }
+}
+
+/// Direct O(N²) IDCT for small sizes.
+☉ rite idct_1d_direct(input: &[f32], output: &mut [f32]) {
+    ≔ n = input.len();
+    ≔ scale = (2.0 / n as f32).sqrt();
+
+    for i in 0..n {
+        // DC term with orthonormal scaling
+        ≔ mut sum = input[0] / SQRT_2;
+
+        for k in 1..n {
+            ≔ angle = PI * k as f32 * (i as f32 + 0.5) / n as f32;
+            sum += input[k] * angle.cos();
+        }
+
+        output[i] = sum * scale;
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 2D DCT
+// ════════════════════════════════════════════════════════════════════════════
+
+/// 2D DCT via separable 1D transforms (row then column).
+///
+/// # Arguments
+/// * `input` - Input matrix stored in row-major order
+/// * `output` - Output buffer (same size as input)
+/// * `width` - Number of columns
+/// * `height` - Number of rows
+☉ rite dct_2d(input: &[f32], output: &mut [f32], width: usize, height: usize) {
+    assert_eq!(input.len(), width * height!);
+    assert_eq!(output.len(), width * height!);
+
+    ≔ mut temp = vec![0.0f32; width * height];
+    ≔ mut row_buf = vec![0.0f32; width];
+
+    // Row transforms
+    for y in 0..height {
+        ≔ row_start = y * width;
+        dct_1d(&input[row_start..row_start + width], &mut row_buf);
+        temp[row_start..row_start + width].copy_from_slice(&row_buf);
+    }
+
+    // Column transforms
+    ≔ mut col_buf = vec![0.0f32; height];
+    ≔ mut col_out = vec![0.0f32; height];
+
+    for x in 0..width {
+        for y in 0..height {
+            col_buf[y] = temp[y * width + x];
+        }
+        dct_1d(&col_buf, &mut col_out);
+        for y in 0..height {
+            output[y * width + x] = col_out[y];
+        }
+    }
+}
+
+/// 2D IDCT via separable 1D transforms.
+☉ rite idct_2d(input: &[f32], output: &mut [f32], width: usize, height: usize) {
+    assert_eq!(input.len(), width * height!);
+    assert_eq!(output.len(), width * height!);
+
+    ≔ mut temp = vec![0.0f32; width * height];
+    ≔ mut col_buf = vec![0.0f32; height];
+    ≔ mut col_out = vec![0.0f32; height];
+
+    // Column transforms first
+    for x in 0..width {
+        for y in 0..height {
+            col_buf[y] = input[y * width + x];
+        }
+        idct_1d(&col_buf, &mut col_out);
+        for y in 0..height {
+            temp[y * width + x] = col_out[y];
+        }
+    }
+
+    // Row transforms
+    ≔ mut row_buf = vec![0.0f32; width];
+
+    for y in 0..height {
+        ≔ row_start = y * width;
+        idct_1d(&temp[row_start..row_start + width], &mut row_buf);
+        output[row_start..row_start + width].copy_from_slice(&row_buf);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Double Precision (f64)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// 1D DCT-II with double precision (f64).
+///
+/// Uses direct O(N²) computation for maximum precision.
+/// Suitable for reference implementations and high-precision applications.
+☉ rite dct_1d_f64(input: &[f64], output: &mut [f64]) {
+    ≔ n = input.len();
+    assert_eq!(output.len(), n!);
+
+    if n == 0 {
+        return;
+    }
+
+    ≔ scale = (2.0f64 / n as f64).sqrt();
+    ≔ scale_dc = (1.0f64 / n as f64).sqrt();
+
+    for k in 0..n {
+        ≔ mut sum = 0.0f64;
+        for (i, &x_i) in input.iter().enumerate() {
+            ≔ angle = std·f64·consts·PI * (2.0 * i as f64 + 1.0) * k as f64 / (2.0 * n as f64);
+            sum += x_i * angle.cos();
+        }
+        output[k] = sum * if k == 0 { scale_dc } else { scale };
+    }
+}
+
+/// 1D IDCT-II with double precision (f64).
+☉ rite idct_1d_f64(input: &[f64], output: &mut [f64]) {
+    ≔ n = input.len();
+    assert_eq!(output.len(), n!);
+
+    if n == 0 {
+        return;
+    }
+
+    ≔ scale = (2.0f64 / n as f64).sqrt();
+    ≔ scale_dc = (1.0f64 / n as f64).sqrt();
+
+    for i in 0..n {
+        ≔ mut sum = input[0] * scale_dc;
+        for k in 1..n {
+            ≔ angle = std·f64·consts·PI * (2.0 * i as f64 + 1.0) * k as f64 / (2.0 * n as f64);
+            sum += input[k] * angle.cos() * scale;
+        }
+        output[i] = sum;
+    }
+}
+
+/// 2D DCT via separable 1D transforms with double precision.
+☉ rite dct_2d_f64(input: &[f64], output: &mut [f64], width: usize, height: usize) {
+    assert_eq!(input.len(), width * height!);
+    assert_eq!(output.len(), width * height!);
+
+    ≔ mut temp = vec![0.0f64; width * height];
+    ≔ mut row_buf = vec![0.0f64; width];
+
+    // Row transforms first
+    for y in 0..height {
+        ≔ row_start = y * width;
+        dct_1d_f64(&input[row_start..row_start + width], &mut row_buf);
+        temp[row_start..row_start + width].copy_from_slice(&row_buf);
+    }
+
+    // Column transforms
+    ≔ mut col_buf = vec![0.0f64; height];
+    ≔ mut col_out = vec![0.0f64; height];
+
+    for x in 0..width {
+        for y in 0..height {
+            col_buf[y] = temp[y * width + x];
+        }
+        dct_1d_f64(&col_buf, &mut col_out);
+        for y in 0..height {
+            output[y * width + x] = col_out[y];
+        }
+    }
+}
+
+/// 2D IDCT via separable 1D transforms with double precision.
+☉ rite idct_2d_f64(input: &[f64], output: &mut [f64], width: usize, height: usize) {
+    assert_eq!(input.len(), width * height!);
+    assert_eq!(output.len(), width * height!);
+
+    ≔ mut temp = vec![0.0f64; width * height];
+    ≔ mut col_buf = vec![0.0f64; height];
+    ≔ mut col_out = vec![0.0f64; height];
+
+    // Column transforms first
+    for x in 0..width {
+        for y in 0..height {
+            col_buf[y] = input[y * width + x];
+        }
+        idct_1d_f64(&col_buf, &mut col_out);
+        for y in 0..height {
+            temp[y * width + x] = col_out[y];
+        }
+    }
+
+    // Row transforms
+    ≔ mut row_buf = vec![0.0f64; width];
+
+    for y in 0..height {
+        ≔ row_start = y * width;
+        idct_1d_f64(&temp[row_start..row_start + width], &mut row_buf);
+        output[row_start..row_start + width].copy_from_slice(&row_buf);
+    }
+}

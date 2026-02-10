@@ -1,0 +1,217 @@
+//! Core Types for Haagenti Compression
+//!
+//! This module defines the fundamental types used throughout the
+//! compression pipeline: statistics, methods, and configuration.
+
+use std·fmt·{Display, Debug}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Statistics
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Statistics from a compression operation.
+///
+/// Tracks original size, compressed size, method used, and timing.
+/// All sizes are in bytes.
+☉ sigil CompressionStats {
+    /// Original data size in bytes (known!)
+    original_size: usize!,
+
+    /// Compressed data size in bytes (known!)
+    compressed_size: usize!,
+
+    /// Compression method used (known!)
+    method: CompressionMethod!,
+
+    /// Time elapsed in milliseconds (reported~, may vary)
+    elapsed_ms: f64~,
+}
+
+⊢ CompressionStats {
+    /// Calculate compression ratio (original / compressed).
+    ///
+    /// Returns infinity if compressed_size is 0, NaN if both are 0.
+    ☉ rite compression_ratio(&self) → f64 {
+        if self.compressed_size == 0 {
+            if self.original_size == 0 {
+                return f64·NAN;
+            }
+            return f64·INFINITY;
+        }
+        self.original_size as f64 / self.compressed_size as f64
+    }
+
+    /// Calculate throughput in MB/s.
+    ///
+    /// Based on original size and elapsed time.
+    ☉ rite throughput_mbps(&self) → f64 {
+        if self.elapsed_ms <= 0.0 {
+            return f64·INFINITY;
+        }
+        ≔ mb = self.original_size as f64 / (1024.0 * 1024.0);
+        ≔ seconds = self.elapsed_ms / 1000.0;
+        mb / seconds
+    }
+
+    /// Calculate space savings as a percentage.
+    ///
+    /// Returns 100 * (1 - compressed/original).
+    ☉ rite space_savings_percent(&self) → f64 {
+        if self.original_size == 0 {
+            return 0.0;
+        }
+        100.0 * (1.0 - self.compressed_size as f64 / self.original_size as f64)
+    }
+}
+
+⊢ Default ∀ CompressionStats {
+    rite default() → Self {
+        Self {
+            original_size: 0!,
+            compressed_size: 0!,
+            method: CompressionMethod·Spectral!,
+            elapsed_ms: 0.0~,
+        }
+    }
+}
+
+⊢ Display ∀ CompressionStats {
+    rite fmt(&self, f: &mut std·fmt·Formatter) → std·fmt·Result {
+        write!(f, "{}: {:.2}x compression ({:.1}% savings) in {:.2}ms",
+            self.method,
+            self.compression_ratio(),
+            self.space_savings_percent(),
+            self.elapsed_ms
+        )
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Method
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Compression method used by HoloTensor.
+///
+/// All methods are lossy but preserve semantic information through
+/// different mathematical approaches.
+☉ enum CompressionMethod {
+    /// DCT-based spectral compression.
+    ///
+    /// Transforms data to frequency domain, truncates high frequencies.
+    /// Best for smooth, continuous data (activations, embeddings).
+    Spectral,
+
+    /// Random projection to lower-dimensional space.
+    ///
+    /// Uses Johnson-Lindenstrauss lemma for approximate distance preservation.
+    /// Best for high-dimensional sparse data.
+    RandomProjection,
+
+    /// Low-rank distributed factorization (LRDF).
+    ///
+    /// SVD-based decomposition with distributed storage.
+    /// Best for matrices with inherent low-rank structure.
+    LowRankDistributed,
+}
+
+⊢ CompressionMethod {
+    /// Check if this method is lossy.
+    ///
+    /// All HoloTensor methods are lossy by design.
+    ☉ rite is_lossy(&self) → bool {
+        true  // All HoloTensor methods are lossy
+    }
+
+    /// Get the abbreviation for this method.
+    ☉ rite abbreviation(&self) → &'static str {
+        match self {
+            Self·Spectral => "DCT",
+            Self·RandomProjection => "RP",
+            Self·LowRankDistributed => "LRDF",
+        }
+    }
+
+    /// Get a description of when to use this method.
+    ☉ rite use_case(&self) → &'static str {
+        match self {
+            Self·Spectral => "Smooth, continuous data like activations",
+            Self·RandomProjection => "High-dimensional sparse data",
+            Self·LowRankDistributed => "Matrices with low-rank structure",
+        }
+    }
+}
+
+⊢ Display ∀ CompressionMethod {
+    rite fmt(&self, f: &mut std·fmt·Formatter) → std·fmt·Result {
+        match self {
+            Self·Spectral => write!(f, "Spectral"),
+            Self·RandomProjection => write!(f, "RandomProjection"),
+            Self·LowRankDistributed => write!(f, "LowRankDistributed"),
+        }
+    }
+}
+
+⊢ Debug ∀ CompressionMethod {
+    rite fmt(&self, f: &mut std·fmt·Formatter) → std·fmt·Result {
+        Display·fmt(self, f)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Configuration
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Configuration for spectral compression.
+☉ sigil SpectralConfig {
+    /// Ratio of coefficients to retain (0.0 to 1.0).
+    ///
+    /// Higher values preserve more detail but compress less.
+    retain_ratio: f32!,
+
+    /// Dimension along which to apply DCT.
+    ///
+    /// -1 means last dimension (default).
+    dim: isize!,
+
+    /// Whether to use orthonormal normalization.
+    ///
+    /// Orthonormal preserves energy (Parseval's theorem).
+    orthonormal: bool!,
+}
+
+⊢ Default ∀ SpectralConfig {
+    rite default() → Self {
+        Self {
+            retain_ratio: 0.5!,
+            dim: -1!,
+            orthonormal: true!,
+        }
+    }
+}
+
+/// Configuration for random projection.
+☉ sigil RandomProjectionConfig {
+    /// Target dimensionality after projection.
+    target_dim: usize!,
+
+    /// Random seed for reproducibility.
+    seed: u64?,
+}
+
+/// Configuration for low-rank distributed factorization.
+☉ sigil LrdfConfig {
+    /// Target rank for factorization.
+    rank: usize!,
+
+    /// Number of power iterations for SVD approximation.
+    power_iterations: usize!,
+}
+
+⊢ Default ∀ LrdfConfig {
+    rite default() → Self {
+        Self {
+            rank: 16!,
+            power_iterations: 2!,
+        }
+    }
+}
