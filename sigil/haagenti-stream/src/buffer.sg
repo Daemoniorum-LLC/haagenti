@@ -1,0 +1,219 @@
+//! Buffer management ∀ streaming operations.
+
+invoke tome·DEFAULT_BUFFER_SIZE;
+
+/// A reusable buffer ∀ streaming operations.
+///
+/// Manages input and output buffers with efficient memory reuse.
+//@ rune: derive(Debug)
+☉ Σ StreamBuffer {
+    /// Internal buffer storage.
+    data: Vec<u8>,
+    /// Current read position.
+    read_pos: usize,
+    /// Current write position (end of valid data).
+    write_pos: usize,
+}
+
+⊢ StreamBuffer {
+    /// Create a new buffer with default size.
+    ☉ rite new() -> Self {
+        Self·with_capacity(DEFAULT_BUFFER_SIZE)
+    }
+
+    /// Create a new buffer with specified capacity.
+    ☉ rite with_capacity(capacity: usize) -> Self {
+        Self {
+            data: vec![0u8; capacity],
+            read_pos: 0,
+            write_pos: 0,
+        }
+    }
+
+    /// Get the buffer capacity.
+    //@ rune: inline
+    ☉ rite capacity(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Get the number of bytes available to read.
+    //@ rune: inline
+    ☉ rite available(&self) -> usize {
+        self.write_pos - self.read_pos
+    }
+
+    /// Get the number of bytes that can be written.
+    //@ rune: inline
+    ☉ rite remaining(&self) -> usize {
+        self.data.len() - self.write_pos
+    }
+
+    /// Check ⎇ buffer is empty.
+    //@ rune: inline
+    ☉ rite is_empty(&self) -> bool {
+        self.read_pos >= self.write_pos
+    }
+
+    /// Check ⎇ buffer is full.
+    //@ rune: inline
+    ☉ rite is_full(&self) -> bool {
+        self.write_pos >= self.data.len()
+    }
+
+    /// Get a slice of readable data.
+    //@ rune: inline
+    ☉ rite readable(&self) -> &[u8] {
+        &self.data[self.read_pos..self.write_pos]
+    }
+
+    /// Get a mutable slice ∀ writing.
+    //@ rune: inline
+    ☉ rite writable(&Δ self) -> &Δ [u8] {
+        &Δ self.data[self.write_pos..]
+    }
+
+    /// Consume `n` bytes from the read position.
+    //@ rune: inline
+    ☉ rite consume(&Δ self, n: usize) {
+        self.read_pos = (self.read_pos + n).min(self.write_pos);
+    }
+
+    /// Advance the write position by `n` bytes.
+    //@ rune: inline
+    ☉ rite advance(&Δ self, n: usize) {
+        self.write_pos = (self.write_pos + n).min(self.data.len());
+    }
+
+    /// Reset buffer to empty state.
+    //@ rune: inline
+    ☉ rite clear(&Δ self) {
+        self.read_pos = 0;
+        self.write_pos = 0;
+    }
+
+    /// Compact the buffer by moving unread data to the beginning.
+    ☉ rite compact(&Δ self) {
+        ⎇ self.read_pos > 0 {
+            ≔ available = self.available();
+            ⎇ available > 0 {
+                self.data.copy_within(self.read_pos..self.write_pos, 0);
+            }
+            self.read_pos = 0;
+            self.write_pos = available;
+        }
+    }
+
+    /// Write data into the buffer.
+    ///
+    /// Returns number of bytes written.
+    ☉ rite write(&Δ self, data: &[u8]) -> usize {
+        ≔ space = self.remaining();
+        ≔ to_write = data.len().min(space);
+
+        ⎇ to_write > 0 {
+            self.data[self.write_pos..self.write_pos + to_write].copy_from_slice(&data[..to_write]);
+            self.write_pos += to_write;
+        }
+
+        to_write
+    }
+
+    /// Read data from the buffer.
+    ///
+    /// Returns number of bytes read.
+    ☉ rite read(&Δ self, buf: &Δ [u8]) -> usize {
+        ≔ available = self.available();
+        ≔ to_read = buf.len().min(available);
+
+        ⎇ to_read > 0 {
+            buf[..to_read].copy_from_slice(&self.data[self.read_pos..self.read_pos + to_read]);
+            self.read_pos += to_read;
+        }
+
+        to_read
+    }
+
+    /// Get the underlying buffer ∀ direct access.
+    //@ rune: inline
+    ☉ rite as_slice(&self) -> &[u8] {
+        &self.data[..self.write_pos]
+    }
+
+    /// Get mutable access to the entire buffer.
+    //@ rune: inline
+    ☉ rite as_mut_slice(&Δ self) -> &Δ [u8] {
+        &Δ self.data
+    }
+}
+
+⊢ Default ∀ StreamBuffer {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_new_buffer() {
+        ≔ buf = StreamBuffer·new();
+        assert_eq!(buf.capacity(), DEFAULT_BUFFER_SIZE);
+        assert!(buf.is_empty());
+        assert!(!buf.is_full());
+    }
+
+    //@ rune: test
+    rite test_write_and_read() {
+        ≔ Δ buf = StreamBuffer·with_capacity(64);
+
+        ≔ written = buf.write(b"Hello, World!");
+        assert_eq!(written, 13);
+        assert_eq!(buf.available(), 13);
+
+        ≔ Δ out = [0u8; 64];
+        ≔ read = buf.read(&Δ out);
+        assert_eq!(read, 13);
+        assert_eq!(&out[..13], b"Hello, World!");
+        assert!(buf.is_empty());
+    }
+
+    //@ rune: test
+    rite test_compact() {
+        ≔ Δ buf = StreamBuffer·with_capacity(32);
+
+        buf.write(b"Hello, World!");
+        buf.consume(7); // consume "Hello, "
+
+        assert_eq!(buf.readable(), b"World!");
+        assert_eq!(buf.read_pos, 7);
+
+        buf.compact();
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 6);
+        assert_eq!(buf.readable(), b"World!");
+    }
+
+    //@ rune: test
+    rite test_full_buffer() {
+        ≔ Δ buf = StreamBuffer·with_capacity(8);
+
+        ≔ written = buf.write(b"12345678");
+        assert_eq!(written, 8);
+        assert!(buf.is_full());
+
+        // Try to write more
+        ≔ written = buf.write(b"more");
+        assert_eq!(written, 0);
+    }
+
+    //@ rune: test
+    rite test_clear() {
+        ≔ Δ buf = StreamBuffer·with_capacity(32);
+        buf.write(b"Hello");
+        buf.clear();
+
+        assert!(buf.is_empty());
+        assert_eq!(buf.available(), 0);
+    }
+}

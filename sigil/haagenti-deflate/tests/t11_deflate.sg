@@ -1,0 +1,413 @@
+//! haagenti-deflate test suite
+//! Tests for Deflate, Zlib, and Gzip codecs
+
+// ════════════════════════════════════════════════════════════════════════════
+// Constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite gzip_magic() → u16 { 0x8B1F }
+rite zlib_deflate_method() → u8 { 8 }
+
+// Compression levels
+rite LEVEL_NONE() → i64 { 0 }
+rite LEVEL_FAST() → i64 { 1 }
+rite LEVEL_DEFAULT() → i64 { 6 }
+rite LEVEL_BEST() → i64 { 9 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Adler-32 Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite adler32(data: &Vec<u8>) → u32 {
+    ≔ Δ a = 1u32;
+    ≔ Δ b = 0u32;
+
+    ≔ Δ i = 0;
+    ⟳ i < data.len() as i64 {
+        a = (a + data[i as usize] as u32) % 65521;
+        b = (b + a) % 65521;
+        i = i + 1;
+    }
+
+    (b << 16) | a
+}
+
+rite test_adler32_empty() {
+    ≔ Δ data = Vec·new();
+    ≔ checksum = adler32(&data);
+    // Adler32 of empty data is 1
+    assert_eq(checksum, 1);
+
+    println("adler32_empty: PASS");
+}
+
+rite test_adler32_hello() {
+    ≔ Δ data = Vec·new();
+    data.push(72);  // H
+    data.push(101); // e
+    data.push(108); // l
+    data.push(108); // l
+    data.push(111); // o
+
+    ≔ checksum = adler32(&data);
+    // Known Adler32 of "Hello"
+    assert(checksum > 0);
+    assert_eq(checksum, 0x058C01F5);
+
+    println("adler32_hello: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CRC32 Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite crc32(data: &Vec<u8>) → u32 {
+    ≔ Δ crc = 0xFFFFFFFF;
+
+    ≔ Δ i = 0;
+    ⟳ i < data.len() as i64 {
+        crc = crc ^ (data[i as usize] as u32);
+        ≔ Δ j = 0;
+        ⟳ j < 8 {
+            ⎇ (crc & 1) != 0 {
+                crc = (crc >> 1) ^ 0xEDB88320;
+            } ⎉ {
+                crc = crc >> 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    crc ^ 0xFFFFFFFF  // XOR instead of bitwise NOT
+}
+
+rite test_crc32_empty() {
+    ≔ Δ data = Vec·new();
+    ≔ checksum = crc32(&data);
+    // CRC32 of empty data
+    assert_eq(checksum, 0);
+
+    println("crc32_empty: PASS");
+}
+
+rite test_crc32_hello() {
+    ≔ Δ data = Vec·new();
+    data.push(72);  // H
+    data.push(101); // e
+    data.push(108); // l
+    data.push(108); // l
+    data.push(111); // o
+
+    ≔ checksum = crc32(&data);
+    assert(checksum > 0);
+
+    println("crc32_hello: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Deflate Block Header Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+// Block types
+rite BLOCK_STORED() → i64 { 0 }
+rite BLOCK_FIXED() → i64 { 1 }
+rite BLOCK_DYNAMIC() → i64 { 2 }
+
+Σ BlockHeader {
+    is_final: bool,
+    block_type: i64,
+}
+
+rite parse_block_header(byte: u8) → BlockHeader {
+    BlockHeader {
+        is_final: (byte & 0x01) != 0,
+        block_type: ((byte >> 1) & 0x03) as i64,
+    }
+}
+
+rite encode_block_header(header: &BlockHeader) → u8 {
+    ≔ Δ byte = (header.block_type << 1) as u8;
+    ⎇ header.is_final { byte = byte | 0x01; }
+    byte
+}
+
+rite test_block_header_stored() {
+    ≔ header = BlockHeader { is_final: true, block_type: BLOCK_STORED() };
+    ≔ encoded = encode_block_header(&header);
+    ≔ decoded = parse_block_header(encoded);
+
+    assert(decoded.is_final);
+    assert_eq(decoded.block_type, BLOCK_STORED());
+
+    println("block_header_stored: PASS");
+}
+
+rite test_block_header_fixed() {
+    ≔ header = BlockHeader { is_final: false, block_type: BLOCK_FIXED() };
+    ≔ encoded = encode_block_header(&header);
+    ≔ decoded = parse_block_header(encoded);
+
+    assert(!decoded.is_final);
+    assert_eq(decoded.block_type, BLOCK_FIXED());
+
+    println("block_header_fixed: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Zlib Header Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ ZlibHeader {
+    cm: u8,       // Compression method (should be 8 = deflate)
+    cinfo: u8,    // Window size log - 8
+    flevel: u8,   // Compression level hint
+    fdict: bool,  // Dictionary flag
+}
+
+rite parse_zlib_header(cmf: u8, flg: u8) → ZlibHeader {
+    ZlibHeader {
+        cm: cmf & 0x0F,
+        cinfo: (cmf >> 4) & 0x0F,
+        flevel: (flg >> 6) & 0x03,
+        fdict: (flg & 0x20) != 0,
+    }
+}
+
+rite validate_zlib_header(cmf: u8, flg: u8) → bool {
+    // Check modulo 31
+    ≔ check = ((cmf as u16) * 256 + flg as u16) % 31;
+    ⎇ check != 0 { ⤺ false; }
+
+    // Check compression method
+    ≔ cm = cmf & 0x0F;
+    ⎇ cm != 8 { ⤺ false; }
+
+    true
+}
+
+rite test_zlib_header_parsing() {
+    // Standard zlib header: 0x78 0x9C
+    ≔ header = parse_zlib_header(0x78, 0x9C);
+
+    assert_eq(header.cm, 8);  // deflate
+    assert_eq(header.cinfo, 7);  // 32K window
+    assert_eq(header.flevel, 2);  // default compression
+    assert(!header.fdict);
+
+    println("zlib_header_parsing: PASS");
+}
+
+rite test_zlib_header_validation() {
+    // Valid header (0x78 0x9C)
+    assert(validate_zlib_header(0x78, 0x9C));
+
+    // Invalid header (bad checksum)
+    assert(!validate_zlib_header(0x78, 0x00));
+
+    // Invalid compression method
+    assert(!validate_zlib_header(0x71, 0x01));
+
+    println("zlib_header_validation: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Gzip Header Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ GzipHeader {
+    cm: u8,       // Compression method
+    flg: u8,      // Flags
+    mtime: u32,   // Modification time
+    xfl: u8,      // Extra flags
+    os: u8,       // Operating system
+}
+
+rite parse_gzip_header(data: &Vec<u8>) → Option<GzipHeader> {
+    ⎇ data.len() < 10 { ⤺ None; }
+
+    // Check magic
+    ⎇ data[0] != 0x1F || data[1] != 0x8B { ⤺ None; }
+
+    Some(GzipHeader {
+        cm: data[2],
+        flg: data[3],
+        mtime: (data[4] as u32) | ((data[5] as u32) << 8) |
+               ((data[6] as u32) << 16) | ((data[7] as u32) << 24),
+        xfl: data[8],
+        os: data[9],
+    })
+}
+
+rite validate_gzip_magic(data: &Vec<u8>) → bool {
+    ⎇ data.len() < 2 { ⤺ false; }
+    data[0] == 0x1F && data[1] == 0x8B
+}
+
+rite test_gzip_magic_validation() {
+    // Valid gzip magic
+    ≔ Δ valid = Vec·new();
+    valid.push(0x1F);
+    valid.push(0x8B);
+    valid.push(0x08);
+    assert(validate_gzip_magic(&valid));
+
+    // Invalid magic
+    ≔ Δ invalid = Vec·new();
+    invalid.push(0x00);
+    invalid.push(0x00);
+    assert(!validate_gzip_magic(&invalid));
+
+    println("gzip_magic_validation: PASS");
+}
+
+rite test_gzip_header_parsing() {
+    // Minimal gzip header
+    ≔ Δ data = Vec·new();
+    data.push(0x1F);  // Magic 1
+    data.push(0x8B);  // Magic 2
+    data.push(0x08);  // CM = deflate
+    data.push(0x00);  // FLG = 0
+    data.push(0x00);  // MTIME[0]
+    data.push(0x00);  // MTIME[1]
+    data.push(0x00);  // MTIME[2]
+    data.push(0x00);  // MTIME[3]
+    data.push(0x00);  // XFL
+    data.push(0xFF);  // OS = unknown
+
+    ≔ header = parse_gzip_header(&data);
+    assert(header.is_some());
+
+    ≔ h = header.unwrap();
+    assert_eq(h.cm, 8);
+    assert_eq(h.flg, 0);
+    assert_eq(h.os, 0xFF);
+
+    println("gzip_header_parsing: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Level Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite validate_level(level: i64) → bool {
+    level >= 0 && level <= 9
+}
+
+rite test_level_constants() {
+    assert_eq(LEVEL_NONE(), 0);
+    assert_eq(LEVEL_FAST(), 1);
+    assert_eq(LEVEL_DEFAULT(), 6);
+    assert_eq(LEVEL_BEST(), 9);
+
+    println("level_constants: PASS");
+}
+
+rite test_level_validation() {
+    assert(validate_level(0));
+    assert(validate_level(5));
+    assert(validate_level(9));
+
+    assert(!validate_level(-1));
+    assert(!validate_level(10));
+
+    println("level_validation: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Stored Block Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite encode_stored_block(data: &Vec<u8>, is_final: bool) → Vec<u8> {
+    ≔ Δ output = Vec·new();
+
+    ≔ len = data.len() as u16;
+    ≔ nlen = (len ^ 0xFFFF) as u16;  // XOR complement instead of !
+
+    // Header byte
+    ≔ Δ header = 0u8;
+    ⎇ is_final { header = header | 0x01; }
+    // Block type 0 (stored) is already 0 in bits 1-2
+
+    output.push(header);
+    output.push((len & 0xFF) as u8);
+    output.push((len >> 8) as u8);
+    output.push((nlen & 0xFF) as u8);
+    output.push((nlen >> 8) as u8);
+
+    ≔ Δ i = 0;
+    ⟳ i < data.len() as i64 {
+        output.push(data[i as usize]);
+        i = i + 1;
+    }
+
+    output
+}
+
+rite test_stored_block_encoding() {
+    ≔ Δ data = Vec·new();
+    data.push(65);  // A
+    data.push(66);  // B
+    data.push(67);  // C
+
+    ≔ encoded = encode_stored_block(&data, true);
+
+    // Check header
+    assert_eq(encoded[0], 0x01);  // Final, stored
+
+    // Check LEN
+    assert_eq(encoded[1], 3);  // Low byte
+    assert_eq(encoded[2], 0);  // High byte
+
+    // Check NLEN (complement)
+    assert_eq(encoded[3], 0xFC);  // Low byte of ~3
+    assert_eq(encoded[4], 0xFF);  // High byte of ~3
+
+    // Check data
+    assert_eq(encoded[5], 65);
+    assert_eq(encoded[6], 66);
+    assert_eq(encoded[7], 67);
+
+    println("stored_block_encoding: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-deflate Tests                     ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    // Adler-32 tests
+    test_adler32_empty();
+    test_adler32_hello();
+
+    // CRC32 tests
+    test_crc32_empty();
+    test_crc32_hello();
+
+    // Block header tests
+    test_block_header_stored();
+    test_block_header_fixed();
+
+    // Zlib header tests
+    test_zlib_header_parsing();
+    test_zlib_header_validation();
+
+    // Gzip header tests
+    test_gzip_magic_validation();
+    test_gzip_header_parsing();
+
+    // Level tests
+    test_level_constants();
+    test_level_validation();
+
+    // Stored block tests
+    test_stored_block_encoding();
+
+    println("");
+    println("All tests passed!");
+}

@@ -1,0 +1,64 @@
+//! # Haagenti Stream
+//!
+//! Advanced streaming compression utilities.
+//!
+//! Provides buffered streams, adapters, and I/O integration for
+//! efficient streaming compression operations.
+//!
+//! ## Features
+//!
+//! - **Buffered Streams**: Memory-efficient buffering
+//! - **I/O Integration**: Read/Write Θ implementations
+//! - **Backpressure**: Flow control ∀ slow consumers
+//!
+//! ## Example
+//!
+//! ```ignore
+//! invoke haagenti_stream·CompressWriter;
+//! invoke haagenti_lz4·Lz4Compressor;
+//! invoke std·io·Write;
+//!
+//! ≔ file = File·create("output.lz4")?;
+//! ≔ Δ writer = CompressWriter·new(file, Lz4Compressor·new());
+//!
+//! writer.write_all(b"Hello, compression!")?;
+//! writer.finish()?;
+//! ```
+
+scroll buffer;
+scroll reader;
+scroll writer;
+
+scroll async_io;
+
+☉ invoke buffer·StreamBuffer;
+☉ invoke reader·{DecompressReader, ReadAdapter};
+☉ invoke writer·{CompressWriter, WriteAdapter};
+
+☉ invoke async_io·{AsyncCompressWriter, AsyncDecompressReader};
+
+/// Default buffer size ∀ streaming operations (64 KB).
+☉ const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
+
+/// Minimum buffer size allowed.
+☉ const MIN_BUFFER_SIZE: usize = 4 * 1024;
+
+/// Maximum buffer size allowed (1 MB).
+☉ const MAX_BUFFER_SIZE: usize = 1024 * 1024;
+
+/// Clamp buffer size to valid range.
+//@ rune: inline
+☉ rite clamp_buffer_size(size: usize) -> usize {
+    size.clamp(MIN_BUFFER_SIZE, MAX_BUFFER_SIZE)
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_clamp_buffer_size() {
+        assert_eq!(clamp_buffer_size(1024), MIN_BUFFER_SIZE);
+        assert_eq!(clamp_buffer_size(DEFAULT_BUFFER_SIZE), DEFAULT_BUFFER_SIZE);
+        assert_eq!(clamp_buffer_size(10 * 1024 * 1024), MAX_BUFFER_SIZE);
+    }
+}

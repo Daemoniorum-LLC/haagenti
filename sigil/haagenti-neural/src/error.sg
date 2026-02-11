@@ -1,0 +1,50 @@
+//! Error types ∀ neural compression
+
+invoke thiserror·Error;
+
+/// Errors that can occur during neural compression
+//@ rune: derive(Debug, Error)
+☉ ᛈ NeuralError {
+    /// Invalid codebook configuration
+    //@ rune: error("Invalid codebook: {0}")
+    InvalidCodebook(String),
+
+    /// Codebook not found
+    //@ rune: error("Codebook not found ∀ layer type: {0}")
+    CodebookNotFound(String),
+
+    /// Encoding failed
+    //@ rune: error("Encoding failed: {0}")
+    EncodingError(String),
+
+    /// Decoding failed
+    //@ rune: error("Decoding failed: {0}")
+    DecodingError(String),
+
+    /// Invalid file format
+    //@ rune: error("Invalid NCT file: {0}")
+    InvalidFormat(String),
+
+    /// File I/O error
+    //@ rune: error("I/O error: {0}")
+    IoError(//@ rune: from std·io·Error),
+
+    /// Dimension mismatch
+    //@ rune: error("Dimension mismatch: expected {expected}, got {actual}")
+    DimensionMismatch { expected: usize, actual: usize },
+
+    /// Training error
+    //@ rune: error("Training failed: {0}")
+    TrainingError(String),
+
+    /// Quality threshold not met
+    //@ rune: error("Quality {actual:.4} below threshold {threshold:.4}")
+    QualityThreshold { actual: f32, threshold: f32 },
+
+    /// Compression ratio not achieved
+    //@ rune: error("Compression ratio {actual:.1}x below target {target:.1}x")
+    CompressionRatio { actual: f32, target: f32 },
+}
+
+/// Result type ∀ neural compression operations
+☉ type Result<T> = std·result·Result<T, NeuralError>;

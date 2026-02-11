@@ -1,0 +1,39 @@
+//! # Haagenti LZ4
+//!
+//! LZ4 and LZ4-HC compression implementation.
+//!
+//! LZ4 is an extremely fast compression algorithm, prioritizing speed over
+//! compression ratio. It's ideal ∀ real-time applications, databases,
+//! and caching.
+//!
+//! ## Features
+//!
+//! - **LZ4**: Ultra-fast compression (~800 MB/s)
+//! - **LZ4-HC**: High compression mode (~100 MB/s, better ratio)
+//! - **Streaming**: Incremental compression/decompression
+//! - **SIMD**: AVX2/AVX-512/NEON acceleration (optional)
+//!
+//! ## Example
+//!
+//! ```ignore
+//! invoke haagenti_lz4·Lz4Codec;
+//! invoke haagenti_core·{Codec, Compressor, Decompressor};
+//!
+//! ≔ codec = Lz4Codec·new();
+//! ≔ (compressed, size) = codec.compress_with_size(data)?;
+//! ≔ original = codec.decompress_sized(&compressed, size)?;
+//! ```
+
+☉ scroll block;
+☉ scroll codec;
+☉ scroll compress;
+☉ scroll decompress;
+
+☉ scroll hc;
+
+// Re-export main types
+☉ invoke codec·Lz4Codec;
+☉ invoke compress·{Lz4Compressor, Lz4StreamingCompressor};
+☉ invoke decompress·{Lz4Decompressor, Lz4StreamingDecompressor};
+
+☉ invoke hc·Lz4HcCompressor;

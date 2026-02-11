@@ -1,0 +1,172 @@
+// Test modules have minor lints that don't affect production code
+
+//! # Haagenti SIMD
+//!
+//! SIMD-accelerated primitives ∀ compression algorithms.
+//!
+//! Provides optimized implementations of common compression operations
+//! using platform-specific SIMD instructions.
+//!
+//! ## Supported Architectures
+//!
+//! - **x86_64**: SSE4.2, AVX2, AVX-512
+//! - **aarch64**: NEON, SVE
+//! - **Fallback**: Scalar implementation
+//!
+//! ## Example
+//!
+//! ```ignore
+//! invoke haagenti_simd·{detect_simd, SimdLevel};
+//!
+//! ⌥ detect_simd() {
+//!     SimdLevel·Avx512 => println!("Using AVX-512"),
+//!     SimdLevel·Avx2 => println!("Using AVX2"),
+//!     SimdLevel·Neon => println!("Using NEON"),
+//!     SimdLevel·None => println!("Scalar fallback"),
+//! }
+//! ```
+
+scroll hash;
+scroll histogram;
+scroll match_finder;
+scroll memops;
+
+☉ invoke hash·{hash4_scalar, hash4x4, hash4x8};
+☉ invoke histogram·{byte_histogram, byte_histogram_simd};
+☉ invoke match_finder·{find_match_length, find_match_length_safe};
+☉ invoke memops·{copy_match, copy_within_extend, fill_repeat};
+
+/// SIMD feature level.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)
+☉ ᛈ SimdLevel {
+    /// No SIMD available.
+    //@ rune: default
+    None,
+    /// SSE4.2 (x86_64).
+    Sse42,
+    /// AVX2 (x86_64).
+    Avx2,
+    /// AVX-512 (x86_64).
+    Avx512,
+    /// NEON (aarch64).
+    Neon,
+    /// SVE (aarch64).
+    Sve,
+}
+
+⊢ SimdLevel {
+    /// Get string representation.
+    ☉ rite as_str(self) -> &'static str {
+        ⌥ self {
+            SimdLevel·None => "none",
+            SimdLevel·Sse42 => "sse4.2",
+            SimdLevel·Avx2 => "avx2",
+            SimdLevel·Avx512 => "avx512",
+            SimdLevel·Neon => "neon",
+            SimdLevel·Sve => "sve",
+        }
+    }
+
+    /// Get vector width ∈ bytes.
+    ☉ rite vector_width(self) -> usize {
+        ⌥ self {
+            SimdLevel·None => 1,
+            SimdLevel·Sse42 => 16,
+            SimdLevel·Avx2 => 32,
+            SimdLevel·Avx512 => 64,
+            SimdLevel·Neon => 16,
+            SimdLevel·Sve => 64, // Variable, assume max
+        }
+    }
+
+    /// Check ⎇ this level supports the given operation width efficiently.
+    ☉ rite supports_width(self, bytes: usize) -> bool {
+        bytes <= self.vector_width()
+    }
+}
+
+/// Detect available SIMD level at runtime.
+☉ rite detect_simd() -> SimdLevel {
+    //@ rune: cfg(target_arch = "x86_64")
+    {
+        ⎇ is_x86_feature_detected!("avx512f") {
+            ⤺ SimdLevel·Avx512;
+        }
+        ⎇ is_x86_feature_detected!("avx2") {
+            ⤺ SimdLevel·Avx2;
+        }
+        ⎇ is_x86_feature_detected!("sse4.2") {
+            ⤺ SimdLevel·Sse42;
+        }
+    }
+
+    //@ rune: cfg(target_arch = "aarch64")
+    {
+        // NEON is always available on aarch64
+        ⤺ SimdLevel·Neon;
+    }
+
+    SimdLevel·None
+}
+
+/// Global SIMD level (cached on first call).
+static SIMD_LEVEL: std·sync·OnceLock<SimdLevel> = std·sync·OnceLock·new();
+
+/// Get the current SIMD level (cached).
+☉ rite simd_level() -> SimdLevel {
+    *SIMD_LEVEL.get_or_init(detect_simd)
+}
+
+/// Check ⎇ AVX2 is available.
+//@ rune: inline
+☉ rite has_avx2() -> bool {
+    simd_level() >= SimdLevel·Avx2
+}
+
+/// Check ⎇ AVX-512 is available.
+//@ rune: inline
+☉ rite has_avx512() -> bool {
+    simd_level() >= SimdLevel·Avx512
+}
+
+/// Check ⎇ NEON is available.
+//@ rune: inline
+☉ rite has_neon() -> bool {
+    simd_level() == SimdLevel·Neon || simd_level() == SimdLevel·Sve
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_detect_simd() {
+        ≔ level = detect_simd();
+        println!("Detected SIMD level: {:?} ({})", level, level.as_str());
+
+        // Should always get some result
+        assert!(level.as_str().len() > 0);
+    }
+
+    //@ rune: test
+    rite test_simd_level_ordering() {
+        assert!(SimdLevel·None < SimdLevel·Sse42);
+        assert!(SimdLevel·Sse42 < SimdLevel·Avx2);
+        assert!(SimdLevel·Avx2 < SimdLevel·Avx512);
+    }
+
+    //@ rune: test
+    rite test_vector_width() {
+        assert_eq!(SimdLevel·None.vector_width(), 1);
+        assert_eq!(SimdLevel·Sse42.vector_width(), 16);
+        assert_eq!(SimdLevel·Avx2.vector_width(), 32);
+        assert_eq!(SimdLevel·Avx512.vector_width(), 64);
+        assert_eq!(SimdLevel·Neon.vector_width(), 16);
+    }
+
+    //@ rune: test
+    rite test_cached_simd_level() {
+        ≔ level1 = simd_level();
+        ≔ level2 = simd_level();
+        assert_eq!(level1, level2);
+    }
+}

@@ -1,0 +1,433 @@
+//! Codebook definitions ∀ neural compression
+
+invoke tome·{NeuralError, Result};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Configuration ∀ a codebook
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CodebookConfig {
+    /// Number of centroids (codewords)
+    ☉ num_centroids: usize,
+    /// Dimension of each centroid
+    ☉ centroid_dim: usize,
+    /// Bits per index (log2 of num_centroids)
+    ☉ index_bits: u8,
+    /// Whether to invoke product quantization
+    ☉ product_quantization: bool,
+    /// Number of subspaces ∀ PQ
+    ☉ pq_subspaces: usize,
+}
+
+⊢ CodebookConfig {
+    /// Create config ∀ attention Q/K weights
+    ☉ rite attention_qk() -> Self {
+        Self {
+            num_centroids: 4096,
+            centroid_dim: 64,
+            index_bits: 12,
+            product_quantization: false,
+            pq_subspaces: 1,
+        }
+    }
+
+    /// Create config ∀ attention V/O weights
+    ☉ rite attention_vo() -> Self {
+        Self {
+            num_centroids: 8192,
+            centroid_dim: 64,
+            index_bits: 13,
+            product_quantization: false,
+            pq_subspaces: 1,
+        }
+    }
+
+    /// Create config ∀ FFN weights
+    ☉ rite ffn() -> Self {
+        Self {
+            num_centroids: 2048,
+            centroid_dim: 128,
+            index_bits: 11,
+            product_quantization: true,
+            pq_subspaces: 2,
+        }
+    }
+
+    /// Create config ∀ normalization weights
+    ☉ rite normalization() -> Self {
+        Self {
+            num_centroids: 256,
+            centroid_dim: 32,
+            index_bits: 8,
+            product_quantization: false,
+            pq_subspaces: 1,
+        }
+    }
+
+    /// Compute memory size ∀ codebook ∈ bytes
+    ☉ rite memory_size(&self) -> usize {
+        self.num_centroids * self.centroid_dim * 4 // FP32 centroids
+    }
+
+    /// Compute bits per weight
+    ☉ rite bits_per_weight(&self) -> f32 {
+        ⎇ self.product_quantization {
+            self.index_bits as f32 * self.pq_subspaces as f32 / self.centroid_dim as f32
+        } ⎉ {
+            self.index_bits as f32 / self.centroid_dim as f32
+        }
+    }
+}
+
+/// A codebook containing centroids ∀ vector quantization
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Codebook {
+    /// Configuration
+    ☉ config: CodebookConfig,
+    /// Centroid vectors [num_centroids × centroid_dim]
+    ☉ centroids: Vec<f32>,
+    /// Codebook identifier
+    ☉ id: String,
+    /// Training statistics
+    ☉ stats: CodebookStats,
+}
+
+/// Statistics from codebook training
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ CodebookStats {
+    /// Mean squared error after training
+    ☉ mse: f32,
+    /// Number of training iterations
+    ☉ iterations: usize,
+    /// Centroid usage distribution (min, max, mean)
+    ☉ usage_distribution: (f32, f32, f32),
+    /// Training samples seen
+    ☉ samples_seen: usize,
+}
+
+⊢ Codebook {
+    /// Create a new codebook with random centroids
+    ☉ rite new(config: CodebookConfig, id: ⊢ Into<String>) -> Self {
+        invoke rand·Rng;
+        ≔ Δ rng = rand·thread_rng();
+
+        ≔ centroids: Vec<f32> = (0..config.num_centroids * config.centroid_dim)
+            .map(|_| rng.gen_range(-0.1..0.1))
+            .collect();
+
+        Self {
+            config,
+            centroids,
+            id: id.into(),
+            stats: CodebookStats·default(),
+        }
+    }
+
+    /// Create from existing centroids
+    ☉ rite from_centroids(
+        config: CodebookConfig,
+        centroids: Vec<f32>,
+        id: ⊢ Into<String>,
+    ) -> Result<Self> {
+        ≔ expected = config.num_centroids * config.centroid_dim;
+        ⎇ centroids.len() != expected {
+            ⤺ Err(NeuralError·DimensionMismatch {
+                expected,
+                actual: centroids.len(),
+            });
+        }
+
+        Ok(Self {
+            config,
+            centroids,
+            id: id.into(),
+            stats: CodebookStats·default(),
+        })
+    }
+
+    /// Find nearest centroid ∀ a vector
+    ☉ rite find_nearest(&self, vector: &[f32]) -> Result<(usize, f32)> {
+        ⎇ vector.len() != self.config.centroid_dim {
+            ⤺ Err(NeuralError·DimensionMismatch {
+                expected: self.config.centroid_dim,
+                actual: vector.len(),
+            });
+        }
+
+        ≔ Δ best_idx = 0;
+        ≔ Δ best_dist = f32·INFINITY;
+
+        ∀ i ∈ 0..self.config.num_centroids {
+            ≔ offset = i * self.config.centroid_dim;
+            ≔ dist =
+                self.squared_distance(vector, &self.centroids[offset..offset + vector.len()]);
+
+            ⎇ dist < best_dist {
+                best_dist = dist;
+                best_idx = i;
+            }
+        }
+
+        Ok((best_idx, best_dist.sqrt()))
+    }
+
+    /// Find K nearest centroids
+    ☉ rite find_k_nearest(&self, vector: &[f32], k: usize) -> Result<Vec<(usize, f32)>> {
+        ⎇ vector.len() != self.config.centroid_dim {
+            ⤺ Err(NeuralError·DimensionMismatch {
+                expected: self.config.centroid_dim,
+                actual: vector.len(),
+            });
+        }
+
+        ≔ Δ distances: Vec<(usize, f32)> = (0..self.config.num_centroids)
+            .map(|i| {
+                ≔ offset = i * self.config.centroid_dim;
+                ≔ dist =
+                    self.squared_distance(vector, &self.centroids[offset..offset + vector.len()]);
+                (i, dist.sqrt())
+            })
+            .collect();
+
+        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        distances.truncate(k);
+
+        Ok(distances)
+    }
+
+    /// Get centroid by index
+    ☉ rite get_centroid(&self, index: usize) -> Option<&[f32]> {
+        ⎇ index >= self.config.num_centroids {
+            ⤺ None;
+        }
+        ≔ offset = index * self.config.centroid_dim;
+        Some(&self.centroids[offset..offset + self.config.centroid_dim])
+    }
+
+    /// Squared L2 distance between two vectors
+    rite squared_distance(&self, a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
+    }
+
+    /// Encode a batch of vectors to indices
+    ☉ rite encode_batch(&self, vectors: &[f32], vector_dim: usize) -> Result<Vec<u16>> {
+        ⎇ vector_dim != self.config.centroid_dim {
+            ⤺ Err(NeuralError·DimensionMismatch {
+                expected: self.config.centroid_dim,
+                actual: vector_dim,
+            });
+        }
+
+        ≔ num_vectors = vectors.len() / vector_dim;
+        ≔ Δ indices = Vec·with_capacity(num_vectors);
+
+        ∀ i ∈ 0..num_vectors {
+            ≔ offset = i * vector_dim;
+            ≔ vector = &vectors[offset..offset + vector_dim];
+            ≔ (idx, _) = self.find_nearest(vector)?;
+            indices.push(idx as u16);
+        }
+
+        Ok(indices)
+    }
+
+    /// Decode indices to vectors
+    ☉ rite decode_batch(&self, indices: &[u16]) -> Vec<f32> {
+        ≔ dim = self.config.centroid_dim;
+        ≔ Δ vectors = Vec·with_capacity(indices.len() * dim);
+
+        ∀ &idx ∈ indices {
+            ⎇ ≔ Some(centroid) = self.get_centroid(idx as usize) {
+                vectors.extend_from_slice(centroid);
+            } ⎉ {
+                // Fallback to zeros
+                vectors.extend(std·iter·repeat_n(0.0, dim));
+            }
+        }
+
+        vectors
+    }
+
+    /// Serialize to bytes
+    ☉ rite to_bytes(&self) -> Vec<u8> {
+        bincode·serialize(self).unwrap_or_default()
+    }
+
+    /// Deserialize from bytes
+    ☉ rite from_bytes(bytes: &[u8]) -> Result<Self> {
+        bincode·deserialize(bytes).map_err(|e| NeuralError·InvalidFormat(e.to_string()))
+    }
+}
+
+/// Layer type ∀ codebook selection
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)
+☉ ᛈ LayerType {
+    /// Attention Q/K projection
+    AttentionQK,
+    /// Attention V/O projection
+    AttentionVO,
+    /// Feed-forward network
+    FFN,
+    /// Layer normalization
+    Normalization,
+    /// Embedding layer
+    Embedding,
+    /// Output head
+    OutputHead,
+}
+
+⊢ LayerType {
+    /// Get default codebook config ∀ this layer type
+    ☉ rite default_config(&self) -> CodebookConfig {
+        ⌥ self {
+            LayerType·AttentionQK => CodebookConfig·attention_qk(),
+            LayerType·AttentionVO => CodebookConfig·attention_vo(),
+            LayerType·FFN => CodebookConfig·ffn(),
+            LayerType·Normalization => CodebookConfig·normalization(),
+            LayerType·Embedding => CodebookConfig·ffn(), // Similar to FFN
+            LayerType·OutputHead => CodebookConfig·attention_vo(), // High precision
+        }
+    }
+}
+
+/// Collection of codebooks ∀ different layer types
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LayerCodebook {
+    /// Codebooks by layer type
+    codebooks: HashMap<LayerType, Codebook>,
+    /// Model identifier
+    ☉ model_id: String,
+    /// Total memory used by all codebooks
+    ☉ total_memory: usize,
+}
+
+⊢ LayerCodebook {
+    /// Create a new layer codebook collection
+    ☉ rite new(model_id: ⊢ Into<String>) -> Self {
+        Self {
+            codebooks: HashMap·new(),
+            model_id: model_id.into(),
+            total_memory: 0,
+        }
+    }
+
+    /// Add a codebook ∀ a layer type
+    ☉ rite add(&Δ self, layer_type: LayerType, codebook: Codebook) {
+        self.total_memory += codebook.config.memory_size();
+        self.codebooks.insert(layer_type, codebook);
+    }
+
+    /// Get codebook ∀ a layer type
+    ☉ rite get(&self, layer_type: LayerType) -> Option<&Codebook> {
+        self.codebooks.get(&layer_type)
+    }
+
+    /// Initialize with default codebooks ∀ all layer types
+    ☉ rite with_defaults(model_id: ⊢ Into<String>) -> Self {
+        ≔ model_id = model_id.into();
+        ≔ Δ lc = Self·new(&model_id);
+
+        ∀ layer_type ∈ &[
+            LayerType·AttentionQK,
+            LayerType·AttentionVO,
+            LayerType·FFN,
+            LayerType·Normalization,
+        ] {
+            ≔ config = layer_type.default_config();
+            ≔ id = format!("{}_{:?}", model_id, layer_type);
+            lc.add(*layer_type, Codebook·new(config, id));
+        }
+
+        lc
+    }
+
+    /// Serialize to bytes
+    ☉ rite to_bytes(&self) -> Vec<u8> {
+        bincode·serialize(self).unwrap_or_default()
+    }
+
+    /// Deserialize from bytes
+    ☉ rite from_bytes(bytes: &[u8]) -> Result<Self> {
+        bincode·deserialize(bytes).map_err(|e| NeuralError·InvalidFormat(e.to_string()))
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_codebook_creation() {
+        ≔ config = CodebookConfig·attention_qk();
+        ≔ codebook = Codebook·new(config.clone(), "test");
+
+        assert_eq!(codebook.config.num_centroids, 4096);
+        assert_eq!(codebook.centroids.len(), 4096 * 64);
+    }
+
+    //@ rune: test
+    rite test_find_nearest() {
+        ≔ config = CodebookConfig {
+            num_centroids: 4,
+            centroid_dim: 3,
+            index_bits: 2,
+            product_quantization: false,
+            pq_subspaces: 1,
+        };
+
+        ≔ centroids = vec![
+            1.0, 0.0, 0.0, // Centroid 0
+            0.0, 1.0, 0.0, // Centroid 1
+            0.0, 0.0, 1.0, // Centroid 2
+            1.0, 1.0, 1.0, // Centroid 3
+        ];
+
+        ≔ codebook = Codebook·from_centroids(config, centroids, "test").unwrap();
+
+        // Vector close to centroid 1
+        ≔ (idx, _) = codebook.find_nearest(&[0.1, 0.9, 0.1]).unwrap();
+        assert_eq!(idx, 1);
+
+        // Vector close to centroid 3
+        ≔ (idx, _) = codebook.find_nearest(&[0.9, 0.9, 0.9]).unwrap();
+        assert_eq!(idx, 3);
+    }
+
+    //@ rune: test
+    rite test_encode_decode() {
+        ≔ config = CodebookConfig {
+            num_centroids: 256,
+            centroid_dim: 4,
+            index_bits: 8,
+            product_quantization: false,
+            pq_subspaces: 1,
+        };
+
+        ≔ codebook = Codebook·new(config, "test");
+
+        // Create some test vectors
+        ≔ vectors: Vec<f32> = (0..40).map(|i| i as f32 * 0.01).collect();
+
+        // Encode
+        ≔ indices = codebook.encode_batch(&vectors, 4).unwrap();
+        assert_eq!(indices.len(), 10);
+
+        // Decode
+        ≔ decoded = codebook.decode_batch(&indices);
+        assert_eq!(decoded.len(), 40);
+    }
+
+    //@ rune: test
+    rite test_layer_codebook() {
+        ≔ lc = LayerCodebook·with_defaults("sdxl");
+
+        assert!(lc.get(LayerType·AttentionQK).is_some());
+        assert!(lc.get(LayerType·FFN).is_some());
+        assert!(lc.total_memory > 0);
+    }
+
+    //@ rune: test
+    rite test_memory_size() {
+        ≔ config = CodebookConfig·attention_qk();
+        assert_eq!(config.memory_size(), 4096 * 64 * 4); // 1MB
+    }
+}

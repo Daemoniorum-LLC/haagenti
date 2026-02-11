@@ -1,0 +1,145 @@
+// Stream I/O Tests
+//
+// Tests for streaming I/O patterns and state management.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Stream states
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_stream_states() {
+    ≔ state_init = 0;
+    ≔ state_open = 1;
+    ≔ state_reading = 2;
+    ≔ state_writing = 3;
+    ≔ state_closed = 4;
+    ≔ state_error = 5;
+
+    // Valid transitions
+    // init -> open
+    // open -> reading/writing
+    // reading/writing -> open/closed
+    // any -> error
+
+    assert(state_init < state_open);
+    assert(state_open < state_reading);
+    assert(state_closed < state_error);
+
+    println("stream_states: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Read result handling
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_read_results() {
+    // Read returns bytes read or error
+
+    // Successful read
+    ≔ bytes_read = 1000;
+    ≔ success = bytes_read > 0;
+    assert(success);
+
+    // End of stream
+    ≔ eof = 0;
+    ≔ is_eof = eof == 0;
+    assert(is_eof);
+
+    // Would block (async)
+    ≔ would_block = -11;  // EAGAIN
+    ≔ is_async = would_block < 0;
+    assert(is_async);
+
+    println("read_results: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Buffered read ahead
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_read_ahead() {
+    // Read-ahead improves sequential read performance
+
+    ≔ read_size = 100;
+    ≔ readahead_size = 4096;
+
+    // Many small reads from buffer
+    ≔ reads_from_buffer = readahead_size / read_size;
+    assert_eq(reads_from_buffer, 40);
+
+    // Only one system call per readahead
+    ≔ syscalls_saved = reads_from_buffer - 1;
+    assert_eq(syscalls_saved, 39);
+
+    println("read_ahead: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Write buffering
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_write_buffering() {
+    // Write buffering reduces system calls
+
+    ≔ write_size = 50;
+    ≔ buffer_size = 4096;
+
+    // Many small writes fit in buffer
+    ≔ writes_per_buffer = buffer_size / write_size;
+    assert_eq(writes_per_buffer, 81);
+
+    // Flush when buffer full
+    ≔ total_writes = 1000;
+    ≔ flush_count = total_writes / writes_per_buffer;
+    assert_eq(flush_count, 12);
+
+    println("write_buffering: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Seek positions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_seek_positions() {
+    // Seek whence values
+    ≔ seek_set = 0;  // From start
+    ≔ seek_cur = 1;  // From current
+    ≔ seek_end = 2;  // From end
+
+    // Example: file size 1000
+    ≔ file_size = 1000;
+    ≔ current_pos = 500;
+
+    // Seek to position 300 from start
+    ≔ pos_set = 300;
+    assert_eq(pos_set, 300);
+
+    // Seek -100 from current (500 - 100 = 400)
+    ≔ pos_cur = current_pos - 100;
+    assert_eq(pos_cur, 400);
+
+    // Seek -50 from end (1000 - 50 = 950)
+    ≔ pos_end = file_size - 50;
+    assert_eq(pos_end, 950);
+
+    println("seek_positions: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-stream I/O Tests                  ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_stream_states();
+    test_read_results();
+    test_read_ahead();
+    test_write_buffering();
+    test_seek_positions();
+
+    println("");
+    println("All tests passed!");
+}

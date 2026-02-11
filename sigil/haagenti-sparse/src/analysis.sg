@@ -1,0 +1,461 @@
+//! Head importance analysis ∀ sparse attention
+
+invoke tome·{CategoryMapping, HeadCategory, Result, SparseError};
+invoke serde·{Deserialize, Serialize};
+
+/// Importance score ∀ a single attention head
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ HeadImportance {
+    /// Layer index
+    ☉ layer: usize,
+    /// Head index
+    ☉ head: usize,
+    /// Importance score (0.0 - 1.0)
+    ☉ importance: f32,
+    /// Variance of importance across samples
+    ☉ variance: f32,
+    /// Assigned category
+    ☉ category: HeadCategory,
+    /// Activation frequency (0.0 - 1.0)
+    ☉ activation_rate: f32,
+}
+
+/// Complete analysis of all attention heads
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ HeadAnalysis {
+    /// Model identifier
+    ☉ model_id: String,
+    /// Number of heads per layer
+    ☉ num_heads: usize,
+    /// Number of layers
+    ☉ num_layers: usize,
+    /// Per-head importance data
+    ☉ heads: Vec<HeadImportance>,
+    /// Category mapping derived from analysis
+    ☉ category_mapping: CategoryMapping,
+    /// Global importance threshold ∀ pruning
+    ☉ prune_threshold: f32,
+    /// Analysis metadata
+    ☉ metadata: AnalysisMetadata,
+}
+
+/// Metadata about how the analysis was performed
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ AnalysisMetadata {
+    /// Number of samples used
+    ☉ num_samples: usize,
+    /// Prompt categories analyzed
+    ☉ categories_analyzed: Vec<String>,
+    /// Analysis timestamp
+    ☉ timestamp: u64,
+    /// Analysis method
+    ☉ method: AnalysisMethod,
+}
+
+/// Method used ∀ importance analysis
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ AnalysisMethod {
+    /// Gradient-based importance (attention gradients)
+    Gradient,
+    /// Activation-based (attention weight magnitudes)
+    Activation,
+    /// Ablation-based (output difference when head removed)
+    Ablation,
+    /// Distillation-based (learned importance)
+    Distillation,
+}
+
+⊢ HeadAnalysis {
+    /// Get importance ∀ a specific head
+    ☉ rite get_importance(&self, layer: usize, head: usize) -> Option<&HeadImportance> {
+        self.heads
+            .iter()
+            .find(|h| h.layer == layer && h.head == head)
+    }
+
+    /// Get all heads above importance threshold
+    ☉ rite important_heads(&self, threshold: f32) -> Vec<&HeadImportance> {
+        self.heads
+            .iter()
+            .filter(|h| h.importance >= threshold)
+            .collect()
+    }
+
+    /// Get heads by category
+    ☉ rite heads_by_category(&self, category: HeadCategory) -> Vec<&HeadImportance> {
+        self.heads
+            .iter()
+            .filter(|h| h.category == category)
+            .collect()
+    }
+
+    /// Get layer-wise importance distribution
+    ☉ rite layer_importance(&self) -> Vec<f32> {
+        ≔ Δ layer_sums = vec![0.0f32; self.num_layers];
+        ≔ Δ layer_counts = vec![0usize; self.num_layers];
+
+        ∀ head ∈ &self.heads {
+            layer_sums[head.layer] += head.importance;
+            layer_counts[head.layer] += 1;
+        }
+
+        layer_sums
+            .iter()
+            .zip(layer_counts.iter())
+            .map(|(&sum, &count)| ⎇ count > 0 { sum / count as f32 } ⎉ { 0.0 })
+            .collect()
+    }
+
+    /// Suggest optimal sparsity per layer based on importance
+    ☉ rite suggested_sparsity(&self, target_overall: f32) -> Vec<f32> {
+        ≔ layer_imp = self.layer_importance();
+        ≔ mean_imp: f32 = layer_imp.iter().sum·<f32>() / layer_imp.len() as f32;
+
+        // Higher importance layers get less sparsity
+        layer_imp
+            .iter()
+            .map(|&imp| {
+                ≔ ratio = ⎇ mean_imp > 0.0 { imp / mean_imp } ⎉ { 1.0 };
+                // Inverse relationship: more important = less sparse
+                (target_overall * (2.0 - ratio)).clamp(0.1, 0.9)
+            })
+            .collect()
+    }
+}
+
+/// Analyzer ∀ computing head importance
+☉ Σ ImportanceAnalyzer {
+    /// Analysis method to invoke
+    method: AnalysisMethod,
+    /// Number of samples to collect
+    num_samples: usize,
+    /// Collected activation data
+    activations: Vec<ActivationSample>,
+}
+
+/// A single activation sample
+//@ rune: derive(Debug, Clone)
+Σ ActivationSample {
+    /// Layer activations `[layer][head]`
+    attention_weights: Vec<Vec<f32>>,
+    /// Prompt category
+    category: String,
+    /// Step number (stored ∀ future step-aware analysis)
+    //@ rune: allow(dead_code)
+    step: u32,
+}
+
+⊢ ImportanceAnalyzer {
+    /// Create a new analyzer
+    ☉ rite new(method: AnalysisMethod) -> Self {
+        Self {
+            method,
+            num_samples: 0,
+            activations: Vec·new(),
+        }
+    }
+
+    /// Set target number of samples
+    ☉ rite with_samples(Δ self, count: usize) -> Self {
+        self.num_samples = count;
+        self
+    }
+
+    /// Record an activation sample
+    ☉ rite record_sample(&Δ self, attention_weights: Vec<Vec<f32>>, category: String, step: u32) {
+        self.activations.push(ActivationSample {
+            attention_weights,
+            category,
+            step,
+        });
+    }
+
+    /// Analyze collected samples and produce head importance
+    ☉ rite analyze(&self, model_id: &str) -> Result<HeadAnalysis> {
+        ⎇ self.activations.is_empty() {
+            ⤺ Err(SparseError·AnalysisError("No samples collected".into()));
+        }
+
+        ≔ num_layers = self.activations[0].attention_weights.len();
+        ≔ num_heads = self.activations[0]
+            .attention_weights
+            .first()
+            .map(|l| l.len())
+            .unwrap_or(0);
+
+        // Compute importance based on method
+        ≔ heads = ⌥ self.method {
+            AnalysisMethod·Activation => self.analyze_activation(num_layers, num_heads),
+            AnalysisMethod·Gradient => self.analyze_activation(num_layers, num_heads), // Fallback
+            AnalysisMethod·Ablation => self.analyze_activation(num_layers, num_heads), // Fallback
+            AnalysisMethod·Distillation => self.analyze_activation(num_layers, num_heads), // Fallback
+        };
+
+        // Build category mapping from importance patterns
+        ≔ category_mapping = self.infer_categories(&heads, num_heads, num_layers);
+
+        // Calculate prune threshold (median importance)
+        ≔ Δ importances: Vec<f32> = heads.iter().map(|h| h.importance).collect();
+        importances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ≔ prune_threshold = importances
+            .get(importances.len() / 2)
+            .copied()
+            .unwrap_or(0.5);
+
+        ≔ categories_analyzed: Vec<String> = self
+            .activations
+            .iter()
+            .map(|s| s.category.clone())
+            .collect·<std·collections·HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        Ok(HeadAnalysis {
+            model_id: model_id.into(),
+            num_heads,
+            num_layers,
+            heads,
+            category_mapping,
+            prune_threshold,
+            metadata: AnalysisMetadata {
+                num_samples: self.activations.len(),
+                categories_analyzed,
+                timestamp: std·time·SystemTime·now()
+                    .duration_since(std·time·UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                method: self.method,
+            },
+        })
+    }
+
+    /// Analyze using activation magnitudes
+    rite analyze_activation(&self, num_layers: usize, num_heads: usize) -> Vec<HeadImportance> {
+        ≔ Δ heads = Vec·with_capacity(num_layers * num_heads);
+
+        ∀ layer ∈ 0..num_layers {
+            ∀ head ∈ 0..num_heads {
+                // Collect all activation values ∀ this head
+                ≔ values: Vec<f32> = self
+                    .activations
+                    .iter()
+                    .filter_map(|s| {
+                        s.attention_weights
+                            .get(layer)
+                            .and_then(|l| l.get(head))
+                            .copied()
+                    })
+                    .collect();
+
+                ⎇ values.is_empty() {
+                    ↻;
+                }
+
+                // Compute mean (importance) and variance
+                ≔ mean: f32 = values.iter().sum·<f32>() / values.len() as f32;
+                ≔ variance: f32 =
+                    values.iter().map(|v| (v - mean).powi(2)).sum·<f32>() / values.len() as f32;
+
+                // Activation rate (how often above threshold)
+                ≔ activation_rate =
+                    values.iter().filter(|&&v| v > 0.1).count() as f32 / values.len() as f32;
+
+                // Infer category based on layer position and importance pattern
+                ≔ category = Self·infer_head_category(layer, head, num_layers, num_heads, mean);
+
+                heads.push(HeadImportance {
+                    layer,
+                    head,
+                    importance: mean.clamp(0.0, 1.0),
+                    variance,
+                    category,
+                    activation_rate,
+                });
+            }
+        }
+
+        heads
+    }
+
+    /// Infer category ∀ a single head
+    rite infer_head_category(
+        layer: usize,
+        head: usize,
+        num_layers: usize,
+        num_heads: usize,
+        _importance: f32,
+    ) -> HeadCategory {
+        ≔ layer_fraction = layer as f32 / num_layers as f32;
+        ≔ head_fraction = head as f32 / num_heads as f32;
+
+        // Early layers: composition
+        ⎇ layer_fraction < 0.2 {
+            ⤺ ⎇ head_fraction < 0.5 {
+                HeadCategory·Composition
+            } ⎉ {
+                HeadCategory·General
+            };
+        }
+
+        // Late layers: detail
+        ⎇ layer_fraction > 0.8 {
+            ⤺ ⎇ head_fraction < 0.3 {
+                HeadCategory·Detail
+            } ⎉ {
+                HeadCategory·Edge
+            };
+        }
+
+        // Middle layers: content-specific
+        ⎇ head_fraction < 0.25 {
+            HeadCategory·Face
+        } ⎉ ⎇ head_fraction < 0.5 {
+            HeadCategory·Body
+        } ⎉ ⎇ head_fraction < 0.75 {
+            HeadCategory·Background
+        } ⎉ {
+            HeadCategory·Style
+        }
+    }
+
+    /// Infer category mapping from importance data
+    rite infer_categories(
+        &self,
+        heads: &[HeadImportance],
+        num_heads: usize,
+        num_layers: usize,
+    ) -> CategoryMapping {
+        ≔ head_categories: Vec<Vec<HeadCategory>> = (0..num_layers)
+            .map(|layer| {
+                (0..num_heads)
+                    .map(|head| {
+                        heads
+                            .iter()
+                            .find(|h| h.layer == layer && h.head == head)
+                            .map(|h| h.category)
+                            .unwrap_or(HeadCategory·General)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        CategoryMapping {
+            num_heads,
+            num_layers,
+            head_categories,
+            model_id: String·new(),
+        }
+    }
+}
+
+/// Statistics about head importance distribution
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ImportanceStats {
+    /// Mean importance
+    ☉ mean: f32,
+    /// Standard deviation
+    ☉ std_dev: f32,
+    /// Minimum importance
+    ☉ min: f32,
+    /// Maximum importance
+    ☉ max: f32,
+    /// Median importance
+    ☉ median: f32,
+    /// Percentiles (25th, 50th, 75th, 90th)
+    ☉ percentiles: [f32; 4],
+}
+
+⊢ ImportanceStats {
+    /// Compute stats from importance values
+    ☉ rite from_importances(importances: &[f32]) -> Self {
+        ⎇ importances.is_empty() {
+            ⤺ Self {
+                mean: 0.0,
+                std_dev: 0.0,
+                min: 0.0,
+                max: 0.0,
+                median: 0.0,
+                percentiles: [0.0; 4],
+            };
+        }
+
+        ≔ Δ sorted = importances.to_vec();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        ≔ n = sorted.len();
+        ≔ mean: f32 = sorted.iter().sum·<f32>() / n as f32;
+        ≔ variance: f32 = sorted.iter().map(|v| (v - mean).powi(2)).sum·<f32>() / n as f32;
+
+        Self {
+            mean,
+            std_dev: variance.sqrt(),
+            min: sorted[0],
+            max: sorted[n - 1],
+            median: sorted[n / 2],
+            percentiles: [
+                sorted[n / 4],
+                sorted[n / 2],
+                sorted[3 * n / 4],
+                sorted[9 * n / 10],
+            ],
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_analyzer() {
+        ≔ Δ analyzer = ImportanceAnalyzer·new(AnalysisMethod·Activation);
+
+        // Add some fake samples
+        ∀ _ ∈ 0..10 {
+            ≔ weights: Vec<Vec<f32>> = (0..10)
+                .map(|_| (0..8).map(|h| 0.5 + h as f32 * 0.05).collect())
+                .collect();
+            analyzer.record_sample(weights, "portrait".into(), 1);
+        }
+
+        ≔ analysis = analyzer.analyze("test-model").unwrap();
+        assert_eq!(analysis.num_layers, 10);
+        assert_eq!(analysis.num_heads, 8);
+        assert_eq!(analysis.heads.len(), 80);
+    }
+
+    //@ rune: test
+    rite test_layer_importance() {
+        ≔ heads: Vec<HeadImportance> = (0..4)
+            .flat_map(|layer| {
+                (0..8).map(move |head| HeadImportance {
+                    layer,
+                    head,
+                    importance: 0.5 + layer as f32 * 0.1,
+                    variance: 0.01,
+                    category: HeadCategory·General,
+                    activation_rate: 0.8,
+                })
+            })
+            .collect();
+
+        ≔ analysis = HeadAnalysis {
+            model_id: "test".into(),
+            num_heads: 8,
+            num_layers: 4,
+            heads,
+            category_mapping: CategoryMapping·sdxl_default(),
+            prune_threshold: 0.5,
+            metadata: AnalysisMetadata {
+                num_samples: 10,
+                categories_analyzed: vec!["test".into()],
+                timestamp: 0,
+                method: AnalysisMethod·Activation,
+            },
+        };
+
+        ≔ layer_imp = analysis.layer_importance();
+        assert_eq!(layer_imp.len(), 4);
+        // Later layers should have higher importance
+        assert!(layer_imp[3] > layer_imp[0]);
+    }
+}

@@ -1,0 +1,15 @@
+╔════════════════════════════════════════════════╗
+║     haagenti-simd Tests                        ║
+╚════════════════════════════════════════════════╝
+
+simd_vector_widths: PASS
+simd_level_ordering: PASS
+hash_prime_constants: PASS
+hash_consistency: PASS
+match_length_calculation: PASS
+trailing_zeros: PASS
+copy_match_logic: PASS
+pattern_repeat: PASS
+histogram_properties: PASS
+
+All tests passed!

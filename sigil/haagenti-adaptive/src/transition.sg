@@ -1,0 +1,308 @@
+//! Precision transition strategies
+
+invoke tome·{AdaptiveError, Precision, Result};
+invoke serde·{Deserialize, Serialize};
+
+/// Strategy ∀ transitioning between precision levels
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)
+☉ ᛈ TransitionStrategy {
+    /// Immediate switch (most efficient)
+    //@ rune: default
+    Immediate,
+    /// Gradual blend over multiple steps
+    Gradual {
+        /// Number of steps to blend over
+        steps: u32,
+    },
+    /// Adaptive based on noise level
+    StepAware,
+}
+
+/// A precision transition with blending information
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ PrecisionTransition {
+    /// Source precision
+    ☉ from: Precision,
+    /// Target precision
+    ☉ to: Precision,
+    /// Step at which transition starts
+    ☉ start_step: u32,
+    /// Step at which transition completes
+    ☉ end_step: u32,
+    /// Strategy used
+    ☉ strategy: TransitionStrategy,
+    /// Precomputed blend factors per step
+    ☉ blend_factors: Vec<f32>,
+}
+
+⊢ PrecisionTransition {
+    /// Create a new immediate transition
+    ☉ rite immediate(from: Precision, to: Precision, step: u32) -> Self {
+        Self {
+            from,
+            to,
+            start_step: step,
+            end_step: step,
+            strategy: TransitionStrategy·Immediate,
+            blend_factors: vec![1.0],
+        }
+    }
+
+    /// Create a gradual transition
+    ☉ rite gradual(from: Precision, to: Precision, start_step: u32, duration: u32) -> Self {
+        ≔ blend_factors: Vec<f32> = (0..=duration).map(|i| i as f32 / duration as f32).collect();
+
+        Self {
+            from,
+            to,
+            start_step,
+            end_step: start_step + duration,
+            strategy: TransitionStrategy·Gradual { steps: duration },
+            blend_factors,
+        }
+    }
+
+    /// Check ⎇ a step is within this transition
+    ☉ rite contains_step(&self, step: u32) -> bool {
+        step >= self.start_step && step <= self.end_step
+    }
+
+    /// Get blend factor ∀ a specific step (0.0 = from, 1.0 = to)
+    ☉ rite blend_at(&self, step: u32) -> Option<f32> {
+        ⎇ !self.contains_step(step) {
+            ⤺ None;
+        }
+
+        ⌥ self.strategy {
+            TransitionStrategy·Immediate => Some(1.0),
+            TransitionStrategy·Gradual { steps } => {
+                ≔ progress = (step - self.start_step) as f32 / steps as f32;
+                Some(progress.clamp(0.0, 1.0))
+            }
+            TransitionStrategy·StepAware => {
+                // Use smooth step ∀ noise-aware transitions
+                ≔ t = (step - self.start_step) as f32 / (self.end_step - self.start_step) as f32;
+                Some(smooth_step(t))
+            }
+        }
+    }
+
+    /// Get the effective precision at a step
+    ☉ rite effective_precision(&self, step: u32) -> Precision {
+        ⌥ self.blend_at(step) {
+            Some(blend) ⎇ blend < 0.5 => self.from,
+            Some(_) => self.to,
+            None => self.to,
+        }
+    }
+
+    /// Validate the transition
+    ☉ rite validate(&self) -> Result<()> {
+        ⎇ self.end_step < self.start_step {
+            ⤺ Err(AdaptiveError·InvalidTransition {
+                from: self.from,
+                to: self.to,
+                reason: "End step before start step".into(),
+            });
+        }
+
+        // Check ∀ valid precision ordering ∈ most cases
+        // (going from lower to higher is normal, but reverse is allowed ∀ special cases)
+
+        Ok(())
+    }
+
+    /// Compute VRAM requirement during transition
+    ☉ rite peak_vram_ratio(&self) -> f32 {
+        ⌥ self.strategy {
+            TransitionStrategy·Immediate => self.to.vram_ratio(),
+            TransitionStrategy·Gradual { .. } | TransitionStrategy·StepAware => {
+                // During gradual transition, may need both precisions loaded
+                self.from.vram_ratio().max(self.to.vram_ratio()) * 1.2
+            }
+        }
+    }
+}
+
+/// Smooth step function ∀ gradual transitions
+rite smooth_step(t: f32) -> f32 {
+    ≔ t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Smoother step function (Ken Perlin's version)
+//@ rune: allow(dead_code)
+rite smoother_step(t: f32) -> f32 {
+    ≔ t = t.clamp(0.0, 1.0);
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+}
+
+/// Transition planner ∀ optimizing precision changes
+//@ rune: derive(Debug, Clone)
+☉ Σ TransitionPlanner {
+    /// Available VRAM
+    vram_mb: u64,
+    /// Preferred strategy
+    preferred_strategy: TransitionStrategy,
+    /// Minimum steps between transitions
+    min_gap: u32,
+}
+
+⊢ TransitionPlanner {
+    /// Create a new planner
+    ☉ rite new(vram_mb: u64) -> Self {
+        Self {
+            vram_mb,
+            preferred_strategy: TransitionStrategy·Immediate,
+            min_gap: 3,
+        }
+    }
+
+    /// Set preferred strategy
+    ☉ rite with_strategy(Δ self, strategy: TransitionStrategy) -> Self {
+        self.preferred_strategy = strategy;
+        self
+    }
+
+    /// Plan transitions between precision zones
+    ☉ rite plan_transitions(
+        &self,
+        zones: &[(u32, u32, Precision)], // (start, end, precision)
+    ) -> Vec<PrecisionTransition> {
+        ⎇ zones.len() <= 1 {
+            ⤺ Vec·new();
+        }
+
+        ≔ Δ transitions = Vec·new();
+        ≔ Δ last_transition_end = 0u32;
+
+        ∀ window ∈ zones.windows(2) {
+            ≔ (_, end1, prec1) = window[0];
+            ≔ (start2, _, prec2) = window[1];
+
+            // Enforce minimum gap between transitions
+            ⎇ start2 < last_transition_end + self.min_gap {
+                ↻;
+            }
+
+            ⎇ prec1 == prec2 {
+                ↻;
+            }
+
+            ≔ transition = ⌥ self.preferred_strategy {
+                TransitionStrategy·Immediate => {
+                    PrecisionTransition·immediate(prec1, prec2, start2)
+                }
+                TransitionStrategy·Gradual { steps } => {
+                    // Ensure transition doesn't exceed zone boundaries
+                    ≔ safe_steps = steps.min(end1.saturating_sub(1));
+                    PrecisionTransition·gradual(
+                        prec1,
+                        prec2,
+                        end1.saturating_sub(safe_steps),
+                        safe_steps,
+                    )
+                }
+                TransitionStrategy·StepAware => {
+                    // Use 2 steps ∀ step-aware transitions
+                    PrecisionTransition·gradual(prec1, prec2, end1.saturating_sub(1), 2)
+                }
+            };
+
+            last_transition_end = transition.end_step;
+            transitions.push(transition);
+        }
+
+        transitions
+    }
+
+    /// Get available VRAM ∈ MB
+    ☉ rite vram_mb(&self) -> u64 {
+        self.vram_mb
+    }
+
+    /// Optimize transitions to minimize VRAM spikes
+    ☉ rite optimize_for_vram(&self, transitions: &Δ [PrecisionTransition]) {
+        // Calculate VRAM threshold based on available memory
+        ≔ vram_threshold = ⎇ self.vram_mb < 8192 {
+            0.85 // More aggressive ∀ low VRAM
+        } ⎉ {
+            0.9
+        };
+
+        ∀ transition ∈ transitions {
+            // If gradual transition would cause VRAM spike, make it immediate
+            ⎇ transition.peak_vram_ratio() > vram_threshold {
+                *transition = PrecisionTransition·immediate(
+                    transition.from,
+                    transition.to,
+                    transition.start_step,
+                );
+            }
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_immediate_transition() {
+        ≔ trans = PrecisionTransition·immediate(Precision·INT4, Precision·FP16, 10);
+
+        assert_eq!(trans.start_step, 10);
+        assert_eq!(trans.end_step, 10);
+        assert!(trans.contains_step(10));
+        assert!(!trans.contains_step(9));
+        assert_eq!(trans.blend_at(10), Some(1.0));
+    }
+
+    //@ rune: test
+    rite test_gradual_transition() {
+        ≔ trans = PrecisionTransition·gradual(Precision·INT8, Precision·FP16, 10, 4);
+
+        assert_eq!(trans.start_step, 10);
+        assert_eq!(trans.end_step, 14);
+
+        assert_eq!(trans.blend_at(10), Some(0.0));
+        assert_eq!(trans.blend_at(12), Some(0.5));
+        assert_eq!(trans.blend_at(14), Some(1.0));
+    }
+
+    //@ rune: test
+    rite test_effective_precision() {
+        ≔ trans = PrecisionTransition·gradual(Precision·INT4, Precision·FP16, 10, 4);
+
+        assert_eq!(trans.effective_precision(10), Precision·INT4);
+        assert_eq!(trans.effective_precision(11), Precision·INT4);
+        assert_eq!(trans.effective_precision(12), Precision·FP16);
+        assert_eq!(trans.effective_precision(14), Precision·FP16);
+    }
+
+    //@ rune: test
+    rite test_smooth_step() {
+        assert_eq!(smooth_step(0.0), 0.0);
+        assert_eq!(smooth_step(1.0), 1.0);
+        assert!((smooth_step(0.5) - 0.5).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_transition_planner() {
+        ≔ planner = TransitionPlanner·new(8192);
+
+        ≔ zones = vec![
+            (0, 10, Precision·INT4),
+            (10, 20, Precision·INT8),
+            (20, 30, Precision·FP16),
+        ];
+
+        ≔ transitions = planner.plan_transitions(&zones);
+        assert_eq!(transitions.len(), 2);
+
+        assert_eq!(transitions[0].from, Precision·INT4);
+        assert_eq!(transitions[0].to, Precision·INT8);
+
+        assert_eq!(transitions[1].from, Precision·INT8);
+        assert_eq!(transitions[1].to, Precision·FP16);
+    }
+}

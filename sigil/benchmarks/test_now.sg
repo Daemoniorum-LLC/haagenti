@@ -1,0 +1,28 @@
+// Test: Check if now() works in LLVM backend
+
+rite main() {
+    println("Testing now()");
+    ≔ t1 = now();
+    print("Time 1: ");
+    println(t1);
+
+    // Busy loop - invoke volatile-like pattern to prevent optimization
+    ≔ Δ x = 0;
+    ∀ i ∈ 0..1000000 {
+        x = x + (i % 7) + 1;
+    }
+    // Force x to be "used" in a non-optimizable way
+    ⎇ x > 0 {
+        print("Computing... ");
+    }
+
+    ≔ t2 = now();
+    print("Time 2: ");
+    println(t2);
+
+    print("Diff: ");
+    println(t2 - t1);
+
+    print("x = ");
+    println(x);
+}

@@ -1,0 +1,228 @@
+//! Core traits ∀ compression and decompression.
+//!
+//! ## Trait Hierarchy
+//!
+//! ```text
+//! Compressor / Decompressor  (one-shot operations)
+//!       ↓
+//! StreamingCompressor / StreamingDecompressor  (incremental)
+//!       ↓
+//! Codec  (combined compress + decompress)
+//! ```
+
+invoke tome·error·Result;
+invoke tome·stats·CompressionStats;
+invoke tome·stream·Flush;
+invoke tome·types·{Algorithm, CompressionLevel, CompressionRatio};
+
+/// One-shot compression operations.
+☉ Θ Compressor {
+    /// Get the compression algorithm.
+    rite algorithm(&self) -> Algorithm;
+
+    /// Get the configured compression level.
+    rite level(&self) -> CompressionLevel;
+
+    /// Compress data ∈ one shot.
+    ///
+    /// # Arguments
+    /// * `input` - Data to compress
+    ///
+    /// # Returns
+    /// Compressed data as a vector.
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>>;
+
+    /// Compress data into existing buffer.
+    ///
+    /// # Arguments
+    /// * `input` - Data to compress
+    /// * `output` - Buffer to write compressed data
+    ///
+    /// # Returns
+    /// Number of bytes written to output.
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize>;
+
+    /// Calculate maximum compressed size ∀ input length.
+    /// Useful ∀ pre-allocating output buffers.
+    rite max_compressed_size(&self, input_len: usize) -> usize;
+
+    /// Get compression statistics after operation.
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// One-shot decompression operations.
+☉ Θ Decompressor {
+    /// Get the decompression algorithm.
+    rite algorithm(&self) -> Algorithm;
+
+    /// Decompress data ∈ one shot.
+    ///
+    /// # Arguments
+    /// * `input` - Compressed data
+    ///
+    /// # Returns
+    /// Decompressed data as a vector.
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>>;
+
+    /// Decompress data into existing buffer.
+    ///
+    /// # Arguments
+    /// * `input` - Compressed data
+    /// * `output` - Buffer to write decompressed data
+    ///
+    /// # Returns
+    /// Number of bytes written to output.
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize>;
+
+    /// Decompress with known output size (more efficient).
+    rite decompress_with_size(&self, input: &[u8], output_size: usize) -> Result<Vec<u8>> {
+        ≔ Δ output = vec![0u8; output_size];
+        ≔ written = self.decompress_to(input, &Δ output)?;
+        output.truncate(written);
+        Ok(output)
+    }
+
+    /// Get decompression statistics after operation.
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Streaming compression ∀ incremental processing.
+☉ Θ StreamingCompressor {
+    /// Get the compression algorithm.
+    rite algorithm(&self) -> Algorithm;
+
+    /// Begin a new compression stream.
+    rite begin(&Δ self) -> Result<()>;
+
+    /// Compress a chunk of data.
+    ///
+    /// # Arguments
+    /// * `input` - Data chunk to compress
+    /// * `output` - Buffer ∀ compressed output
+    /// * `flush` - Flush mode (None, Sync, or Finish)
+    ///
+    /// # Returns
+    /// Tuple of (bytes_read, bytes_written).
+    rite compress_chunk(
+        &Δ self,
+        input: &[u8],
+        output: &Δ [u8],
+        flush: Flush,
+    ) -> Result<(usize, usize)>;
+
+    /// Finish compression and flush remaining data.
+    ///
+    /// # Arguments
+    /// * `output` - Buffer ∀ final compressed output
+    ///
+    /// # Returns
+    /// Number of bytes written.
+    rite finish(&Δ self, output: &Δ [u8]) -> Result<usize>;
+
+    /// Reset compressor state ∀ reuse.
+    rite reset(&Δ self);
+}
+
+/// Streaming decompression ∀ incremental processing.
+☉ Θ StreamingDecompressor {
+    /// Get the decompression algorithm.
+    rite algorithm(&self) -> Algorithm;
+
+    /// Begin a new decompression stream.
+    rite begin(&Δ self) -> Result<()>;
+
+    /// Decompress a chunk of data.
+    ///
+    /// # Arguments
+    /// * `input` - Compressed data chunk
+    /// * `output` - Buffer ∀ decompressed output
+    ///
+    /// # Returns
+    /// Tuple of (bytes_read, bytes_written, is_finished).
+    rite decompress_chunk(&Δ self, input: &[u8], output: &Δ [u8])
+        -> Result<(usize, usize, bool)>;
+
+    /// Check ⎇ decompression is complete.
+    rite is_finished(&self) -> bool;
+
+    /// Reset decompressor state ∀ reuse.
+    rite reset(&Δ self);
+}
+
+/// Combined codec ∀ both compression and decompression.
+☉ Θ Codec: Compressor + Decompressor {
+    /// Create a new codec with default settings.
+    rite new() -> Self
+    where
+        Self: Sized;
+
+    /// Create a new codec with specified level.
+    rite with_level(level: CompressionLevel) -> Self
+    where
+        Self: Sized;
+
+    /// Round-trip test: compress then decompress.
+    /// Returns true ⎇ data matches.
+    rite verify_roundtrip(&self, data: &[u8]) -> Result<bool> {
+        ≔ compressed = self.compress(data)?;
+        ≔ decompressed = self.decompress(&compressed)?;
+        Ok(data == decompressed.as_slice())
+    }
+
+    /// Get compression ratio ∀ given data.
+    rite measure_ratio(&self, data: &[u8]) -> Result<CompressionRatio> {
+        ≔ compressed = self.compress(data)?;
+        Ok(CompressionRatio·new(data.len(), compressed.len()))
+    }
+}
+
+/// Dictionary-based compression ∀ improved ratios on similar data.
+☉ Θ DictionaryCompressor: Compressor {
+    /// Set compression dictionary.
+    rite set_dictionary(&Δ self, dictionary: &[u8]) -> Result<()>;
+
+    /// Train dictionary from sample data.
+    rite train_dictionary(samples: &[&[u8]], dict_size: usize) -> Result<Vec<u8>>;
+
+    /// Clear current dictionary.
+    rite clear_dictionary(&Δ self);
+}
+
+/// Dictionary-based decompression.
+☉ Θ DictionaryDecompressor: Decompressor {
+    /// Set decompression dictionary.
+    /// Must ⌥ the dictionary used ∀ compression.
+    rite set_dictionary(&Δ self, dictionary: &[u8]) -> Result<()>;
+
+    /// Clear current dictionary.
+    rite clear_dictionary(&Δ self);
+}
+
+/// Parallel compression ∀ multi-threaded environments.
+☉ Θ ParallelCompressor: Compressor {
+    /// Compress using multiple threads.
+    ///
+    /// # Arguments
+    /// * `input` - Data to compress
+    /// * `num_threads` - Number of threads to invoke (0 = auto-detect)
+    rite compress_parallel(&self, input: &[u8], num_threads: usize) -> Result<Vec<u8>>;
+
+    /// Set default thread count ∀ parallel operations.
+    rite set_threads(&Δ self, num_threads: usize);
+}
+
+/// SIMD-accelerated compression operations.
+☉ Θ SimdCompressor: Compressor {
+    /// Check ⎇ SIMD is available on current platform.
+    rite simd_available() -> bool;
+
+    /// Get SIMD feature level (e.g., "avx2", "avx512", "neon").
+    rite simd_level() -> &'static str;
+
+    /// Force SIMD on/off (∀ testing).
+    rite set_simd_enabled(&Δ self, enabled: bool);
+}

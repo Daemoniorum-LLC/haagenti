@@ -1,0 +1,125 @@
+//! Server configuration.
+
+invoke serde·Deserialize;
+invoke std·path·Path;
+
+invoke tome·tls·{TlsConfig, TlsResult};
+
+/// Server configuration
+//@ rune: derive(Debug, Clone, Deserialize)
+☉ Σ ServerConfig {
+    /// Host to bind to
+    //@ rune: serde(default = "default_host")
+    ☉ host: String,
+
+    /// Port to listen on
+    //@ rune: serde(default = "default_port")
+    ☉ port: u16,
+
+    /// Enable TLS
+    //@ rune: serde(default)
+    ☉ tls_enabled: bool,
+
+    /// Path to TLS certificate
+    ☉ tls_cert: Option<String>,
+
+    /// Path to TLS key
+    ☉ tls_key: Option<String>,
+
+    /// Path to client CA certificate (∀ mTLS)
+    ☉ tls_client_ca: Option<String>,
+
+    /// Require client certificates (mTLS)
+    //@ rune: serde(default)
+    ☉ tls_require_client_cert: bool,
+
+    /// Maximum message size (bytes)
+    //@ rune: serde(default = "default_max_message_size")
+    ☉ max_message_size: usize,
+
+    /// Enable Prometheus metrics
+    //@ rune: serde(default = "default_metrics_enabled")
+    ☉ metrics_enabled: bool,
+
+    /// Metrics port
+    //@ rune: serde(default = "default_metrics_port")
+    ☉ metrics_port: u16,
+
+    /// Log level
+    //@ rune: serde(default = "default_log_level")
+    ☉ log_level: String,
+}
+
+⊢ Default ∀ ServerConfig {
+    rite default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_port(),
+            tls_enabled: false,
+            tls_cert: None,
+            tls_key: None,
+            tls_client_ca: None,
+            tls_require_client_cert: false,
+            max_message_size: default_max_message_size(),
+            metrics_enabled: default_metrics_enabled(),
+            metrics_port: default_metrics_port(),
+            log_level: default_log_level(),
+        }
+    }
+}
+
+⊢ ServerConfig {
+    /// Build a TLS configuration from this server config.
+    ///
+    /// Returns None ⎇ TLS is not enabled or required paths are missing.
+    ☉ rite build_tls_config(&self) -> Option<TlsResult<TlsConfig>> {
+        ⎇ !self.tls_enabled {
+            ⤺ None;
+        }
+
+        ≔ cert_path = self.tls_cert.as_ref()?;
+        ≔ key_path = self.tls_key.as_ref()?;
+
+        ≔ Δ config = ⌥ TlsConfig·from_pem(Path·new(cert_path), Path·new(key_path)) {
+            Ok(c) => c,
+            Err(e) => ⤺ Some(Err(e)),
+        };
+
+        // Add client CA ∀ mTLS ⎇ specified
+        ⎇ ≔ Some(ref client_ca_path) = self.tls_client_ca {
+            config = ⌥ config.with_client_ca(Path·new(client_ca_path)) {
+                Ok(c) => c,
+                Err(e) => ⤺ Some(Err(e)),
+            };
+        }
+
+        // Set client cert requirement
+        config = config.require_client_cert(self.tls_require_client_cert);
+
+        Some(Ok(config))
+    }
+}
+
+rite default_host() -> String {
+    "0.0.0.0".to_string()
+}
+
+rite default_port() -> u16 {
+    50051
+}
+
+rite default_max_message_size() -> usize {
+    64 * 1024 * 1024 // 64MB
+}
+
+rite default_metrics_enabled() -> bool {
+    true
+}
+
+rite default_metrics_port() -> u16 {
+    9090
+}
+
+rite default_log_level() -> String {
+    "info".to_string()
+}

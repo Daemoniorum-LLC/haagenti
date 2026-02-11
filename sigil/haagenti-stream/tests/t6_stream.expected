@@ -1,0 +1,21 @@
+╔════════════════════════════════════════════════╗
+║     haagenti-stream Tests                      ║
+╚════════════════════════════════════════════════╝
+
+buffer_with_capacity: PASS
+buffer_empty_initially: PASS
+buffer_write_read: PASS
+buffer_clear: PASS
+buffer_compact: PASS
+buffer_is_full: PASS
+buffer_partial_write: PASS
+clamp_buffer_size_min: PASS
+clamp_buffer_size_max: PASS
+clamp_buffer_size_valid: PASS
+constants: PASS
+write_adapter_pattern: PASS
+read_adapter_pattern: PASS
+compress_writer_flow: PASS
+decompress_reader_flow: PASS
+
+All tests passed!

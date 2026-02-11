@@ -1,0 +1,150 @@
+// Benchmark: DCT Performance Comparison
+// Compares Sigil interpreter, JIT, and LLVM backends
+//
+// Run with:
+//   Interpreter: sigil run benchmarks/bench_dct.sg
+//   JIT:         sigil jit benchmarks/bench_dct.sg
+//   LLVM:        sigil compile benchmarks/bench_dct.sg -o bench_dct && ./bench_dct
+
+// ════════════════════════════════════════════════════════════════════════════
+// DCT Implementation (naive O(n²) - same algorithm as tests)
+// ════════════════════════════════════════════════════════════════════════════
+
+rite dct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = PI();
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        output.push(0.0);
+    }
+
+    ∀ k ∈ 0..n {
+        ≔ Δ sum = 0.0_f64;
+        ∀ i ∈ 0..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+        }
+        output[k] = sum * scale;
+    }
+
+    output[0] = output[0] / sqrt2;
+    output
+}
+
+rite idct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = PI();
+    ≔ scale_dc = (1.0 / n as f64).sqrt();
+    ≔ scale_ac = (2.0 / n as f64).sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n {
+        output.push(0.0);
+    }
+
+    ∀ i ∈ 0..n {
+        ≔ Δ sum = input[0] * scale_dc;
+
+        ∀ k ∈ 1..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[k] * scale_ac * cos(angle);
+        }
+
+        output[i] = sum;
+    }
+
+    output
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Benchmark Harness
+// ════════════════════════════════════════════════════════════════════════════
+
+rite generate_test_data(n: usize) → Vec<f64> {
+    ≔ Δ data = Vec·with_capacity(n);
+    ∀ i ∈ 0..n {
+        ≔ v = sin(i as f64 * 0.1) + cos(i as f64 * 0.03) * 0.5;
+        data.push(v);
+    }
+    data
+}
+
+rite benchmark_dct(data: &[f64], iterations: usize) → f64 {
+    ≔ start = now_micros();
+    ∀ _ ∈ 0..iterations {
+        ≔ _ = dct_1d(data);
+    }
+    ≔ end = now_micros();
+    (end - start) as f64 / iterations as f64
+}
+
+rite benchmark_idct(data: &[f64], iterations: usize) → f64 {
+    ≔ start = now_micros();
+    ∀ _ ∈ 0..iterations {
+        ≔ _ = idct_1d(data);
+    }
+    ≔ end = now_micros();
+    (end - start) as f64 / iterations as f64
+}
+
+rite benchmark_roundtrip(data: &[f64], iterations: usize) → f64 {
+    ≔ start = now_micros();
+    ∀ _ ∈ 0..iterations {
+        ≔ coeffs = dct_1d(data);
+        ≔ _ = idct_1d(&coeffs);
+    }
+    ≔ end = now_micros();
+    (end - start) as f64 / iterations as f64
+}
+
+rite main() {
+    println("════════════════════════════════════════════════════════════════════════════");
+    println("DCT/IDCT Benchmark - Sigil");
+    println("════════════════════════════════════════════════════════════════════════════");
+    println("");
+
+    // Test sizes
+    ≔ sizes = vec![64, 128, 256, 512, 1024];
+
+    println("{:>10} {:>15} {:>15} {:>15} {:>12}", "Size", "DCT (μs)", "IDCT (μs)", "Roundtrip (μs)", "Ops/sec");
+    println("────────────────────────────────────────────────────────────────────────────");
+
+    ∀ i ∈ 0..sizes.len() {
+        ≔ n = sizes[i];
+
+        // Adjust iterations based on size (larger = fewer iterations)
+        ≔ iterations = ⎇ n <= 64 { 1000 }
+                       ⎉ ⎇ n <= 128 { 500 }
+                       ⎉ ⎇ n <= 256 { 200 }
+                       ⎉ ⎇ n <= 512 { 50 }
+                       ⎉ { 20 };
+
+        ≔ data = generate_test_data(n);
+
+        // Warmup
+        ≔ _ = dct_1d(&data);
+        ≔ _ = idct_1d(&data);
+
+        // Benchmark
+        ≔ dct_time = benchmark_dct(&data, iterations);
+        ≔ idct_time = benchmark_idct(&data, iterations);
+        ≔ roundtrip_time = benchmark_roundtrip(&data, iterations);
+
+        // Ops per second (roundtrip)
+        ≔ ops_per_sec = 1000000.0 / roundtrip_time;
+
+        println("{:>10} {:>15.2} {:>15.2} {:>15.2} {:>12.1}",
+                n, dct_time, idct_time, roundtrip_time, ops_per_sec);
+    }
+
+    println("");
+    println("════════════════════════════════════════════════════════════════════════════");
+    println("Notes:");
+    println("- Algorithm: Naive O(n²) DCT-II / DCT-III");
+    println("- Times are average per operation in microseconds");
+    println("- Run with: sigil run (interpreter), sigil jit, or compile with LLVM");
+    println("════════════════════════════════════════════════════════════════════════════");
+}

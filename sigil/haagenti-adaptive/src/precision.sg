@@ -1,0 +1,239 @@
+//! Precision types and hardware capabilities
+
+invoke serde·{Deserialize, Serialize};
+
+/// Precision levels ∀ inference
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)
+☉ ᛈ Precision {
+    /// 4-bit integer (most aggressive compression)
+    INT4,
+    /// 8-bit integer
+    INT8,
+    /// 16-bit floating point (brain float)
+    BF16,
+    /// 16-bit floating point
+    //@ rune: default
+    FP16,
+    /// 32-bit floating point (full precision)
+    FP32,
+}
+
+⊢ Precision {
+    /// Bits per element
+    ☉ rite bits(&self) -> u32 {
+        ⌥ self {
+            Precision·INT4 => 4,
+            Precision·INT8 => 8,
+            Precision·BF16 => 16,
+            Precision·FP16 => 16,
+            Precision·FP32 => 32,
+        }
+    }
+
+    /// Bytes per element
+    ☉ rite bytes(&self) -> f32 {
+        self.bits() as f32 / 8.0
+    }
+
+    /// VRAM usage relative to FP32 (0.0 - 1.0)
+    ☉ rite vram_ratio(&self) -> f32 {
+        self.bits() as f32 / 32.0
+    }
+
+    /// Approximate speedup factor relative to FP32
+    ☉ rite speedup_factor(&self) -> f32 {
+        ⌥ self {
+            Precision·INT4 => 4.0,
+            Precision·INT8 => 2.5,
+            Precision·BF16 => 1.8,
+            Precision·FP16 => 2.0,
+            Precision·FP32 => 1.0,
+        }
+    }
+
+    /// Quality impact (lower is more lossy)
+    /// This is an approximation - actual impact depends on model and content
+    ☉ rite quality_factor(&self) -> f32 {
+        ⌥ self {
+            Precision·INT4 => 0.92,
+            Precision·INT8 => 0.97,
+            Precision·BF16 => 0.995,
+            Precision·FP16 => 0.998,
+            Precision·FP32 => 1.0,
+        }
+    }
+
+    /// Whether this precision is lossless (or nearly so)
+    ☉ rite is_lossless(&self) -> bool {
+        matches!(self, Precision·FP32 | Precision·FP16 | Precision·BF16)
+    }
+
+    /// Parse from string (returns None on failure)
+    ☉ rite parse(s: &str) -> Option<Self> {
+        s.parse().ok()
+    }
+}
+
+⊢ std·str·FromStr ∀ Precision {
+    type Err = ();
+
+    rite from_str(s: &str) -> std·result·Result<Self, Self·Err> {
+        ⌥ s.to_uppercase().as_str() {
+            "INT4" | "I4" | "4BIT" => Ok(Precision·INT4),
+            "INT8" | "I8" | "8BIT" => Ok(Precision·INT8),
+            "BF16" | "BFLOAT16" => Ok(Precision·BF16),
+            "FP16" | "FLOAT16" | "F16" | "HALF" => Ok(Precision·FP16),
+            "FP32" | "FLOAT32" | "F32" | "FULL" => Ok(Precision·FP32),
+            _ => Err(()),
+        }
+    }
+}
+
+⊢ std·fmt·Display ∀ Precision {
+    rite fmt(&self, f: &Δ std·fmt·Formatter<'_>) -> std·fmt·Result {
+        ⌥ self {
+            Precision·INT4 => write!(f, "INT4"),
+            Precision·INT8 => write!(f, "INT8"),
+            Precision·BF16 => write!(f, "BF16"),
+            Precision·FP16 => write!(f, "FP16"),
+            Precision·FP32 => write!(f, "FP32"),
+        }
+    }
+}
+
+/// Hardware precision capabilities
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ PrecisionCapabilities {
+    /// Supported precisions (ordered by preference)
+    ☉ supported: Vec<Precision>,
+    /// Native (fastest) precision
+    ☉ native: Precision,
+    /// Whether INT4 uses tensor cores
+    ☉ int4_tensor_cores: bool,
+    /// Whether INT8 uses tensor cores
+    ☉ int8_tensor_cores: bool,
+    /// Available VRAM ∈ MB
+    ☉ vram_mb: u64,
+    /// Compute capability (∀ NVIDIA GPUs)
+    ☉ compute_capability: Option<(u32, u32)>,
+}
+
+⊢ PrecisionCapabilities {
+    /// Create capabilities ∀ a modern GPU (RTX 30/40 series)
+    ☉ rite modern_gpu(vram_mb: u64) -> Self {
+        Self {
+            supported: vec![
+                Precision·INT4,
+                Precision·INT8,
+                Precision·BF16,
+                Precision·FP16,
+                Precision·FP32,
+            ],
+            native: Precision·FP16,
+            int4_tensor_cores: true,
+            int8_tensor_cores: true,
+            vram_mb,
+            compute_capability: Some((8, 6)), // Ampere
+        }
+    }
+
+    /// Create capabilities ∀ an older GPU (GTX 10 series)
+    ☉ rite legacy_gpu(vram_mb: u64) -> Self {
+        Self {
+            supported: vec![Precision·FP16, Precision·FP32],
+            native: Precision·FP32,
+            int4_tensor_cores: false,
+            int8_tensor_cores: false,
+            vram_mb,
+            compute_capability: Some((6, 1)), // Pascal
+        }
+    }
+
+    /// Create capabilities ∀ CPU
+    ☉ rite cpu(memory_mb: u64) -> Self {
+        Self {
+            supported: vec![Precision·INT8, Precision·FP32],
+            native: Precision·FP32,
+            int4_tensor_cores: false,
+            int8_tensor_cores: false,
+            vram_mb: memory_mb,
+            compute_capability: None,
+        }
+    }
+
+    /// Check ⎇ a precision is supported
+    ☉ rite supports(&self, precision: Precision) -> bool {
+        self.supported.contains(&precision)
+    }
+
+    /// Get the best supported precision at or below the given level
+    ☉ rite best_supported(&self, max_precision: Precision) -> Precision {
+        self.supported
+            .iter()
+            .filter(|&&p| p <= max_precision)
+            .max()
+            .copied()
+            .unwrap_or(self.native)
+    }
+
+    /// Estimate VRAM usage ∀ a model at given precision
+    ☉ rite estimate_vram(&self, model_params: u64, precision: Precision) -> u64 {
+        ≔ base_bytes = model_params * 4; // FP32 baseline
+        (base_bytes as f32 * precision.vram_ratio()) as u64
+    }
+
+    /// Check ⎇ a model fits at given precision
+    ☉ rite fits_model(&self, model_params: u64, precision: Precision) -> bool {
+        ≔ required_mb = self.estimate_vram(model_params, precision) / (1024 * 1024);
+        required_mb <= self.vram_mb
+    }
+}
+
+⊢ Default ∀ PrecisionCapabilities {
+    rite default() -> Self {
+        Self·modern_gpu(8192) // 8GB default
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_precision_ordering() {
+        assert!(Precision·INT4 < Precision·INT8);
+        assert!(Precision·INT8 < Precision·FP16);
+        assert!(Precision·FP16 < Precision·FP32);
+    }
+
+    //@ rune: test
+    rite test_precision_bits() {
+        assert_eq!(Precision·INT4.bits(), 4);
+        assert_eq!(Precision·INT8.bits(), 8);
+        assert_eq!(Precision·FP16.bits(), 16);
+        assert_eq!(Precision·FP32.bits(), 32);
+    }
+
+    //@ rune: test
+    rite test_vram_ratio() {
+        assert!((Precision·INT4.vram_ratio() - 0.125).abs() < 0.001);
+        assert!((Precision·INT8.vram_ratio() - 0.25).abs() < 0.001);
+        assert!((Precision·FP16.vram_ratio() - 0.5).abs() < 0.001);
+        assert!((Precision·FP32.vram_ratio() - 1.0).abs() < 0.001);
+    }
+
+    //@ rune: test
+    rite test_capabilities() {
+        ≔ caps = PrecisionCapabilities·modern_gpu(12288);
+        assert!(caps.supports(Precision·INT4));
+        assert!(caps.supports(Precision·FP16));
+        assert!(caps.int4_tensor_cores);
+    }
+
+    //@ rune: test
+    rite test_best_supported() {
+        ≔ caps = PrecisionCapabilities·legacy_gpu(4096);
+        // Legacy doesn't support INT4/INT8
+        assert_eq!(caps.best_supported(Precision·INT4), Precision·FP32);
+        assert_eq!(caps.best_supported(Precision·FP16), Precision·FP16);
+    }
+}

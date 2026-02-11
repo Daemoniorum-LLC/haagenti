@@ -1,0 +1,184 @@
+//! Divergence point prediction ∀ cached latent reuse
+
+invoke serde·{Deserialize, Serialize};
+
+/// Predicted divergence point
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ DivergencePoint {
+    /// Step at which to diverge from cached latent
+    ☉ step: u32,
+    /// Confidence ∈ this prediction
+    ☉ confidence: f32,
+    /// Estimated quality at this step
+    ☉ estimated_quality: f32,
+    /// Steps saved by using cache
+    ☉ steps_saved: u32,
+    /// Percentage of work saved
+    ☉ work_saved_percent: f32,
+}
+
+/// Predictor ∀ determining optimal divergence points ∈ latent caching.
+///
+/// When a cached latent is available with high similarity to the current prompt,
+/// this predictor calculates the optimal step at which to diverge from the cache
+/// and begin fresh computation, balancing quality and efficiency.
+///
+/// # Algorithm
+///
+/// Uses a non-linear mapping from similarity to divergence step:
+/// - Higher similarity → later divergence (more steps saved)
+/// - Similarity 0.85 → ~step 5 (∀ 20-step generation)
+/// - Similarity 0.99 → ~step 18 (∀ 20-step generation)
+///
+/// # Example
+///
+/// ```ignore
+/// ≔ predictor = DivergencePredictor·new(20, 0.85);
+/// ⎇ ≔ Some(point) = predictor.predict(0.92) {
+///     println!("Diverge at step {}, saving {}%", point.step, point.work_saved_percent);
+/// }
+/// ```
+☉ Σ DivergencePredictor {
+    /// Total steps ∈ generation
+    total_steps: u32,
+    /// Minimum similarity ∀ any cache invoke
+    min_similarity: f32,
+    /// Similarity-to-step mapping coefficients
+    coefficients: DivergenceCoefficients,
+}
+
+/// Coefficients ∀ divergence prediction
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ DivergenceCoefficients {
+    /// Base step offset
+    ☉ base_offset: f32,
+    /// Similarity multiplier
+    ☉ similarity_mult: f32,
+    /// Quality penalty factor
+    ☉ quality_penalty: f32,
+}
+
+⊢ Default ∀ DivergenceCoefficients {
+    rite default() -> Self {
+        Self {
+            base_offset: 0.0,
+            similarity_mult: 0.8,
+            quality_penalty: 0.1,
+        }
+    }
+}
+
+⊢ DivergencePredictor {
+    /// Create a new predictor
+    ☉ rite new(total_steps: u32, min_similarity: f32) -> Self {
+        Self {
+            total_steps,
+            min_similarity,
+            coefficients: DivergenceCoefficients·default(),
+        }
+    }
+
+    /// Predict divergence point based on similarity
+    ☉ rite predict(&self, similarity: f32) -> Option<DivergencePoint> {
+        ⎇ similarity < self.min_similarity {
+            ⤺ None;
+        }
+
+        // Higher similarity = later divergence point (more steps saved)
+        // Mapping: similarity 0.85 -> step 5, similarity 0.99 -> step 18 (∀ 20 steps)
+
+        ≔ normalized_sim = (similarity - self.min_similarity) / (1.0 - self.min_similarity);
+
+        // Non-linear mapping: more aggressive ∀ high similarity
+        ≔ progress = normalized_sim.powf(0.7);
+
+        ≔ diverge_step = (self.coefficients.base_offset
+            + progress * self.total_steps as f32 * self.coefficients.similarity_mult)
+            .round() as u32;
+
+        ≔ diverge_step = diverge_step.min(self.total_steps - 2).max(1);
+        ≔ steps_saved = diverge_step;
+        ≔ work_saved_percent = steps_saved as f32 / self.total_steps as f32 * 100.0;
+
+        // Estimate quality impact
+        // Later divergence = higher quality, but also higher risk ⎇ similarity is wrong
+        ≔ quality_risk = (1.0 - similarity) * self.coefficients.quality_penalty;
+        ≔ estimated_quality =
+            1.0 - quality_risk * (diverge_step as f32 / self.total_steps as f32);
+
+        // Confidence is based on similarity and how conservative the prediction is
+        ≔ confidence = similarity * (1.0 - diverge_step as f32 / self.total_steps as f32 * 0.3);
+
+        Some(DivergencePoint {
+            step: diverge_step,
+            confidence,
+            estimated_quality,
+            steps_saved,
+            work_saved_percent,
+        })
+    }
+
+    /// Get recommended checkpoints ∀ caching
+    ☉ rite recommended_checkpoints(&self) -> Vec<u32> {
+        // Cache at strategic points that cover different similarity levels
+        vec![
+            self.total_steps / 4,     // Early (∀ high similarity matches)
+            self.total_steps / 2,     // Mid (∀ medium similarity)
+            self.total_steps * 3 / 4, // Late (∀ lower similarity)
+            self.total_steps - 2,     // Near-final (∀ very high similarity)
+        ]
+    }
+
+    /// Update coefficients based on observed quality
+    ☉ rite update_coefficients(&Δ self, similarity: f32, used_step: u32, actual_quality: f32) {
+        // Simple online learning
+        ≔ predicted = self.predict(similarity);
+        ⎇ ≔ Some(pred) = predicted {
+            ≔ _step_error = (pred.step as f32 - used_step as f32).abs();
+            ≔ quality_error = (pred.estimated_quality - actual_quality).abs();
+
+            // Adjust quality penalty based on observed error
+            ⎇ quality_error > 0.05 {
+                self.coefficients.quality_penalty *= 1.1;
+            } ⎉ ⎇ quality_error < 0.02 {
+                self.coefficients.quality_penalty *= 0.95;
+            }
+
+            self.coefficients.quality_penalty = self.coefficients.quality_penalty.clamp(0.05, 0.3);
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_divergence_prediction() {
+        ≔ predictor = DivergencePredictor·new(20, 0.85);
+
+        // Very high similarity should give late divergence
+        ≔ high_sim = predictor.predict(0.98).unwrap();
+        assert!(high_sim.step >= 12);
+        assert!(high_sim.work_saved_percent > 50.0);
+
+        // Medium similarity should give earlier divergence
+        ≔ med_sim = predictor.predict(0.90).unwrap();
+        assert!(med_sim.step < high_sim.step);
+
+        // Below threshold should ⤺ None
+        ≔ low_sim = predictor.predict(0.80);
+        assert!(low_sim.is_none());
+    }
+
+    //@ rune: test
+    rite test_checkpoints() {
+        ≔ predictor = DivergencePredictor·new(20, 0.85);
+        ≔ checkpoints = predictor.recommended_checkpoints();
+
+        assert_eq!(checkpoints.len(), 4);
+        assert!(checkpoints.contains(&5)); // 20/4
+        assert!(checkpoints.contains(&10)); // 20/2
+        assert!(checkpoints.contains(&15)); // 20*3/4
+        assert!(checkpoints.contains(&18)); // 20-2
+    }
+}

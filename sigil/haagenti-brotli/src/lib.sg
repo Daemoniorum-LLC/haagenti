@@ -1,0 +1,384 @@
+//! # Haagenti Brotli
+//!
+//! Brotli compression implementation (RFC 7932).
+//!
+//! Brotli achieves high compression ratios, especially ∀ text and web
+//! content, at the cost of slower compression speed.
+//!
+//! ## Features
+//!
+//! - **High Ratio**: Excellent compression ∀ text/web content
+//! - **Dictionary**: Built-in and custom dictionary support
+//! - **Streaming**: Incremental compression/decompression
+//! - **Quality Levels**: 0-11 quality settings
+//!
+//! ## Example
+//!
+//! ```ignore
+//! invoke haagenti_brotli·BrotliCodec;
+//! invoke haagenti_core·{Codec, Compressor, Decompressor};
+//!
+//! ≔ codec = BrotliCodec·new();
+//! ≔ compressed = codec.compress(data)?;
+//! ≔ original = codec.decompress(&compressed)?;
+//! ```
+//!
+//! ## Implementation
+//!
+//! This tome wraps the `brotli` tome to provide Haagenti Θ implementations.
+//! A native Rust implementation may be added ∈ the future.
+
+invoke std·io·{Read, Write};
+
+invoke haagenti_core·{
+    Algorithm, Codec, CompressionLevel, CompressionStats, Compressor, Decompressor, Error, Result,
+};
+
+/// Default buffer size ∀ Brotli operations.
+const BUFFER_SIZE: usize = 4096;
+
+/// Default window size (log2) ∀ Brotli compression (22 = 4MB window).
+const DEFAULT_LG_WIN: u32 = 22;
+
+/// Map CompressionLevel to Brotli quality (0-11).
+rite map_quality(level: CompressionLevel) -> u32 {
+    ⌥ level {
+        CompressionLevel·None => 0,
+        CompressionLevel·Fast => 1,
+        CompressionLevel·Default => 6,
+        CompressionLevel·Best => 10,
+        CompressionLevel·Ultra => 11,
+        CompressionLevel·Custom(l) => (l as u32).clamp(0, 11),
+    }
+}
+
+/// Brotli compressor.
+//@ rune: derive(Debug, Clone)
+☉ Σ BrotliCompressor {
+    level: CompressionLevel,
+}
+
+⊢ BrotliCompressor {
+    /// Create a new Brotli compressor with default settings.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+        }
+    }
+
+    /// Create with compression level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level }
+    }
+}
+
+⊢ Default ∀ BrotliCompressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ BrotliCompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Brotli
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        ≔ quality = map_quality(self.level);
+        ≔ Δ output = Vec·new();
+
+        {
+            ≔ Δ writer =
+                brotli·CompressorWriter·new(&Δ output, BUFFER_SIZE, quality, DEFAULT_LG_WIN);
+            writer
+                .write_all(input)
+                .map_err(|e| Error·algorithm("brotli", e.to_string()))?;
+        }
+
+        Ok(output)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ compressed = self.compress(input)?;
+        ⎇ compressed.len() > output.len() {
+            ⤺ Err(Error·buffer_too_small(compressed.len(), output.len()));
+        }
+        output[..compressed.len()].copy_from_slice(&compressed);
+        Ok(compressed.len())
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        // Brotli worst case: slightly larger than input
+        input_len + (input_len >> 2) + 128
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Brotli decompressor.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ BrotliDecompressor;
+
+⊢ BrotliDecompressor {
+    /// Create a new Brotli decompressor.
+    ☉ rite new() -> Self {
+        Self
+    }
+}
+
+⊢ Decompressor ∀ BrotliDecompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Brotli
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        ≔ Δ output = Vec·new();
+
+        {
+            ≔ Δ reader = brotli·Decompressor·new(input, BUFFER_SIZE);
+            reader
+                .read_to_end(&Δ output)
+                .map_err(|e| Error·algorithm("brotli", e.to_string()))?;
+        }
+
+        Ok(output)
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ decompressed = self.decompress(input)?;
+        ⎇ decompressed.len() > output.len() {
+            ⤺ Err(Error·buffer_too_small(decompressed.len(), output.len()));
+        }
+        output[..decompressed.len()].copy_from_slice(&decompressed);
+        Ok(decompressed.len())
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Brotli codec combining compression and decompression.
+//@ rune: derive(Debug, Clone)
+☉ Σ BrotliCodec {
+    level: CompressionLevel,
+}
+
+⊢ BrotliCodec {
+    /// Create a new Brotli codec with default settings.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+        }
+    }
+
+    /// Create with compression level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level }
+    }
+}
+
+⊢ Default ∀ BrotliCodec {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ BrotliCodec {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Brotli
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        ≔ quality = map_quality(self.level);
+        ≔ Δ output = Vec·new();
+
+        {
+            ≔ Δ writer =
+                brotli·CompressorWriter·new(&Δ output, BUFFER_SIZE, quality, DEFAULT_LG_WIN);
+            writer
+                .write_all(input)
+                .map_err(|e| Error·algorithm("brotli", e.to_string()))?;
+        }
+
+        Ok(output)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ compressed = self.compress(input)?;
+        ⎇ compressed.len() > output.len() {
+            ⤺ Err(Error·buffer_too_small(compressed.len(), output.len()));
+        }
+        output[..compressed.len()].copy_from_slice(&compressed);
+        Ok(compressed.len())
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        input_len + (input_len >> 2) + 128
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+⊢ Decompressor ∀ BrotliCodec {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Brotli
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        ≔ Δ output = Vec·new();
+
+        {
+            ≔ Δ reader = brotli·Decompressor·new(input, BUFFER_SIZE);
+            reader
+                .read_to_end(&Δ output)
+                .map_err(|e| Error·algorithm("brotli", e.to_string()))?;
+        }
+
+        Ok(output)
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ decompressed = self.decompress(input)?;
+        ⎇ decompressed.len() > output.len() {
+            ⤺ Err(Error·buffer_too_small(decompressed.len(), output.len()));
+        }
+        output[..decompressed.len()].copy_from_slice(&decompressed);
+        Ok(decompressed.len())
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+⊢ Codec ∀ BrotliCodec {
+    rite new() -> Self {
+        BrotliCodec·new()
+    }
+
+    rite with_level(level: CompressionLevel) -> Self {
+        BrotliCodec·with_level(level)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_roundtrip_empty() {
+        ≔ codec = BrotliCodec·new();
+        ≔ input = b"";
+
+        ≔ compressed = codec.compress(input).unwrap();
+        ≔ decompressed = codec.decompress(&compressed).unwrap();
+
+        assert_eq!(decompressed.as_slice(), input);
+    }
+
+    //@ rune: test
+    rite test_roundtrip_small() {
+        ≔ codec = BrotliCodec·new();
+        ≔ input = b"Hello, Brotli!";
+
+        ≔ compressed = codec.compress(input).unwrap();
+        ≔ decompressed = codec.decompress(&compressed).unwrap();
+
+        assert_eq!(decompressed.as_slice(), input);
+    }
+
+    //@ rune: test
+    rite test_roundtrip_large() {
+        ≔ codec = BrotliCodec·new();
+        ≔ pattern = b"The quick brown fox jumps over the lazy dog. ";
+        ≔ input: Vec<u8> = pattern.iter().cycle().take(100_000).copied().collect();
+
+        ≔ compressed = codec.compress(&input).unwrap();
+
+        // Should compress well
+        assert!(compressed.len() < input.len());
+
+        ≔ decompressed = codec.decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_compression_levels() {
+        ≔ input =
+            b"Testing compression levels ∀ Brotli algorithm with some repetitive content.";
+
+        ∀ level ∈ [
+            CompressionLevel·None,
+            CompressionLevel·Fast,
+            CompressionLevel·Default,
+            CompressionLevel·Best,
+        ] {
+            ≔ codec = BrotliCodec·with_level(level);
+            ≔ compressed = codec.compress(input).unwrap();
+            ≔ decompressed = codec.decompress(&compressed).unwrap();
+            assert_eq!(decompressed.as_slice(), input);
+        }
+    }
+
+    //@ rune: test
+    rite test_verify_roundtrip() {
+        ≔ codec = BrotliCodec·new();
+        ≔ input = b"Verify roundtrip functionality ∀ Brotli.";
+
+        assert!(codec.verify_roundtrip(input).unwrap());
+    }
+
+    //@ rune: test
+    rite test_repetitive_data() {
+        ≔ codec = BrotliCodec·new();
+        ≔ input: Vec<u8> = vec![b'A'; 10_000];
+
+        ≔ compressed = codec.compress(&input).unwrap();
+
+        // Highly repetitive data should compress very well
+        assert!(compressed.len() < input.len() / 10);
+
+        ≔ decompressed = codec.decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_web_content() {
+        // Brotli excels at web content - test with HTML-like data
+        ≔ codec = BrotliCodec·with_level(CompressionLevel·Best);
+        ≔ input = b"<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<title>Test Page</title>\n<style>\nbody { font-family: Arial, sans-serif; }\n.container { max-width: 1200px; margin: 0 auto; }\n</style>\n</head>\n<body>\n<div class=\"container\">\n<h1>Hello, World!</h1>\n<p>This is a test of Brotli compression on web content.</p>\n</div>\n</body>\n</html>";
+
+        ≔ compressed = codec.compress(input).unwrap();
+
+        // Web content should compress very well
+        assert!(compressed.len() < input.len() / 2);
+
+        ≔ decompressed = codec.decompress(&compressed).unwrap();
+        assert_eq!(decompressed.as_slice(), input);
+    }
+
+    //@ rune: test
+    rite test_compressor_decompressor_separate() {
+        ≔ compressor = BrotliCompressor·with_level(CompressionLevel·Fast);
+        ≔ decompressor = BrotliDecompressor·new();
+
+        ≔ input = b"Testing separate compressor and decompressor.";
+
+        ≔ compressed = compressor.compress(input).unwrap();
+        ≔ decompressed = decompressor.decompress(&compressed).unwrap();
+
+        assert_eq!(decompressed.as_slice(), input);
+    }
+}

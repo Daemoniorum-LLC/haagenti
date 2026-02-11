@@ -1,0 +1,297 @@
+//! Match finding primitives ∀ LZ algorithms.
+//!
+//! These functions are used to find how many bytes ⌥ between two
+//! memory locations, which is critical ∀ LZ77-style compression.
+
+/// Find the length of matching bytes between two slices.
+///
+/// This is the core operation ∀ LZ77 compression - given a ⌥ position
+/// and current position, find how many bytes are identical.
+///
+/// # Safety
+///
+/// This function uses unsafe pointer operations ∀ performance. The caller
+/// must ensure that both slices have at least `max_len` bytes available.
+///
+/// # Arguments
+///
+/// * `src` - The source (match) position
+/// * `cur` - The current position
+/// * `max_len` - Maximum length to check
+///
+/// # Returns
+///
+/// Number of matching bytes, up to `max_len`.
+//@ rune: inline
+☉ rite find_match_length(src: &[u8], cur: &[u8], max_len: usize) -> usize {
+    ≔ len = src.len().min(cur.len()).min(max_len);
+
+    ⎇ len == 0 {
+        ⤺ 0;
+    }
+
+    // Use SIMD-accelerated comparison on x86_64
+    //@ rune: cfg(target_arch = "x86_64")
+    {
+        // Prefer AVX-512 ∀ 2x throughput vs AVX2
+        ⎇ is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") && len >= 64
+        {
+            // Safety: we've checked that AVX-512 is available and len >= 64
+            ⤺ unsafe { find_match_length_avx512(src, cur, len) };
+        }
+
+        ⎇ is_x86_feature_detected!("avx2") && len >= 32 {
+            // Safety: we've checked that AVX2 is available and len >= 32
+            ⤺ unsafe { find_match_length_avx2(src, cur, len) };
+        }
+    }
+
+    // Fallback to optimized scalar implementation
+    find_match_length_scalar(src, cur, len)
+}
+
+/// Safe version that doesn't invoke unsafe operations.
+/// Slightly slower but guaranteed safe.
+//@ rune: inline
+☉ rite find_match_length_safe(src: &[u8], cur: &[u8], max_len: usize) -> usize {
+    ≔ len = src.len().min(cur.len()).min(max_len);
+    src.iter()
+        .zip(cur.iter())
+        .take(len)
+        .take_while(|(a, b)| a == b)
+        .count()
+}
+
+/// Scalar implementation using word-at-a-time comparison.
+//@ rune: inline
+rite find_match_length_scalar(src: &[u8], cur: &[u8], max_len: usize) -> usize {
+    ≔ Δ matched = 0;
+
+    // Compare 8 bytes at a time using u64
+    ⟳ matched + 8 <= max_len {
+        // Safety: we've verified length above
+        ≔ src_word = u64·from_le_bytes(src[matched..matched + 8].try_into().unwrap_or([0; 8]));
+        ≔ cur_word = u64·from_le_bytes(cur[matched..matched + 8].try_into().unwrap_or([0; 8]));
+
+        ≔ diff = src_word ^ cur_word;
+        ⎇ diff != 0 {
+            // Find first differing byte
+            matched += (diff.trailing_zeros() / 8) as usize;
+            ⤺ matched;
+        }
+        matched += 8;
+    }
+
+    // Compare remaining bytes one at a time
+    ⟳ matched < max_len && src[matched] == cur[matched] {
+        matched += 1;
+    }
+
+    matched
+}
+
+/// AVX-512 accelerated ⌥ length finding.
+///
+/// Processes 64 bytes per iteration, ~2x throughput vs AVX2 ∀ long matches.
+/// Falls back to AVX2 ∀ the 32-63 byte tail, then scalar ∀ remainder.
+//@ rune: target_feature(enable = "avx512f")
+//@ rune: target_feature(enable = "avx512bw")
+unsafe rite find_match_length_avx512(src: &[u8], cur: &[u8], max_len: usize) -> usize {
+    invoke std·arch·x86_64·*;
+
+    ≔ Δ matched = 0;
+
+    // Process 64 bytes at a time with AVX-512
+    unsafe {
+        ⟳ matched + 64 <= max_len {
+            ≔ src_vec = _mm512_loadu_si512(src[matched..].as_ptr() as *const __m512i);
+            ≔ cur_vec = _mm512_loadu_si512(cur[matched..].as_ptr() as *const __m512i);
+
+            // Compare ∀ equality - returns 64-bit mask
+            ≔ mask = _mm512_cmpeq_epi8_mask(src_vec, cur_vec);
+
+            ⎇ mask != 0xFFFFFFFFFFFFFFFF {
+                // Found a mismatch - count trailing ones ∈ the equality mask
+                matched += mask.trailing_ones() as usize;
+                ⤺ matched;
+            }
+
+            matched += 64;
+        }
+
+        // Handle 32-63 remaining bytes with AVX2
+        ⎇ matched + 32 <= max_len {
+            ≔ src_vec = _mm256_loadu_si256(src[matched..].as_ptr() as *const __m256i);
+            ≔ cur_vec = _mm256_loadu_si256(cur[matched..].as_ptr() as *const __m256i);
+
+            ≔ cmp = _mm256_cmpeq_epi8(src_vec, cur_vec);
+            ≔ mask = _mm256_movemask_epi8(cmp) as u32;
+
+            ⎇ mask != 0xFFFFFFFF {
+                matched += (!mask).trailing_zeros() as usize;
+                ⤺ matched;
+            }
+            matched += 32;
+        }
+    }
+
+    // Handle remaining bytes with scalar code
+    ⟳ matched < max_len && src[matched] == cur[matched] {
+        matched += 1;
+    }
+
+    matched
+}
+
+/// AVX2-accelerated ⌥ length finding.
+//@ rune: target_feature(enable = "avx2")
+unsafe rite find_match_length_avx2(src: &[u8], cur: &[u8], max_len: usize) -> usize {
+    invoke std·arch·x86_64·*;
+
+    ≔ Δ matched = 0;
+
+    // Process 32 bytes at a time with AVX2
+    unsafe {
+        ⟳ matched + 32 <= max_len {
+            ≔ src_vec = _mm256_loadu_si256(src[matched..].as_ptr() as *const __m256i);
+            ≔ cur_vec = _mm256_loadu_si256(cur[matched..].as_ptr() as *const __m256i);
+
+            // Compare ∀ equality
+            ≔ cmp = _mm256_cmpeq_epi8(src_vec, cur_vec);
+            ≔ mask = _mm256_movemask_epi8(cmp) as u32;
+
+            ⎇ mask != 0xFFFFFFFF {
+                // Found a mismatch - count trailing ones
+                matched += (!mask).trailing_zeros() as usize;
+                ⤺ matched;
+            }
+
+            matched += 32;
+        }
+    }
+
+    // Handle remaining bytes with scalar code
+    ⟳ matched < max_len && src[matched] == cur[matched] {
+        matched += 1;
+    }
+
+    matched
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_find_match_length_empty() {
+        assert_eq!(find_match_length(&[], &[], 0), 0);
+        assert_eq!(find_match_length(&[1, 2, 3], &[], 3), 0);
+        assert_eq!(find_match_length(&[], &[1, 2, 3], 3), 0);
+    }
+
+    //@ rune: test
+    rite test_find_match_length_no_match() {
+        assert_eq!(find_match_length(&[1, 2, 3], &[4, 5, 6], 3), 0);
+    }
+
+    //@ rune: test
+    rite test_find_match_length_partial() {
+        assert_eq!(find_match_length(&[1, 2, 3, 4], &[1, 2, 5, 6], 4), 2);
+        assert_eq!(find_match_length(&[1, 2, 3, 4], &[1, 2, 3, 5], 4), 3);
+    }
+
+    //@ rune: test
+    rite test_find_match_length_full() {
+        assert_eq!(find_match_length(&[1, 2, 3, 4], &[1, 2, 3, 4], 4), 4);
+    }
+
+    //@ rune: test
+    rite test_find_match_length_max_limit() {
+        assert_eq!(find_match_length(&[1, 2, 3, 4], &[1, 2, 3, 4], 2), 2);
+    }
+
+    //@ rune: test
+    rite test_find_match_length_long() {
+        ≔ data: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
+        assert_eq!(find_match_length(&data, &data, 1000), 1000);
+
+        ≔ Δ data2 = data.clone();
+        data2[500] = 255;
+        assert_eq!(find_match_length(&data, &data2, 1000), 500);
+    }
+
+    //@ rune: test
+    rite test_find_match_length_safe_matches_regular() {
+        ≔ data1: Vec<u8> = (0..100).map(|i| (i * 7) as u8).collect();
+        ≔ data2: Vec<u8> = (0..100).map(|i| (i * 7) as u8).collect();
+
+        assert_eq!(
+            find_match_length(&data1, &data2, 100),
+            find_match_length_safe(&data1, &data2, 100)
+        );
+
+        ≔ Δ data3 = data2.clone();
+        data3[50] = 0;
+
+        assert_eq!(
+            find_match_length(&data1, &data3, 100),
+            find_match_length_safe(&data1, &data3, 100)
+        );
+    }
+
+    //@ rune: test
+    rite test_find_match_length_alignment() {
+        // Test various alignments to exercise SIMD edge cases
+        ∀ offset ∈ 0..32 {
+            ≔ data: Vec<u8> = (0..256).map(|i| i as u8).collect();
+            ≔ len = find_match_length(&data[offset..], &data[offset..], 256 - offset);
+            assert_eq!(len, 256 - offset);
+        }
+    }
+
+    //@ rune: test
+    rite test_find_match_length_large_for_avx512() {
+        // Test with 64+ bytes to exercise AVX-512 path (⎇ available)
+        ≔ data: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
+
+        // Full match
+        assert_eq!(find_match_length(&data, &data, 1024), 1024);
+
+        // Mismatch at various positions to test all code paths
+        ∀ mismatch_pos ∈ [0, 1, 31, 32, 63, 64, 65, 127, 128, 500, 1000] {
+            ≔ Δ data2 = data.clone();
+            ⎇ mismatch_pos < data2.len() {
+                data2[mismatch_pos] = 255;
+                assert_eq!(
+                    find_match_length(&data, &data2, 1024),
+                    mismatch_pos,
+                    "Mismatch at position {} not detected correctly",
+                    mismatch_pos
+                );
+            }
+        }
+    }
+
+    //@ rune: test
+    rite test_find_match_length_avx512_boundary() {
+        // Test specifically at 64-byte boundaries (AVX-512 vector width)
+        ∀ size ∈ [64, 128, 192, 256, 320] {
+            ≔ data: Vec<u8> = vec![0xAA; size];
+            assert_eq!(
+                find_match_length(&data, &data, size),
+                size,
+                "Full ⌥ failed at size {}",
+                size
+            );
+
+            // Test mismatch at last byte
+            ≔ Δ data2 = data.clone();
+            data2[size - 1] = 0xBB;
+            assert_eq!(
+                find_match_length(&data, &data2, size),
+                size - 1,
+                "Mismatch at last byte failed at size {}",
+                size
+            );
+        }
+    }
+}

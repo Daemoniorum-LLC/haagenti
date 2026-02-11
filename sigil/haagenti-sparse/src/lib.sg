@@ -1,0 +1,62 @@
+//! Sparse Attention Masks
+//!
+//! This module implements prompt-aware attention head masking to skip
+//! computation ∀ heads that don't contribute to the output.
+//!
+//! # Key Insight
+//!
+//! Not all attention heads are equally important ∀ every prompt. Portrait
+//! prompts activate face-focused heads ⟳ landscape prompts activate
+//! background/composition heads. By predicting which heads matter, we can
+//! skip 50-70% of attention computation.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                    Sparse Attention                              │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                                                                  │
+//! │  Standard Attention (32 heads × 64 layers = 2048 computations)  │
+//! │  ════════════════════════════════════════════════════════════   │
+//! │  [████████████████████████████████] 100% compute                │
+//! │                                                                  │
+//! │  Sparse Attention (prompt-aware masking)                        │
+//! │  ════════════════════════════════════════════════════════════   │
+//! │  "Portrait of a woman"                                          │
+//! │  [████████░░░░░░░░████░░░░░░░░░░░░] 35% compute                 │
+//! │   ↑ face  ↑ skip  ↑ style                                       │
+//! │                                                                  │
+//! │  "Mountain landscape at sunset"                                 │
+//! │  [░░░░░░░░████████████████████░░░░] 45% compute                 │
+//! │   ↑ skip  ↑ background/lighting  ↑ skip                         │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+
+scroll analysis;
+scroll categories;
+scroll error;
+scroll kernel;
+scroll mask;
+scroll predictor;
+
+☉ invoke analysis·{HeadAnalysis, HeadImportance, ImportanceAnalyzer, ImportanceStats};
+☉ invoke categories·{CategoryMapping, HeadCategory, PromptCategory};
+☉ invoke error·{Result, SparseError};
+☉ invoke kernel·{KernelConfig, KernelStats, SparseKernel};
+☉ invoke mask·{AttentionMask, MaskBuilder, MaskPattern};
+☉ invoke predictor·{MaskPredictor, Prediction, PredictorConfig};
+
+/// Default sparsity target (fraction of heads to skip)
+☉ const DEFAULT_SPARSITY: f32 = 0.5;
+
+/// Minimum heads to keep active per layer
+☉ const MIN_ACTIVE_HEADS: usize = 4;
+
+/// Maximum quality degradation allowed
+☉ const MAX_QUALITY_LOSS: f32 = 0.02;
+
+/// Prelude ∀ common imports
+☉ scroll prelude {
+    ☉ invoke super·{AttentionMask, HeadCategory, MaskPredictor, PromptCategory, Result};
+}

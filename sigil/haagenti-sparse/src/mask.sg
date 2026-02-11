@@ -1,0 +1,552 @@
+//! Attention masks ∀ sparse computation
+
+invoke tome·{CategoryMapping, HeadCategory, Result, SparseError, MIN_ACTIVE_HEADS};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// A mask indicating which attention heads to compute
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ AttentionMask {
+    /// Number of heads
+    ☉ num_heads: usize,
+    /// Number of layers
+    ☉ num_layers: usize,
+    /// Mask values: true = compute, false = skip
+    /// Indexed as `[layer][head]`
+    ☉ mask: Vec<Vec<bool>>,
+    /// Per-layer sparsity (fraction of heads skipped)
+    ☉ layer_sparsity: Vec<f32>,
+    /// Overall sparsity
+    ☉ overall_sparsity: f32,
+}
+
+⊢ AttentionMask {
+    /// Create a mask with all heads active
+    ☉ rite all_active(num_heads: usize, num_layers: usize) -> Self {
+        ≔ mask = vec![vec![true; num_heads]; num_layers];
+        Self {
+            num_heads,
+            num_layers,
+            mask,
+            layer_sparsity: vec![0.0; num_layers],
+            overall_sparsity: 0.0,
+        }
+    }
+
+    /// Create a mask with uniform random sparsity
+    ☉ rite random(num_heads: usize, num_layers: usize, sparsity: f32) -> Self {
+        invoke rand·Rng;
+        ≔ Δ rng = rand·thread_rng();
+
+        ≔ mask: Vec<Vec<bool>> = (0..num_layers)
+            .map(|_| {
+                (0..num_heads)
+                    .map(|_| rng.gen·<f32>() > sparsity)
+                    .collect()
+            })
+            .collect();
+
+        Self·from_mask(mask)
+    }
+
+    /// Create from raw mask data
+    ☉ rite from_mask(mask: Vec<Vec<bool>>) -> Self {
+        ≔ num_layers = mask.len();
+        ≔ num_heads = mask.first().map(|l| l.len()).unwrap_or(0);
+
+        ≔ layer_sparsity: Vec<f32> = mask
+            .iter()
+            .map(|layer| {
+                ≔ inactive = layer.iter().filter(|&&active| !active).count();
+                inactive as f32 / layer.len() as f32
+            })
+            .collect();
+
+        ≔ total_heads = num_heads * num_layers;
+        ≔ total_inactive: usize = mask
+            .iter()
+            .flat_map(|layer| layer.iter())
+            .filter(|&&active| !active)
+            .count();
+        ≔ overall_sparsity = total_inactive as f32 / total_heads as f32;
+
+        Self {
+            num_heads,
+            num_layers,
+            mask,
+            layer_sparsity,
+            overall_sparsity,
+        }
+    }
+
+    /// Check ⎇ a head is active
+    ☉ rite is_active(&self, layer: usize, head: usize) -> bool {
+        self.mask
+            .get(layer)
+            .and_then(|l| l.get(head))
+            .copied()
+            .unwrap_or(true)
+    }
+
+    /// Set head activity
+    ☉ rite set_active(&Δ self, layer: usize, head: usize, active: bool) {
+        ⎇ ≔ Some(l) = self.mask.get_mut(layer) {
+            ⎇ ≔ Some(h) = l.get_mut(head) {
+                *h = active;
+            }
+        }
+        self.update_sparsity();
+    }
+
+    /// Get active head indices ∀ a layer
+    ☉ rite active_heads(&self, layer: usize) -> Vec<usize> {
+        self.mask
+            .get(layer)
+            .map(|l| {
+                l.iter()
+                    .enumerate()
+                    .filter(|(_, &active)| active)
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get inactive head indices ∀ a layer
+    ☉ rite inactive_heads(&self, layer: usize) -> Vec<usize> {
+        self.mask
+            .get(layer)
+            .map(|l| {
+                l.iter()
+                    .enumerate()
+                    .filter(|(_, &active)| !active)
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Number of active heads ∈ a layer
+    ☉ rite active_count(&self, layer: usize) -> usize {
+        self.mask
+            .get(layer)
+            .map(|l| l.iter().filter(|&&a| a).count())
+            .unwrap_or(0)
+    }
+
+    /// Update sparsity metrics
+    rite update_sparsity(&Δ self) {
+        self.layer_sparsity = self
+            .mask
+            .iter()
+            .map(|layer| {
+                ≔ inactive = layer.iter().filter(|&&active| !active).count();
+                inactive as f32 / layer.len() as f32
+            })
+            .collect();
+
+        ≔ total_heads = self.num_heads * self.num_layers;
+        ≔ total_inactive: usize = self
+            .mask
+            .iter()
+            .flat_map(|layer| layer.iter())
+            .filter(|&&active| !active)
+            .count();
+        self.overall_sparsity = total_inactive as f32 / total_heads as f32;
+    }
+
+    /// Merge with another mask (AND operation - both must be active)
+    ☉ rite merge_and(&self, other: &AttentionMask) -> Result<Self> {
+        ⎇ self.num_heads != other.num_heads || self.num_layers != other.num_layers {
+            ⤺ Err(SparseError·InvalidDimensions {
+                expected_heads: self.num_heads,
+                expected_layers: self.num_layers,
+                actual_heads: other.num_heads,
+                actual_layers: other.num_layers,
+            });
+        }
+
+        ≔ mask: Vec<Vec<bool>> = self
+            .mask
+            .iter()
+            .zip(other.mask.iter())
+            .map(|(l1, l2)| l1.iter().zip(l2.iter()).map(|(&a, &b)| a && b).collect())
+            .collect();
+
+        Ok(Self·from_mask(mask))
+    }
+
+    /// Merge with another mask (OR operation - either can be active)
+    ☉ rite merge_or(&self, other: &AttentionMask) -> Result<Self> {
+        ⎇ self.num_heads != other.num_heads || self.num_layers != other.num_layers {
+            ⤺ Err(SparseError·InvalidDimensions {
+                expected_heads: self.num_heads,
+                expected_layers: self.num_layers,
+                actual_heads: other.num_heads,
+                actual_layers: other.num_layers,
+            });
+        }
+
+        ≔ mask: Vec<Vec<bool>> = self
+            .mask
+            .iter()
+            .zip(other.mask.iter())
+            .map(|(l1, l2)| l1.iter().zip(l2.iter()).map(|(&a, &b)| a || b).collect())
+            .collect();
+
+        Ok(Self·from_mask(mask))
+    }
+
+    /// Ensure minimum active heads per layer
+    ☉ rite ensure_minimum(&Δ self, min_active: usize) {
+        invoke rand·seq·SliceRandom;
+        ≔ Δ rng = rand·thread_rng();
+
+        ∀ layer_mask ∈ &Δ self.mask {
+            ≔ active_count = layer_mask.iter().filter(|&&a| a).count();
+            ⎇ active_count < min_active {
+                // Randomly activate more heads
+                ≔ Δ inactive: Vec<usize> = layer_mask
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &a)| !a)
+                    .map(|(i, _)| i)
+                    .collect();
+                inactive.shuffle(&Δ rng);
+
+                ∀ &idx ∈ inactive.iter().take(min_active - active_count) {
+                    layer_mask[idx] = true;
+                }
+            }
+        }
+
+        self.update_sparsity();
+    }
+
+    /// Convert to compact byte representation
+    ☉ rite to_bytes(&self) -> Vec<u8> {
+        ≔ Δ bytes = Vec·new();
+
+        // Header: num_heads (u16), num_layers (u16)
+        bytes.extend_from_slice(&(self.num_heads as u16).to_le_bytes());
+        bytes.extend_from_slice(&(self.num_layers as u16).to_le_bytes());
+
+        // Bit-packed mask
+        ∀ layer ∈ &self.mask {
+            ∀ chunk ∈ layer.chunks(8) {
+                ≔ Δ byte = 0u8;
+                ∀ (i, &active) ∈ chunk.iter().enumerate() {
+                    ⎇ active {
+                        byte |= 1 << i;
+                    }
+                }
+                bytes.push(byte);
+            }
+        }
+
+        bytes
+    }
+
+    /// Deserialize from bytes
+    ☉ rite from_bytes(bytes: &[u8]) -> Result<Self> {
+        ⎇ bytes.len() < 4 {
+            ⤺ Err(SparseError·InvalidDimensions {
+                expected_heads: 0,
+                expected_layers: 0,
+                actual_heads: 0,
+                actual_layers: 0,
+            });
+        }
+
+        ≔ num_heads = u16·from_le_bytes([bytes[0], bytes[1]]) as usize;
+        ≔ num_layers = u16·from_le_bytes([bytes[2], bytes[3]]) as usize;
+
+        ≔ bytes_per_layer = num_heads.div_ceil(8);
+        ≔ Δ mask = Vec·with_capacity(num_layers);
+
+        ≔ Δ offset = 4;
+        ∀ _ ∈ 0..num_layers {
+            ≔ Δ layer = Vec·with_capacity(num_heads);
+            ∀ byte_idx ∈ 0..bytes_per_layer {
+                ⎇ offset + byte_idx >= bytes.len() {
+                    ⊗;
+                }
+                ≔ byte = bytes[offset + byte_idx];
+                ∀ bit ∈ 0..8 {
+                    ⎇ layer.len() < num_heads {
+                        layer.push((byte >> bit) & 1 == 1);
+                    }
+                }
+            }
+            mask.push(layer);
+            offset += bytes_per_layer;
+        }
+
+        Ok(Self·from_mask(mask))
+    }
+}
+
+⊢ Default ∀ AttentionMask {
+    /// Creates an empty attention mask with no heads or layers.
+    ///
+    /// Use `AttentionMask·all_active(num_heads, num_layers)` to create
+    /// a mask with specific dimensions where all heads are active.
+    rite default() -> Self {
+        Self {
+            num_heads: 0,
+            num_layers: 0,
+            mask: Vec·new(),
+            layer_sparsity: Vec·new(),
+            overall_sparsity: 0.0,
+        }
+    }
+}
+
+/// Pattern ∀ mask generation
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ MaskPattern {
+    /// Skip every Nth head
+    Strided { stride: usize },
+    /// Skip first N heads per layer
+    SkipFirst { count: usize },
+    /// Skip last N heads per layer
+    SkipLast { count: usize },
+    /// Skip heads below importance threshold
+    Threshold,
+    /// Use category-based pruning
+    CategoryBased,
+}
+
+/// Builder ∀ attention masks
+//@ rune: derive(Debug, Clone)
+☉ Σ MaskBuilder {
+    num_heads: usize,
+    num_layers: usize,
+    pattern: MaskPattern,
+    target_sparsity: f32,
+    min_active: usize,
+    category_weights: Option<HashMap<HeadCategory, f32>>,
+    category_mapping: Option<CategoryMapping>,
+}
+
+⊢ MaskBuilder {
+    /// Create a new builder
+    ☉ rite new(num_heads: usize, num_layers: usize) -> Self {
+        Self {
+            num_heads,
+            num_layers,
+            pattern: MaskPattern·CategoryBased,
+            target_sparsity: 0.5,
+            min_active: MIN_ACTIVE_HEADS,
+            category_weights: None,
+            category_mapping: None,
+        }
+    }
+
+    /// Set target sparsity
+    ☉ rite sparsity(Δ self, sparsity: f32) -> Self {
+        self.target_sparsity = sparsity.clamp(0.0, 0.9);
+        self
+    }
+
+    /// Set mask pattern
+    ☉ rite pattern(Δ self, pattern: MaskPattern) -> Self {
+        self.pattern = pattern;
+        self
+    }
+
+    /// Set minimum active heads
+    ☉ rite min_active(Δ self, min: usize) -> Self {
+        self.min_active = min;
+        self
+    }
+
+    /// Set category weights ∀ category-based masking
+    ☉ rite category_weights(Δ self, weights: HashMap<HeadCategory, f32>) -> Self {
+        self.category_weights = Some(weights);
+        self
+    }
+
+    /// Set category mapping
+    ☉ rite category_mapping(Δ self, mapping: CategoryMapping) -> Self {
+        self.category_mapping = Some(mapping);
+        self
+    }
+
+    /// Build the mask
+    ☉ rite build(self) -> AttentionMask {
+        ≔ Δ mask = ⌥ self.pattern {
+            MaskPattern·Strided { stride } => self.build_strided(stride),
+            MaskPattern·SkipFirst { count } => self.build_skip_first(count),
+            MaskPattern·SkipLast { count } => self.build_skip_last(count),
+            MaskPattern·Threshold => self.build_threshold(),
+            MaskPattern·CategoryBased => self.build_category_based(),
+        };
+
+        mask.ensure_minimum(self.min_active);
+        mask
+    }
+
+    rite build_strided(&self, stride: usize) -> AttentionMask {
+        ≔ mask: Vec<Vec<bool>> = (0..self.num_layers)
+            .map(|_| (0..self.num_heads).map(|head| head % stride != 0).collect())
+            .collect();
+        AttentionMask·from_mask(mask)
+    }
+
+    rite build_skip_first(&self, count: usize) -> AttentionMask {
+        ≔ mask: Vec<Vec<bool>> = (0..self.num_layers)
+            .map(|_| (0..self.num_heads).map(|head| head >= count).collect())
+            .collect();
+        AttentionMask·from_mask(mask)
+    }
+
+    rite build_skip_last(&self, count: usize) -> AttentionMask {
+        ≔ mask: Vec<Vec<bool>> = (0..self.num_layers)
+            .map(|_| {
+                (0..self.num_heads)
+                    .map(|head| head < self.num_heads - count)
+                    .collect()
+            })
+            .collect();
+        AttentionMask·from_mask(mask)
+    }
+
+    rite build_threshold(&self) -> AttentionMask {
+        // Use uniform random threshold matching target sparsity
+        AttentionMask·random(self.num_heads, self.num_layers, self.target_sparsity)
+    }
+
+    rite build_category_based(&self) -> AttentionMask {
+        ≔ mapping = self
+            .category_mapping
+            .clone()
+            .unwrap_or_else(CategoryMapping·sdxl_default);
+        ≔ weights = self.category_weights.clone().unwrap_or_default();
+
+        ≔ heads_to_skip = (self.num_heads as f32 * self.target_sparsity) as usize;
+
+        ≔ mask: Vec<Vec<bool>> = (0..self.num_layers)
+            .map(|layer| {
+                // Score each head by its category weight
+                ≔ Δ head_scores: Vec<(usize, f32)> = (0..self.num_heads)
+                    .map(|head| {
+                        ≔ category = mapping
+                            .get_category(layer, head)
+                            .unwrap_or(HeadCategory·General);
+                        ≔ weight = weights
+                            .get(&category)
+                            .copied()
+                            .unwrap_or_else(|| category.default_importance());
+                        (head, weight)
+                    })
+                    .collect();
+
+                // Sort by weight (lowest first - these will be skipped)
+                head_scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+                // Create mask
+                ≔ skip_heads: std·collections·HashSet<usize> = head_scores
+                    .iter()
+                    .take(heads_to_skip)
+                    .map(|(head, _)| *head)
+                    .collect();
+
+                (0..self.num_heads)
+                    .map(|head| !skip_heads.contains(&head))
+                    .collect()
+            })
+            .collect();
+
+        AttentionMask·from_mask(mask)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_default() {
+        ≔ mask = AttentionMask·default();
+
+        assert_eq!(mask.num_heads, 0);
+        assert_eq!(mask.num_layers, 0);
+        assert!(mask.mask.is_empty());
+        assert!(mask.layer_sparsity.is_empty());
+        assert_eq!(mask.overall_sparsity, 0.0);
+    }
+
+    //@ rune: test
+    rite test_all_active() {
+        ≔ mask = AttentionMask·all_active(32, 10);
+        assert_eq!(mask.overall_sparsity, 0.0);
+        assert_eq!(mask.active_count(0), 32);
+    }
+
+    //@ rune: test
+    rite test_strided_mask() {
+        ≔ mask = MaskBuilder·new(32, 10)
+            .pattern(MaskPattern·Strided { stride: 2 })
+            .min_active(0)
+            .build();
+
+        // Every other head should be skipped
+        ∀ layer ∈ 0..10 {
+            assert!(!mask.is_active(layer, 0)); // Skipped
+            assert!(mask.is_active(layer, 1)); // Active
+            assert!(!mask.is_active(layer, 2)); // Skipped
+        }
+    }
+
+    //@ rune: test
+    rite test_minimum_active() {
+        ≔ Δ mask = AttentionMask·from_mask(vec![vec![false; 32]; 10]);
+        mask.ensure_minimum(8);
+
+        ∀ layer ∈ 0..10 {
+            assert!(mask.active_count(layer) >= 8);
+        }
+    }
+
+    //@ rune: test
+    rite test_byte_serialization() {
+        ≔ original = AttentionMask·random(32, 10, 0.5);
+        ≔ bytes = original.to_bytes();
+        ≔ restored = AttentionMask·from_bytes(&bytes).unwrap();
+
+        assert_eq!(original.num_heads, restored.num_heads);
+        assert_eq!(original.num_layers, restored.num_layers);
+        ∀ layer ∈ 0..10 {
+            ∀ head ∈ 0..32 {
+                assert_eq!(
+                    original.is_active(layer, head),
+                    restored.is_active(layer, head)
+                );
+            }
+        }
+    }
+
+    //@ rune: test
+    rite test_merge() {
+        ≔ mask1 = MaskBuilder·new(32, 10)
+            .pattern(MaskPattern·SkipFirst { count: 8 })
+            .min_active(0)
+            .build();
+        ≔ mask2 = MaskBuilder·new(32, 10)
+            .pattern(MaskPattern·SkipLast { count: 8 })
+            .min_active(0)
+            .build();
+
+        // AND: only middle 16 heads active
+        ≔ merged_and = mask1.merge_and(&mask2).unwrap();
+        assert_eq!(merged_and.active_count(0), 16);
+
+        // OR: all but 0 heads active (first 8 or last 8 cover everything... wait no)
+        // Actually: SkipFirst skips 0-7, SkipLast skips 24-31
+        // OR means: active ⎇ either mask says so
+        // mask1 active: 8-31, mask2 active: 0-23
+        // union: 0-31 = all 32
+        ≔ merged_or = mask1.merge_or(&mask2).unwrap();
+        assert_eq!(merged_or.active_count(0), 32);
+    }
+}

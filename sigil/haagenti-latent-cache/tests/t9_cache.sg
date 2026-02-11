@@ -1,0 +1,565 @@
+//! haagenti-latent-cache test suite
+//! Tests for latent caching, embeddings, and similarity search
+
+// ════════════════════════════════════════════════════════════════════════════
+// Constants (as functions)
+// ════════════════════════════════════════════════════════════════════════════
+
+rite default_similarity_threshold() → f64 { 0.95 }
+rite default_max_entries() → i64 { 10000 }
+rite default_embedding_dim() → i64 { 512 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// ClipEmbedding Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ ClipEmbedding {
+    data: Vec<f32>,
+    normalized: bool,
+}
+
+rite sqrt64(x: f64) → f64 {
+    ⎇ x <= 0.0 { ⤺ 0.0; }
+    ≔ Δ guess = x / 2.0;
+    ≔ Δ i = 0;
+    ⟳ i < 15 {
+        guess = (guess + x / guess) / 2.0;
+        i = i + 1;
+    }
+    guess
+}
+
+rite new_embedding(data: Vec<f32>) → ClipEmbedding {
+    ClipEmbedding { data: data, normalized: false }
+}
+
+rite zeros_embedding(dim: i64) → ClipEmbedding {
+    ≔ Δ data = Vec·new();
+    ≔ Δ i = 0;
+    ⟳ i < dim {
+        data.push(0.0);
+        i = i + 1;
+    }
+    ClipEmbedding { data: data, normalized: true }
+}
+
+rite embedding_dim(e: &ClipEmbedding) → i64 {
+    e.data.len() as i64
+}
+
+rite embedding_norm(e: &ClipEmbedding) → f64 {
+    ≔ Δ sum = 0.0;
+    ≔ Δ i = 0;
+    ⟳ i < e.data.len() as i64 {
+        ≔ v = e.data[i as usize] as f64;
+        sum = sum + v * v;
+        i = i + 1;
+    }
+    sqrt64(sum)
+}
+
+rite normalize_embedding(e: &Δ ClipEmbedding) {
+    ≔ n = embedding_norm(e);
+    ⎇ n > 0.0 {
+        ≔ Δ i = 0;
+        ⟳ i < e.data.len() as i64 {
+            e.data[i as usize] = e.data[i as usize] / n as f32;
+            i = i + 1;
+        }
+    }
+    e.normalized = true;
+}
+
+rite cosine_similarity(a: &ClipEmbedding, b: &ClipEmbedding) → f64 {
+    ⎇ a.data.len() != b.data.len() { ⤺ 0.0; }
+
+    ≔ Δ dot = 0.0;
+    ≔ Δ norm_a = 0.0;
+    ≔ Δ norm_b = 0.0;
+
+    ≔ Δ i = 0;
+    ⟳ i < a.data.len() as i64 {
+        ≔ va = a.data[i as usize] as f64;
+        ≔ vb = b.data[i as usize] as f64;
+        dot = dot + va * vb;
+        norm_a = norm_a + va * va;
+        norm_b = norm_b + vb * vb;
+        i = i + 1;
+    }
+
+    ≔ denom = sqrt64(norm_a) * sqrt64(norm_b);
+    ⎇ denom > 0.0 { dot / denom } ⎉ { 0.0 }
+}
+
+rite test_embedding_creation() {
+    ≔ Δ data = Vec·new();
+    data.push(1.0);
+    data.push(2.0);
+    data.push(3.0);
+
+    ≔ e = new_embedding(data);
+    assert_eq(embedding_dim(&e), 3);
+    assert(!e.normalized);
+
+    println("embedding_creation: PASS");
+}
+
+rite test_embedding_zeros() {
+    ≔ e = zeros_embedding(512);
+    assert_eq(embedding_dim(&e), 512);
+    assert(e.normalized);
+
+    println("embedding_zeros: PASS");
+}
+
+rite test_embedding_norm() {
+    ≔ Δ data = Vec·new();
+    data.push(3.0);
+    data.push(4.0);
+
+    ≔ e = new_embedding(data);
+    ≔ n = embedding_norm(&e);
+    // sqrt(9 + 16) = sqrt(25) = 5
+    assert(n > 4.9 && n < 5.1);
+
+    println("embedding_norm: PASS");
+}
+
+rite test_embedding_normalize() {
+    ≔ Δ data = Vec·new();
+    data.push(3.0);
+    data.push(4.0);
+
+    ≔ Δ e = new_embedding(data);
+    normalize_embedding(&Δ e);
+
+    ≔ n = embedding_norm(&e);
+    assert(n > 0.99 && n < 1.01);
+    assert(e.normalized);
+
+    println("embedding_normalize: PASS");
+}
+
+rite test_cosine_similarity_identical() {
+    ≔ Δ data = Vec·new();
+    data.push(1.0);
+    data.push(2.0);
+    data.push(3.0);
+
+    ≔ a = new_embedding(data.clone());
+    ≔ b = new_embedding(data);
+
+    ≔ sim = cosine_similarity(&a, &b);
+    assert(sim > 0.99);
+
+    println("cosine_similarity_identical: PASS");
+}
+
+rite test_cosine_similarity_orthogonal() {
+    ≔ Δ data_a = Vec·new();
+    data_a.push(1.0);
+    data_a.push(0.0);
+
+    ≔ Δ data_b = Vec·new();
+    data_b.push(0.0);
+    data_b.push(1.0);
+
+    ≔ a = new_embedding(data_a);
+    ≔ b = new_embedding(data_b);
+
+    ≔ sim = cosine_similarity(&a, &b);
+    assert(sim > -0.01 && sim < 0.01);
+
+    println("cosine_similarity_orthogonal: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CacheStats Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ CacheStats {
+    total_lookups: i64,
+    hits: i64,
+    misses: i64,
+    insertions: i64,
+    evictions: i64,
+    avg_hit_similarity: f64,
+}
+
+rite new_cache_stats() → CacheStats {
+    CacheStats {
+        total_lookups: 0,
+        hits: 0,
+        misses: 0,
+        insertions: 0,
+        evictions: 0,
+        avg_hit_similarity: 0.0,
+    }
+}
+
+rite record_hit(stats: &Δ CacheStats, similarity: f64) {
+    stats.total_lookups = stats.total_lookups + 1;
+    stats.hits = stats.hits + 1;
+    ≔ n = stats.hits as f64;
+    stats.avg_hit_similarity = stats.avg_hit_similarity + (similarity - stats.avg_hit_similarity) / n;
+}
+
+rite record_miss(stats: &Δ CacheStats) {
+    stats.total_lookups = stats.total_lookups + 1;
+    stats.misses = stats.misses + 1;
+}
+
+rite record_insertion(stats: &Δ CacheStats) {
+    stats.insertions = stats.insertions + 1;
+}
+
+rite record_eviction(stats: &Δ CacheStats) {
+    stats.evictions = stats.evictions + 1;
+}
+
+rite hit_rate(stats: &CacheStats) → f64 {
+    ⎇ stats.total_lookups > 0 {
+        stats.hits as f64 / stats.total_lookups as f64
+    } ⎉ {
+        0.0
+    }
+}
+
+rite test_cache_stats_empty() {
+    ≔ stats = new_cache_stats();
+    assert_eq(stats.total_lookups, 0);
+    assert_eq(stats.hits, 0);
+    assert_eq(stats.misses, 0);
+    assert_eq(hit_rate(&stats), 0.0);
+
+    println("cache_stats_empty: PASS");
+}
+
+rite test_cache_stats_hits() {
+    ≔ Δ stats = new_cache_stats();
+
+    record_hit(&Δ stats, 0.95);
+    record_hit(&Δ stats, 0.97);
+    record_miss(&Δ stats);
+
+    assert_eq(stats.total_lookups, 3);
+    assert_eq(stats.hits, 2);
+    assert_eq(stats.misses, 1);
+
+    ≔ rate = hit_rate(&stats);
+    assert(rate > 0.66 && rate < 0.67);
+
+    println("cache_stats_hits: PASS");
+}
+
+rite test_cache_stats_avg_similarity() {
+    ≔ Δ stats = new_cache_stats();
+
+    record_hit(&Δ stats, 0.90);
+    record_hit(&Δ stats, 1.0);
+
+    // Average should be 0.95
+    assert(stats.avg_hit_similarity > 0.94 && stats.avg_hit_similarity < 0.96);
+
+    println("cache_stats_avg_similarity: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SearchResult Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ SearchResult {
+    index: i64,
+    similarity: f64,
+    distance: f64,
+}
+
+rite new_search_result(index: i64, similarity: f64) → SearchResult {
+    SearchResult {
+        index: index,
+        similarity: similarity,
+        distance: 1.0 - similarity,
+    }
+}
+
+rite test_search_result() {
+    ≔ result = new_search_result(5, 0.95);
+
+    assert_eq(result.index, 5);
+    assert(result.similarity > 0.94 && result.similarity < 0.96);
+    assert(result.distance > 0.04 && result.distance < 0.06);
+
+    println("search_result: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SimilaritySearch Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ SimilaritySearch {
+    embeddings: Vec<ClipEmbedding>,
+}
+
+rite new_similarity_search() → SimilaritySearch {
+    SimilaritySearch { embeddings: Vec·new() }
+}
+
+rite search_add(search: &Δ SimilaritySearch, embedding: ClipEmbedding) {
+    search.embeddings.push(embedding);
+}
+
+rite search_len(search: &SimilaritySearch) → i64 {
+    search.embeddings.len() as i64
+}
+
+rite search_find(search: &SimilaritySearch, query: &ClipEmbedding, threshold: f64) → Vec<SearchResult> {
+    ≔ Δ results = Vec·new();
+
+    ≔ Δ i = 0;
+    ⟳ i < search.embeddings.len() as i64 {
+        ≔ sim = cosine_similarity(query, &search.embeddings[i as usize]);
+        ⎇ sim >= threshold {
+            results.push(new_search_result(i, sim));
+        }
+        i = i + 1;
+    }
+
+    results
+}
+
+rite test_similarity_search_empty() {
+    ≔ search = new_similarity_search();
+    assert_eq(search_len(&search), 0);
+
+    println("similarity_search_empty: PASS");
+}
+
+rite test_similarity_search_add() {
+    ≔ Δ search = new_similarity_search();
+
+    ≔ Δ data = Vec·new();
+    data.push(1.0);
+    data.push(0.0);
+
+    search_add(&Δ search, new_embedding(data));
+    assert_eq(search_len(&search), 1);
+
+    println("similarity_search_add: PASS");
+}
+
+rite test_similarity_search_find() {
+    ≔ Δ search = new_similarity_search();
+
+    // Add some embeddings
+    ≔ Δ data1 = Vec·new();
+    data1.push(1.0);
+    data1.push(0.0);
+    search_add(&Δ search, new_embedding(data1));
+
+    ≔ Δ data2 = Vec·new();
+    data2.push(0.0);
+    data2.push(1.0);
+    search_add(&Δ search, new_embedding(data2));
+
+    ≔ Δ data3 = Vec·new();
+    data3.push(0.99);
+    data3.push(0.1);
+    search_add(&Δ search, new_embedding(data3));
+
+    // Query similar to first
+    ≔ Δ query_data = Vec·new();
+    query_data.push(1.0);
+    query_data.push(0.05);
+    ≔ query = new_embedding(query_data);
+
+    ≔ results = search_find(&search, &query, 0.9);
+
+    // Should find at least 2 similar (first and third)
+    assert(results.len() >= 1);
+
+    println("similarity_search_find: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DivergencePredictor Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ DivergencePredictor {
+    initial_threshold: f64,
+    decay_rate: f64,
+    min_threshold: f64,
+    prediction_count: i64,
+    divergence_count: i64,
+}
+
+rite new_divergence_predictor() → DivergencePredictor {
+    DivergencePredictor {
+        initial_threshold: 0.98,
+        decay_rate: 0.002,
+        min_threshold: 0.90,
+        prediction_count: 0,
+        divergence_count: 0,
+    }
+}
+
+rite threshold_at_step(pred: &DivergencePredictor, step: i64) → f64 {
+    ≔ decay = pred.decay_rate * step as f64;
+    ≔ threshold = pred.initial_threshold - decay;
+    ⎇ threshold < pred.min_threshold {
+        pred.min_threshold
+    } ⎉ {
+        threshold
+    }
+}
+
+rite predict_validity(pred: &Δ DivergencePredictor, similarity: f64, step: i64) → bool {
+    pred.prediction_count = pred.prediction_count + 1;
+    ≔ threshold = threshold_at_step(pred, step);
+
+    ⎇ similarity >= threshold {
+        true
+    } ⎉ {
+        pred.divergence_count = pred.divergence_count + 1;
+        false
+    }
+}
+
+rite test_divergence_threshold_decay() {
+    ≔ pred = new_divergence_predictor();
+
+    // At step 0, threshold should be initial (0.98)
+    ≔ t0 = threshold_at_step(&pred, 0);
+    assert(t0 > 0.97 && t0 < 0.99);
+
+    // At step 10, threshold should be lower
+    ≔ t10 = threshold_at_step(&pred, 10);
+    assert(t10 < t0);
+
+    // At step 100, should hit minimum
+    ≔ t100 = threshold_at_step(&pred, 100);
+    assert(t100 >= pred.min_threshold - 0.001);
+
+    println("divergence_threshold_decay: PASS");
+}
+
+rite test_divergence_prediction() {
+    ≔ Δ pred = new_divergence_predictor();
+
+    // High similarity should be valid
+    ≔ valid = predict_validity(&Δ pred, 0.99, 0);
+    assert(valid);
+
+    // Low similarity should be invalid
+    ≔ invalid = predict_validity(&Δ pred, 0.80, 0);
+    assert(!invalid);
+
+    assert_eq(pred.prediction_count, 2);
+    assert_eq(pred.divergence_count, 1);
+
+    println("divergence_prediction: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CacheConfig Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ CacheConfig {
+    max_entries: i64,
+    similarity_threshold: f64,
+    embedding_dim: i64,
+    enable_lru: bool,
+}
+
+rite new_cache_config() → CacheConfig {
+    CacheConfig {
+        max_entries: default_max_entries(),
+        similarity_threshold: default_similarity_threshold(),
+        embedding_dim: default_embedding_dim(),
+        enable_lru: true,
+    }
+}
+
+rite validate_config(config: &CacheConfig) → bool {
+    ⎇ config.max_entries <= 0 { ⤺ false; }
+    ⎇ config.similarity_threshold < 0.0 || config.similarity_threshold > 1.0 { ⤺ false; }
+    ⎇ config.embedding_dim <= 0 { ⤺ false; }
+    true
+}
+
+rite test_cache_config_defaults() {
+    ≔ config = new_cache_config();
+
+    assert_eq(config.max_entries, 10000);
+    assert(config.similarity_threshold > 0.94 && config.similarity_threshold < 0.96);
+    assert_eq(config.embedding_dim, 512);
+    assert(config.enable_lru);
+    assert(validate_config(&config));
+
+    println("cache_config_defaults: PASS");
+}
+
+rite test_cache_config_validation() {
+    ≔ Δ config = new_cache_config();
+
+    // Valid config
+    assert(validate_config(&config));
+
+    // Invalid: max_entries <= 0
+    config.max_entries = 0;
+    assert(!validate_config(&config));
+    config.max_entries = 100;
+
+    // Invalid: threshold out of range
+    config.similarity_threshold = 1.5;
+    assert(!validate_config(&config));
+    config.similarity_threshold = 0.95;
+
+    // Invalid: embedding_dim <= 0
+    config.embedding_dim = -1;
+    assert(!validate_config(&config));
+
+    println("cache_config_validation: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-latent-cache Tests                ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    // Embedding tests
+    test_embedding_creation();
+    test_embedding_zeros();
+    test_embedding_norm();
+    test_embedding_normalize();
+    test_cosine_similarity_identical();
+    test_cosine_similarity_orthogonal();
+
+    // Cache stats tests
+    test_cache_stats_empty();
+    test_cache_stats_hits();
+    test_cache_stats_avg_similarity();
+
+    // Search result tests
+    test_search_result();
+
+    // Similarity search tests
+    test_similarity_search_empty();
+    test_similarity_search_add();
+    test_similarity_search_find();
+
+    // Divergence predictor tests
+    test_divergence_threshold_decay();
+    test_divergence_prediction();
+
+    // Cache config tests
+    test_cache_config_defaults();
+    test_cache_config_validation();
+
+    println("");
+    println("All tests passed!");
+}

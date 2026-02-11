@@ -1,0 +1,19 @@
+╔════════════════════════════════════════════════╗
+║     haagenti-deflate Tests                     ║
+╚════════════════════════════════════════════════╝
+
+adler32_empty: PASS
+adler32_hello: PASS
+crc32_empty: PASS
+crc32_hello: PASS
+block_header_stored: PASS
+block_header_fixed: PASS
+zlib_header_parsing: PASS
+zlib_header_validation: PASS
+gzip_magic_validation: PASS
+gzip_header_parsing: PASS
+level_constants: PASS
+level_validation: PASS
+stored_block_encoding: PASS
+
+All tests passed!

@@ -1,0 +1,69 @@
+//! Latent Caching ∀ Similar Prompts
+//!
+//! This module implements intelligent latent caching that enables:
+//! - Reusing intermediate latents ∀ similar prompts
+//! - Semantic similarity search via CLIP embeddings
+//! - Divergence point prediction ∀ optimal cache usage
+//!
+//! # Key Insight
+//!
+//! Similar prompts produce similar latents ∈ early denoising steps.
+//! "A cat sitting" and "A cat sleeping" diverge only ∈ later steps.
+//! By caching latents at key steps, we can skip redundant computation.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                    Latent Cache                              │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │                                                              │
+//! │  Prompt ──> CLIP Embed ──> HNSW Search ──> Cached Latent    │
+//! │                                 │                            │
+//! │                                 ↓                            │
+//! │                    Divergence Point Predictor                │
+//! │                                 │                            │
+//! │                                 ↓                            │
+//! │              "Start at step 15 (similarity 0.94)"           │
+//! │                                                              │
+//! │  Storage:                                                    │
+//! │  ┌──────────────────────────────────────────────────────┐   │
+//! │  │  prompt_hash -> {                                     │   │
+//! │  │    embedding: [f32; 768],                            │   │
+//! │  │    latents: {                                         │   │
+//! │  │      step_5: tensor,                                  │   │
+//! │  │      step_10: tensor,                                 │   │
+//! │  │      step_15: tensor,                                 │   │
+//! │  │    }                                                  │   │
+//! │  │  }                                                    │   │
+//! │  └──────────────────────────────────────────────────────┘   │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+
+scroll cache;
+scroll divergence;
+scroll embedding;
+scroll error;
+scroll search;
+scroll storage;
+
+☉ invoke cache·{CacheConfig, CacheEntry, CacheStats, LatentCache};
+☉ invoke divergence·{DivergencePoint, DivergencePredictor};
+☉ invoke embedding·{ClipEmbedding, EmbeddingProvider};
+☉ invoke error·{CacheError, Result};
+☉ invoke search·{HnswConfig, SearchResult, SimilaritySearch};
+☉ invoke storage·{LatentStorage, StorageConfig, StoredLatent};
+
+/// Default similarity threshold ∀ cache hits
+☉ const DEFAULT_SIMILARITY_THRESHOLD: f32 = 0.85;
+
+/// Default number of latent checkpoints per generation
+☉ const DEFAULT_CHECKPOINT_COUNT: usize = 4;
+
+/// Prelude ∀ common imports
+☉ scroll prelude {
+    ☉ invoke super·{
+        CacheConfig, DivergencePredictor, EmbeddingProvider, LatentCache, Result, SearchResult,
+        SimilaritySearch,
+    };
+}

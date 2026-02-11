@@ -1,0 +1,471 @@
+//! haagenti-neural test suite
+//! Tests for neural compression codebooks and encoders
+
+// ════════════════════════════════════════════════════════════════════════════
+// Constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite default_codebook_size() → i64 { 4096 }
+rite default_compression_ratio() → f32 { 10.0 }
+
+// Layer types as integers
+rite LAYER_ATTENTION_QK() → i64 { 0 }
+rite LAYER_ATTENTION_VO() → i64 { 1 }
+rite LAYER_FFN() → i64 { 2 }
+rite LAYER_NORMALIZATION() → i64 { 3 }
+rite LAYER_EMBEDDING() → i64 { 4 }
+rite LAYER_OTHER() → i64 { 5 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// LayerType Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite codebook_size_for_layer(layer_type: i64) → i64 {
+    ⎇ layer_type == LAYER_ATTENTION_QK() { 4096 }
+    ⎉ ⎇ layer_type == LAYER_ATTENTION_VO() { 8192 }
+    ⎉ ⎇ layer_type == LAYER_FFN() { 2048 }
+    ⎉ ⎇ layer_type == LAYER_NORMALIZATION() { 256 }
+    ⎉ ⎇ layer_type == LAYER_EMBEDDING() { 4096 }
+    ⎉ { 4096 }
+}
+
+rite bits_for_layer(layer_type: i64) → i64 {
+    ⎇ layer_type == LAYER_ATTENTION_QK() { 12 }
+    ⎉ ⎇ layer_type == LAYER_ATTENTION_VO() { 13 }
+    ⎉ ⎇ layer_type == LAYER_FFN() { 11 }
+    ⎉ ⎇ layer_type == LAYER_NORMALIZATION() { 8 }
+    ⎉ ⎇ layer_type == LAYER_EMBEDDING() { 12 }
+    ⎉ { 12 }
+}
+
+rite layer_type_from_name(name: &String) → i64 {
+    ⎇ name.contains("q_proj") || name.contains("k_proj") {
+        LAYER_ATTENTION_QK()
+    } ⎉ ⎇ name.contains("v_proj") || name.contains("o_proj") {
+        LAYER_ATTENTION_VO()
+    } ⎉ ⎇ name.contains("mlp") || name.contains("ffn") {
+        LAYER_FFN()
+    } ⎉ ⎇ name.contains("norm") || name.contains("layernorm") {
+        LAYER_NORMALIZATION()
+    } ⎉ ⎇ name.contains("embed") {
+        LAYER_EMBEDDING()
+    } ⎉ {
+        LAYER_OTHER()
+    }
+}
+
+rite test_layer_codebook_sizes() {
+    assert_eq(codebook_size_for_layer(LAYER_ATTENTION_QK()), 4096);
+    assert_eq(codebook_size_for_layer(LAYER_ATTENTION_VO()), 8192);
+    assert_eq(codebook_size_for_layer(LAYER_FFN()), 2048);
+    assert_eq(codebook_size_for_layer(LAYER_NORMALIZATION()), 256);
+
+    println("layer_codebook_sizes: PASS");
+}
+
+rite test_layer_bits() {
+    assert_eq(bits_for_layer(LAYER_ATTENTION_QK()), 12);
+    assert_eq(bits_for_layer(LAYER_ATTENTION_VO()), 13);
+    assert_eq(bits_for_layer(LAYER_FFN()), 11);
+    assert_eq(bits_for_layer(LAYER_NORMALIZATION()), 8);
+
+    println("layer_bits: PASS");
+}
+
+rite test_layer_from_name() {
+    ≔ qk = layer_type_from_name(&"model.layers.0.q_proj".to_string());
+    assert_eq(qk, LAYER_ATTENTION_QK());
+
+    ≔ vo = layer_type_from_name(&"model.layers.0.v_proj".to_string());
+    assert_eq(vo, LAYER_ATTENTION_VO());
+
+    ≔ ffn = layer_type_from_name(&"model.layers.0.mlp.up_proj".to_string());
+    assert_eq(ffn, LAYER_FFN());
+
+    ≔ norm = layer_type_from_name(&"model.layers.0.input_layernorm".to_string());
+    assert_eq(norm, LAYER_NORMALIZATION());
+
+    println("layer_from_name: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CodebookConfig Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ CodebookConfig {
+    num_centroids: i64,
+    vector_dim: i64,
+    max_iterations: i64,
+    convergence_threshold: f32,
+}
+
+rite new_codebook_config() → CodebookConfig {
+    CodebookConfig {
+        num_centroids: default_codebook_size(),
+        vector_dim: 128,
+        max_iterations: 100,
+        convergence_threshold: 0.001,
+    }
+}
+
+rite config_for_layer(layer_type: i64) → CodebookConfig {
+    CodebookConfig {
+        num_centroids: codebook_size_for_layer(layer_type),
+        vector_dim: 128,
+        max_iterations: 100,
+        convergence_threshold: 0.001,
+    }
+}
+
+rite test_config_defaults() {
+    ≔ config = new_codebook_config();
+
+    assert_eq(config.num_centroids, 4096);
+    assert_eq(config.vector_dim, 128);
+    assert_eq(config.max_iterations, 100);
+
+    println("config_defaults: PASS");
+}
+
+rite test_config_for_layer() {
+    ≔ qk_config = config_for_layer(LAYER_ATTENTION_QK());
+    assert_eq(qk_config.num_centroids, 4096);
+
+    ≔ vo_config = config_for_layer(LAYER_ATTENTION_VO());
+    assert_eq(vo_config.num_centroids, 8192);
+
+    ≔ norm_config = config_for_layer(LAYER_NORMALIZATION());
+    assert_eq(norm_config.num_centroids, 256);
+
+    println("config_for_layer: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CodebookStats Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ CodebookStats {
+    total_lookups: i64,
+    unique_centroids: i64,
+    avg_distance: f32,
+    max_distance: f32,
+    memory_bytes: i64,
+}
+
+rite new_codebook_stats() → CodebookStats {
+    CodebookStats {
+        total_lookups: 0,
+        unique_centroids: 0,
+        avg_distance: 0.0,
+        max_distance: 0.0,
+        memory_bytes: 0,
+    }
+}
+
+rite stats_utilization(stats: &CodebookStats, total_centroids: i64) → f32 {
+    ⎇ total_centroids > 0 {
+        stats.unique_centroids as f32 / total_centroids as f32
+    } ⎉ {
+        0.0
+    }
+}
+
+rite test_stats_new() {
+    ≔ stats = new_codebook_stats();
+
+    assert_eq(stats.total_lookups, 0);
+    assert_eq(stats.unique_centroids, 0);
+    assert_eq(stats.max_distance, 0.0);
+
+    println("stats_new: PASS");
+}
+
+rite test_stats_utilization() {
+    ≔ Δ stats = new_codebook_stats();
+    stats.unique_centroids = 100;
+
+    ≔ util = stats_utilization(&stats, 1000);
+    assert(util > 0.09 && util < 0.11);  // ~0.1
+
+    println("stats_utilization: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Codebook Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ Codebook {
+    centroids: Vec<f32>,
+    num_centroids: i64,
+    vector_dim: i64,
+}
+
+rite new_codebook(num_centroids: i64, vector_dim: i64) → Codebook {
+    ≔ size = (num_centroids * vector_dim) as usize;
+    ≔ Δ centroids = Vec·new();
+
+    ≔ Δ i = 0;
+    ⟳ i < size as i64 {
+        centroids.push(0.0);
+        i = i + 1;
+    }
+
+    Codebook {
+        centroids: centroids,
+        num_centroids: num_centroids,
+        vector_dim: vector_dim,
+    }
+}
+
+rite codebook_memory_bytes(cb: &Codebook) → i64 {
+    cb.num_centroids * cb.vector_dim * 4
+}
+
+rite get_centroid(cb: &Codebook, index: i64) → Vec<f32> {
+    ≔ start = (index * cb.vector_dim) as usize;
+    ≔ Δ result = Vec·new();
+
+    ≔ Δ i = 0;
+    ⟳ i < cb.vector_dim {
+        result.push(cb.centroids[start + i as usize]);
+        i = i + 1;
+    }
+
+    result
+}
+
+rite set_centroid(cb: &Δ Codebook, index: i64, values: &Vec<f32>) {
+    ≔ start = (index * cb.vector_dim) as usize;
+
+    ≔ Δ i = 0;
+    ⟳ i < cb.vector_dim {
+        cb.centroids[start + i as usize] = values[i as usize];
+        i = i + 1;
+    }
+}
+
+rite squared_distance(a: &Vec<f32>, b: &Vec<f32>) → f32 {
+    ⎇ a.len() != b.len() { ⤺ 999999.0; }
+
+    ≔ Δ sum = 0.0;
+    ≔ Δ i = 0;
+    ⟳ i < a.len() as i64 {
+        ≔ diff = a[i as usize] - b[i as usize];
+        sum = sum + diff * diff;
+        i = i + 1;
+    }
+
+    sum
+}
+
+rite test_codebook_creation() {
+    ≔ cb = new_codebook(256, 64);
+
+    assert_eq(cb.num_centroids, 256);
+    assert_eq(cb.vector_dim, 64);
+    assert_eq(cb.centroids.len() as i64, 256 * 64);
+
+    println("codebook_creation: PASS");
+}
+
+rite test_codebook_memory() {
+    ≔ cb = new_codebook(4096, 128);
+    ≔ mem = codebook_memory_bytes(&cb);
+
+    // 4096 * 128 * 4 = 2097152 bytes (2MB)
+    assert_eq(mem, 2097152);
+
+    println("codebook_memory: PASS");
+}
+
+rite test_codebook_get_set() {
+    ≔ Δ cb = new_codebook(4, 3);
+
+    // Set centroid 1
+    ≔ Δ values = Vec·new();
+    values.push(1.0);
+    values.push(2.0);
+    values.push(3.0);
+
+    set_centroid(&Δ cb, 1, &values);
+
+    // Get and verify
+    ≔ retrieved = get_centroid(&cb, 1);
+    assert_eq(retrieved.len(), 3);
+    assert(retrieved[0] > 0.9 && retrieved[0] < 1.1);
+    assert(retrieved[1] > 1.9 && retrieved[1] < 2.1);
+    assert(retrieved[2] > 2.9 && retrieved[2] < 3.1);
+
+    println("codebook_get_set: PASS");
+}
+
+rite test_squared_distance() {
+    ≔ Δ a = Vec·new();
+    a.push(1.0);
+    a.push(0.0);
+    a.push(0.0);
+
+    ≔ Δ b = Vec·new();
+    b.push(0.0);
+    b.push(1.0);
+    b.push(0.0);
+
+    ≔ dist = squared_distance(&a, &b);
+    // sqrt(2) squared = 2
+    assert(dist > 1.9 && dist < 2.1);
+
+    println("squared_distance: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NctHeader Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ NctHeader {
+    magic: Vec<u8>,
+    version: u8,
+    num_layers: i64,
+    compression_ratio: f32,
+}
+
+rite new_nct_header(num_layers: i64) → NctHeader {
+    ≔ Δ magic = Vec·new();
+    magic.push(0x4E);  // N
+    magic.push(0x43);  // C
+    magic.push(0x54);  // T
+    magic.push(0x00);  // \0
+
+    NctHeader {
+        magic: magic,
+        version: 1,
+        num_layers: num_layers,
+        compression_ratio: 10.0,
+    }
+}
+
+rite validate_nct_magic(header: &NctHeader) → bool {
+    ⎇ header.magic.len() != 4 { ⤺ false; }
+    header.magic[0] == 0x4E &&
+    header.magic[1] == 0x43 &&
+    header.magic[2] == 0x54 &&
+    header.magic[3] == 0x00
+}
+
+rite test_nct_header() {
+    ≔ header = new_nct_header(32);
+
+    assert(validate_nct_magic(&header));
+    assert_eq(header.version, 1);
+    assert_eq(header.num_layers, 32);
+
+    println("nct_header: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Encoder Config Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ EncoderConfig {
+    target_ratio: f32,
+    use_residual: bool,
+    use_gpu: bool,
+}
+
+rite new_encoder_config() → EncoderConfig {
+    EncoderConfig {
+        target_ratio: 10.0,
+        use_residual: true,
+        use_gpu: false,
+    }
+}
+
+rite test_encoder_config_defaults() {
+    ≔ config = new_encoder_config();
+
+    assert(config.target_ratio > 9.9 && config.target_ratio < 10.1);
+    assert(config.use_residual);
+    assert(!config.use_gpu);
+
+    println("encoder_config_defaults: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Ratio Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite calculate_compression_ratio(original: i64, compressed: i64) → f32 {
+    ⎇ compressed > 0 {
+        original as f32 / compressed as f32
+    } ⎉ {
+        0.0
+    }
+}
+
+rite estimate_compressed_size(original: i64, bits_per_index: i64) → i64 {
+    // Original is in f32 (4 bytes each)
+    // Compressed uses bits_per_index bits per value
+    ≔ num_values = original / 4;
+    (num_values * bits_per_index + 7) / 8  // Round up to bytes
+}
+
+rite test_compression_ratio() {
+    // 16GB -> 1.6GB = 10:1
+    ≔ ratio = calculate_compression_ratio(16 * 1024, 1600);
+    assert(ratio > 9.9 && ratio < 10.3);
+
+    println("compression_ratio: PASS");
+}
+
+rite test_size_estimation() {
+    // 4096 f32 values (16KB) with 12-bit indices
+    ≔ original = 4096 * 4;  // 16384 bytes
+    ≔ estimated = estimate_compressed_size(original, 12);
+
+    // 4096 * 12 bits = 49152 bits = 6144 bytes
+    assert_eq(estimated, 6144);
+
+    println("size_estimation: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-neural Tests                      ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    // Layer type tests
+    test_layer_codebook_sizes();
+    test_layer_bits();
+    test_layer_from_name();
+
+    // Config tests
+    test_config_defaults();
+    test_config_for_layer();
+
+    // Stats tests
+    test_stats_new();
+    test_stats_utilization();
+
+    // Codebook tests
+    test_codebook_creation();
+    test_codebook_memory();
+    test_codebook_get_set();
+    test_squared_distance();
+
+    // Header tests
+    test_nct_header();
+
+    // Encoder config tests
+    test_encoder_config_defaults();
+
+    // Compression tests
+    test_compression_ratio();
+    test_size_estimation();
+
+    println("");
+    println("All tests passed!");
+}

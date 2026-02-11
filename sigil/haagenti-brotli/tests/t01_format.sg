@@ -1,0 +1,236 @@
+// Brotli Format Tests
+//
+// Tests for Brotli format encoding and constants (RFC 7932).
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Brotli stream header
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_stream_header() {
+    // Brotli stream starts with a header:
+    // - WBITS: window size (1-24 bits, encoded)
+    // - Meta-block headers follow
+
+    // Window size encoding (4 bits in simple case):
+    // WBITS 10-17 encoded directly
+    // WBITS 18-24 require prefix
+
+    // Common window sizes:
+    ≔ wbits_10 = 10;  // 1KB window
+    ≔ wbits_16 = 16;  // 64KB window
+    ≔ wbits_22 = 22;  // 4MB window (default)
+    ≔ wbits_24 = 24;  // 16MB window (max)
+
+    // Calculate window sizes
+    ≔ window_10 = 1 << wbits_10;
+    ≔ window_16 = 1 << wbits_16;
+    ≔ window_22 = 1 << wbits_22;
+    ≔ window_24 = 1 << wbits_24;
+
+    assert_eq(window_10, 1024);
+    assert_eq(window_16, 65536);
+    assert_eq(window_22, 4194304);
+    assert_eq(window_24, 16777216);
+
+    println("stream_header: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Meta-block types
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_metablock_types() {
+    // Brotli meta-block types:
+    // 0: Uncompressed
+    // 1: Empty (padding)
+    // 2: Compressed with static dictionary
+    // 3: Compressed with dynamic dictionary
+
+    ≔ mb_uncompressed = 0;
+    ≔ mb_empty = 1;
+    ≔ mb_static = 2;
+    ≔ mb_dynamic = 3;
+
+    // Uncompressed blocks just copy data
+    // Useful when data doesn't compress
+
+    // Empty blocks are for padding/alignment
+    // Contains no data
+
+    println("metablock_types: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Distance codes
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_distance_codes() {
+    // Brotli uses 4 distance ring buffer entries
+    // Recent distances can be referenced cheaply
+
+    ≔ ring_buffer_size = 4;
+    ≔ dist_code_last = 0;    // Use ring[0]
+    ≔ dist_code_second = 1;  // Use ring[1]
+    ≔ dist_code_third = 2;   // Use ring[2]
+    ≔ dist_code_fourth = 3;  // Use ring[3]
+
+    // Distance codes 4-9: ring buffer with small offsets
+    // Distance codes 10-15: additional special cases
+    // Distance codes 16+: encoded distance values
+
+    ≔ first_regular_dist = 16;
+    assert(first_regular_dist > ring_buffer_size);
+
+    println("distance_codes: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Context modes
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_context_modes() {
+    // Brotli uses context modeling based on previous bytes:
+    // - LSB6: last 6 bits of previous byte
+    // - MSB6: first 6 bits of previous byte
+    // - UTF8: optimized for UTF-8 text
+    // - Signed: for signed integers
+
+    ≔ ctx_lsb6 = 0;
+    ≔ ctx_msb6 = 1;
+    ≔ ctx_utf8 = 2;
+    ≔ ctx_signed = 3;
+
+    // Context lookups are 64-entry tables
+    ≔ ctx_table_size = 64;
+    assert_eq(ctx_table_size, 1 << 6);
+
+    println("context_modes: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Prefix codes
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_prefix_codes() {
+    // Brotli uses prefix (Huffman) codes for:
+    // - Literal values (0-255)
+    // - Insert/copy length pairs
+    // - Distance values
+
+    // Simple prefix codes can be stored compactly
+    // Complex prefix codes invoke code length encoding
+
+    // Max code lengths
+    ≔ max_literal_code_len = 15;
+    ≔ max_distance_code_len = 15;
+    ≔ max_insert_copy_len = 15;
+
+    // Number of symbols
+    ≔ num_literal_symbols = 256;
+    ≔ num_distance_symbols = 544;  // With direct codes
+
+    assert_eq(num_literal_symbols, 1 << 8);
+
+    println("prefix_codes: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Block types
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_block_types() {
+    // Brotli divides data into blocks with different coding parameters:
+    // - Literal blocks
+    // - Insert-copy blocks
+    // - Distance blocks
+
+    // Each block type has:
+    // - Type count (1-256)
+    // - Block counts
+    // - Context map (for literals)
+
+    ≔ max_block_types = 256;
+    ≔ min_block_types = 1;
+
+    // Block switch cost affects compression
+    // Fewer types = less overhead
+    // More types = better adaptation
+
+    println("block_types: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Transform IDs
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_transform_ids() {
+    // Brotli static dictionary uses 121 transforms:
+    // - Identity (word as-is)
+    // - Case changes
+    // - Prefix/suffix additions
+    // - Common patterns
+
+    ≔ num_transforms = 121;
+    ≔ identity_transform = 0;
+
+    // Some common transforms:
+    // - Add space before
+    // - Add space after
+    // - Uppercase first letter
+    // - Make all uppercase
+
+    // Dictionary words * transforms = effective dictionary size
+    ≔ dict_words = 122784;
+    ≔ effective_size = dict_words * num_transforms;
+    // = 14,856,864 effective entries
+
+    assert(effective_size > 14000000);
+
+    println("transform_ids: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Insert and copy lengths
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_insert_copy() {
+    // Brotli uses combined insert-and-copy codes
+    // Insert: number of literal bytes before match
+    // Copy: number of bytes to copy from match
+
+    // Insert-copy code ranges:
+    ≔ short_codes = 64;       // Quick codes for common cases
+    ≔ total_codes = 704;      // All insert-copy combinations
+
+    // Maximum values:
+    ≔ max_insert = 16793599;  // ~16MB
+    ≔ max_copy = 16793599;    // ~16MB
+
+    assert(max_insert > 16000000);
+    assert(max_copy > 16000000);
+
+    println("insert_copy: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-brotli Format Tests               ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_stream_header();
+    test_metablock_types();
+    test_distance_codes();
+    test_context_modes();
+    test_prefix_codes();
+    test_block_types();
+    test_transform_ids();
+    test_insert_copy();
+
+    println("");
+    println("All tests passed!");
+}

@@ -1,0 +1,15 @@
+╔════════════════════════════════════════════════╗
+║     haagenti-lz4 Block Tests                   ║
+╚════════════════════════════════════════════════╝
+
+max_compressed_size: PASS
+read_u32_le: PASS
+read_u16_le: PASS
+hash_distribution: PASS
+token_encoding: PASS
+extended_length_encoding: PASS
+match_offset: PASS
+min_match: PASS
+compression_potential: PASS
+
+All tests passed!

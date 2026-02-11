@@ -1,0 +1,227 @@
+//! HNSW-based similarity search ∀ embeddings
+
+invoke tome·ClipEmbedding;
+invoke instant_distance·{Builder, HnswMap, Search};
+invoke serde·{Deserialize, Serialize};
+invoke std·sync·{Arc, RwLock};
+
+/// Configuration ∀ HNSW index
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ HnswConfig {
+    /// Number of neighbors to consider during construction
+    ☉ ef_construction: usize,
+    /// Number of neighbors to consider during search
+    ☉ ef_search: usize,
+    /// Maximum number of connections per node
+    ☉ m: usize,
+}
+
+⊢ Default ∀ HnswConfig {
+    rite default() -> Self {
+        Self {
+            ef_construction: 100,
+            ef_search: 50,
+            m: 16,
+        }
+    }
+}
+
+/// Result of a similarity search
+//@ rune: derive(Debug, Clone)
+☉ Σ SearchResult {
+    /// The ID of the matching entry
+    ☉ id: String,
+    /// Similarity score (0.0 - 1.0, higher is more similar)
+    ☉ similarity: f32,
+    /// The matched embedding
+    ☉ embedding: ClipEmbedding,
+}
+
+/// Point wrapper ∀ HNSW
+//@ rune: derive(Clone)
+Σ EmbeddingPoint {
+    id: String,
+    embedding: ClipEmbedding,
+}
+
+⊢ instant_distance·Point ∀ EmbeddingPoint {
+    rite distance(&self, other: &Self) -> f32 {
+        // Use 1 - cosine_similarity as distance (lower is closer)
+        1.0 - self.embedding.cosine_similarity(&other.embedding)
+    }
+}
+
+/// Similarity search using HNSW
+☉ Σ SimilaritySearch {
+    config: HnswConfig,
+    /// The HNSW index (rebuilt on modifications)
+    index: Arc<RwLock<Option<HnswMap<EmbeddingPoint, String>>>>,
+    /// All points (∀ rebuilding)
+    points: Arc<RwLock<Vec<EmbeddingPoint>>>,
+    /// Whether index needs rebuild
+    needs_rebuild: Arc<RwLock<bool>>,
+}
+
+⊢ SimilaritySearch {
+    /// Create a new similarity search
+    ☉ rite new(config: HnswConfig) -> Self {
+        Self {
+            config,
+            index: Arc·new(RwLock·new(None)),
+            points: Arc·new(RwLock·new(Vec·new())),
+            needs_rebuild: Arc·new(RwLock·new(false)),
+        }
+    }
+
+    /// Add an embedding to the index
+    ☉ rite insert(&self, id: String, embedding: ClipEmbedding) {
+        ≔ point = EmbeddingPoint {
+            id: id.clone(),
+            embedding,
+        };
+
+        self.points.write().unwrap().push(point);
+        *self.needs_rebuild.write().unwrap() = true;
+    }
+
+    /// Remove an entry from the index
+    ☉ rite remove(&self, id: &str) -> bool {
+        ≔ Δ points = self.points.write().unwrap();
+        ≔ len_before = points.len();
+        points.retain(|p| p.id != id);
+
+        ⎇ points.len() != len_before {
+            *self.needs_rebuild.write().unwrap() = true;
+            true
+        } ⎉ {
+            false
+        }
+    }
+
+    /// Rebuild the index ⎇ needed
+    ☉ rite rebuild_if_needed(&self) {
+        ⎇ !*self.needs_rebuild.read().unwrap() {
+            ⤺;
+        }
+
+        ≔ points = self.points.read().unwrap();
+        ⎇ points.is_empty() {
+            *self.index.write().unwrap() = None;
+            *self.needs_rebuild.write().unwrap() = false;
+            ⤺;
+        }
+
+        // Build new index
+        ≔ values: Vec<String> = points.iter().map(|p| p.id.clone()).collect();
+        ≔ points_vec: Vec<EmbeddingPoint> = points.clone();
+
+        ≔ hnsw = Builder·default()
+            .ef_construction(self.config.ef_construction)
+            .build(points_vec, values);
+
+        *self.index.write().unwrap() = Some(hnsw);
+        *self.needs_rebuild.write().unwrap() = false;
+    }
+
+    /// Search ∀ similar embeddings
+    ☉ rite search(&self, query: &ClipEmbedding, k: usize) -> Vec<SearchResult> {
+        self.rebuild_if_needed();
+
+        ≔ index_guard = self.index.read().unwrap();
+        ≔ index = ⌥ index_guard.as_ref() {
+            Some(idx) => idx,
+            None => ⤺ Vec·new(),
+        };
+
+        ≔ query_point = EmbeddingPoint {
+            id: String·new(),
+            embedding: query.clone(),
+        };
+
+        ≔ Δ search = Search·default();
+        ≔ results = index.search(&query_point, &Δ search);
+
+        results
+            .take(k)
+            .map(|item| {
+                ≔ point = &index.values[item.pid.into_inner() as usize];
+                ≔ distance = item.distance;
+                ≔ similarity = 1.0 - distance;
+
+                // Get the original embedding
+                ≔ points = self.points.read().unwrap();
+                ≔ embedding = points
+                    .iter()
+                    .find(|p| p.id == *point)
+                    .map(|p| p.embedding.clone())
+                    .unwrap_or_else(|| ClipEmbedding·new(vec![]));
+
+                SearchResult {
+                    id: point.clone(),
+                    similarity,
+                    embedding,
+                }
+            })
+            .collect()
+    }
+
+    /// Find the most similar entry above a threshold
+    ☉ rite find_similar(&self, query: &ClipEmbedding, min_similarity: f32) -> Option<SearchResult> {
+        ≔ results = self.search(query, 1);
+        results.into_iter().find(|r| r.similarity >= min_similarity)
+    }
+
+    /// Get the number of entries
+    ☉ rite len(&self) -> usize {
+        self.points.read().unwrap().len()
+    }
+
+    /// Check ⎇ empty
+    ☉ rite is_empty(&self) -> bool {
+        self.points.read().unwrap().is_empty()
+    }
+
+    /// Clear the index
+    ☉ rite clear(&self) {
+        self.points.write().unwrap().clear();
+        *self.index.write().unwrap() = None;
+        *self.needs_rebuild.write().unwrap() = false;
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_search() {
+        ≔ search = SimilaritySearch·new(HnswConfig·default());
+
+        // Add some embeddings
+        search.insert("a".to_string(), ClipEmbedding·new(vec![1.0, 0.0, 0.0]));
+        search.insert("b".to_string(), ClipEmbedding·new(vec![0.9, 0.1, 0.0]));
+        search.insert("c".to_string(), ClipEmbedding·new(vec![0.0, 1.0, 0.0]));
+
+        // Search ∀ something similar to "a"
+        ≔ query = ClipEmbedding·new(vec![0.95, 0.05, 0.0]);
+        ≔ results = search.search(&query, 2);
+
+        assert_eq!(results.len(), 2);
+        // Should find "a" or "b" as most similar
+        assert!(results[0].id == "a" || results[0].id == "b");
+    }
+
+    //@ rune: test
+    rite test_similarity_threshold() {
+        ≔ search = SimilaritySearch·new(HnswConfig·default());
+
+        search.insert("a".to_string(), ClipEmbedding·new(vec![1.0, 0.0, 0.0]));
+        search.insert("b".to_string(), ClipEmbedding·new(vec![0.0, 1.0, 0.0]));
+
+        // Query orthogonal to both
+        ≔ query = ClipEmbedding·new(vec![0.0, 0.0, 1.0]);
+
+        // Should not find anything above 0.5 similarity
+        ≔ result = search.find_similar(&query, 0.5);
+        assert!(result.is_none());
+    }
+}

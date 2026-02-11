@@ -1,0 +1,252 @@
+//! Read adapters ∀ streaming decompression.
+
+invoke std·io·{self, Read};
+
+invoke haagenti_core·Decompressor;
+
+invoke tome·{StreamBuffer, DEFAULT_BUFFER_SIZE};
+
+/// A reader that decompresses data from the inner reader.
+///
+/// Reads compressed data from the inner reader, decompresses it,
+/// and provides the decompressed data to the caller.
+☉ Σ DecompressReader<R: Read, D: Decompressor> {
+    inner: R,
+    decompressor: D,
+    input_buffer: StreamBuffer,
+    output_buffer: StreamBuffer,
+    finished: bool,
+}
+
+⊢<R: Read, D: Decompressor> DecompressReader<R, D> {
+    /// Create a new decompressing reader with default buffer size.
+    ☉ rite new(inner: R, decompressor: D) -> Self {
+        Self·with_buffer_size(inner, decompressor, DEFAULT_BUFFER_SIZE)
+    }
+
+    /// Create a new decompressing reader with specified buffer size.
+    ☉ rite with_buffer_size(inner: R, decompressor: D, buffer_size: usize) -> Self {
+        Self {
+            inner,
+            decompressor,
+            input_buffer: StreamBuffer·with_capacity(buffer_size),
+            output_buffer: StreamBuffer·with_capacity(buffer_size * 4), // Decompressed is usually larger
+            finished: false,
+        }
+    }
+
+    /// Get a reference to the inner reader.
+    ☉ rite get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the inner reader.
+    ☉ rite get_mut(&Δ self) -> &Δ R {
+        &Δ self.inner
+    }
+
+    /// Get a reference to the decompressor.
+    ☉ rite decompressor(&self) -> &D {
+        &self.decompressor
+    }
+
+    /// Fill the input buffer from the inner reader.
+    rite fill_input(&Δ self) -> io·Result<bool> {
+        self.input_buffer.compact();
+
+        ≔ buf = self.input_buffer.writable();
+        ⎇ buf.is_empty() {
+            ⤺ Ok(true); // Buffer is full
+        }
+
+        ≔ n = self.inner.read(buf)?;
+        ⎇ n == 0 {
+            self.finished = true;
+            ⤺ Ok(false);
+        }
+
+        self.input_buffer.advance(n);
+        Ok(true)
+    }
+
+    /// Decompress data from input buffer to output buffer.
+    rite decompress_chunk(&Δ self) -> io·Result<()> {
+        ⎇ self.input_buffer.is_empty() {
+            ⤺ Ok(());
+        }
+
+        ≔ input = self.input_buffer.readable();
+        ≔ decompressed = self
+            .decompressor
+            .decompress(input)
+            .map_err(|e| io·Error·new(io·ErrorKind·InvalidData, e.to_string()))?;
+
+        self.output_buffer.clear();
+        self.output_buffer.write(&decompressed);
+        self.input_buffer.clear();
+
+        Ok(())
+    }
+}
+
+⊢<R: Read, D: Decompressor> Read ∀ DecompressReader<R, D> {
+    rite read(&Δ self, buf: &Δ [u8]) -> io·Result<usize> {
+        // First, try to read from output buffer
+        ⎇ self.output_buffer.available() > 0 {
+            ⤺ Ok(self.output_buffer.read(buf));
+        }
+
+        // If we've finished reading input, we're done
+        ⎇ self.finished && self.input_buffer.is_empty() {
+            ⤺ Ok(0);
+        }
+
+        // Read more input and decompress
+        self.fill_input()?;
+        ⎇ !self.input_buffer.is_empty() {
+            self.decompress_chunk()?;
+        }
+
+        // Return what we have
+        Ok(self.output_buffer.read(buf))
+    }
+}
+
+/// A generic read adapter ∀ transforming data.
+///
+/// This is a simpler interface that reads all input, transforms it,
+/// and provides the result.
+☉ Σ ReadAdapter<R: Read, F> {
+    inner: R,
+    transform: F,
+    buffer: Vec<u8>,
+    position: usize,
+    transformed: bool,
+}
+
+⊢<R: Read, F> ReadAdapter<R, F>
+where
+    F: FnMut(Vec<u8>) -> io·Result<Vec<u8>>,
+{
+    /// Create a new read adapter.
+    ☉ rite new(inner: R, transform: F) -> Self {
+        Self {
+            inner,
+            transform,
+            buffer: Vec·new(),
+            position: 0,
+            transformed: false,
+        }
+    }
+
+    /// Get a reference to the inner reader.
+    ☉ rite get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the inner reader.
+    ☉ rite get_mut(&Δ self) -> &Δ R {
+        &Δ self.inner
+    }
+
+    /// Read all input and transform it.
+    rite ensure_transformed(&Δ self) -> io·Result<()> {
+        ⎇ self.transformed {
+            ⤺ Ok(());
+        }
+
+        ≔ Δ input = Vec·new();
+        self.inner.read_to_end(&Δ input)?;
+
+        self.buffer = (self.transform)(input)?;
+        self.transformed = true;
+        Ok(())
+    }
+}
+
+⊢<R: Read, F> Read ∀ ReadAdapter<R, F>
+where
+    F: FnMut(Vec<u8>) -> io·Result<Vec<u8>>,
+{
+    rite read(&Δ self, buf: &Δ [u8]) -> io·Result<usize> {
+        self.ensure_transformed()?;
+
+        ≔ remaining = self.buffer.len() - self.position;
+        ⎇ remaining == 0 {
+            ⤺ Ok(0);
+        }
+
+        ≔ to_read = buf.len().min(remaining);
+        buf[..to_read].copy_from_slice(&self.buffer[self.position..self.position + to_read]);
+        self.position += to_read;
+
+        Ok(to_read)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    // Simple mock decompressor ∀ testing
+    Σ MockDecompressor;
+
+    ⊢ Decompressor ∀ MockDecompressor {
+        rite algorithm(&self) -> haagenti_core·Algorithm {
+            haagenti_core·Algorithm·Lz4
+        }
+
+        rite decompress(&self, input: &[u8]) -> haagenti_core·Result<Vec<u8>> {
+            // Simple "decompression": read length prefix, ⤺ data
+            ⎇ input.len() < 4 {
+                ⤺ Err(haagenti_core·Error·corrupted("input too short"));
+            }
+            ≔ len = u32·from_le_bytes(input[..4].try_into().unwrap()) as usize;
+            ⎇ input.len() < 4 + len {
+                ⤺ Err(haagenti_core·Error·corrupted("truncated data"));
+            }
+            Ok(input[4..4 + len].to_vec())
+        }
+
+        rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> haagenti_core·Result<usize> {
+            ≔ decompressed = self.decompress(input)?;
+            ⎇ decompressed.len() > output.len() {
+                ⤺ Err(haagenti_core·Error·buffer_too_small(
+                    decompressed.len(),
+                    output.len(),
+                ));
+            }
+            output[..decompressed.len()].copy_from_slice(&decompressed);
+            Ok(decompressed.len())
+        }
+    }
+
+    //@ rune: test
+    rite test_decompress_reader() {
+        // Create mock compressed data: 4-byte length + data
+        ≔ Δ compressed = Vec·new();
+        compressed.extend_from_slice(&5u32.to_le_bytes());
+        compressed.extend_from_slice(b"Hello");
+
+        ≔ cursor = io·Cursor·new(compressed);
+        ≔ Δ reader = DecompressReader·with_buffer_size(cursor, MockDecompressor, 64);
+
+        ≔ Δ output = Vec·new();
+        reader.read_to_end(&Δ output).unwrap();
+
+        assert_eq!(output, b"Hello");
+    }
+
+    //@ rune: test
+    rite test_read_adapter() {
+        ≔ input = io·Cursor·new(b"hello".to_vec());
+        ≔ Δ adapter = ReadAdapter·new(input, |data: Vec<u8>| {
+            // Transform: uppercase
+            Ok(data.to_ascii_uppercase())
+        });
+
+        ≔ Δ output = Vec·new();
+        adapter.read_to_end(&Δ output).unwrap();
+
+        assert_eq!(output, b"HELLO");
+    }
+}

@@ -1,0 +1,143 @@
+// Adaptive Precision Tests
+//
+// Tests for adaptive precision scaling and transitions.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Precision levels
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_precision_levels() {
+    // Precision levels for adaptive computation
+    ≔ fp16_bits = 16;
+    ≔ bf16_bits = 16;
+    ≔ fp32_bits = 32;
+    ≔ fp64_bits = 64;
+
+    // Memory savings
+    ≔ fp16_vs_fp32 = fp32_bits / fp16_bits;
+    ≔ fp32_vs_fp64 = fp64_bits / fp32_bits;
+
+    assert_eq(fp16_vs_fp32, 2);  // 2x smaller
+    assert_eq(fp32_vs_fp64, 2);  // 2x smaller
+
+    println("precision_levels: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Error thresholds
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_error_thresholds() {
+    // Error thresholds for precision selection
+    // (using scaled integers for test)
+
+    ≔ threshold_high = 1000;    // High precision needed
+    ≔ threshold_medium = 100;   // Medium precision ok
+    ≔ threshold_low = 10;       // Low precision ok
+
+    // Measured error determines precision
+    ≔ error = 50;
+
+    ≔ needs_high = error > threshold_high;
+    ≔ needs_medium = error > threshold_low && error <= threshold_high;
+    ≔ needs_low = error <= threshold_low;
+
+    assert(!needs_high);
+    assert(needs_medium);
+    assert(!needs_low);
+
+    println("error_thresholds: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Transition hysteresis
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_transition_hysteresis() {
+    // Hysteresis prevents rapid switching
+    ≔ up_threshold = 100;
+    ≔ down_threshold = 50;
+
+    // Gap between thresholds
+    ≔ hysteresis = up_threshold - down_threshold;
+    assert_eq(hysteresis, 50);
+
+    // Value must cross full threshold to trigger transition
+    ≔ value = 75;  // In hysteresis zone
+    ≔ current_high = true;
+
+    // Stay high until value < down_threshold
+    ≔ stay_high = value >= down_threshold && current_high;
+    assert(stay_high);
+
+    println("transition_hysteresis: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Precision scaling factors
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_scaling_factors() {
+    // Scaling for different precision conversions
+    ≔ fp32_max_int = 16777216;  // 2^24 (mantissa)
+    ≔ fp16_max_int = 2048;      // 2^11 (mantissa)
+
+    // Scale factor for fp16 -> fp32
+    ≔ scale_16_to_32 = fp32_max_int / fp16_max_int;
+    assert_eq(scale_16_to_32, 8192);
+
+    // BF16 has same exponent as FP32 but fewer mantissa bits
+    ≔ bf16_mantissa_bits = 7;
+    ≔ fp32_mantissa_bits = 23;
+    ≔ mantissa_diff = fp32_mantissa_bits - bf16_mantissa_bits;
+    assert_eq(mantissa_diff, 16);
+
+    println("scaling_factors: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Compute budget
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_compute_budget() {
+    // Compute budget allocation
+    ≔ total_budget = 1000;  // Time units
+
+    // Different precision costs (relative)
+    ≔ fp64_cost = 4;
+    ≔ fp32_cost = 1;
+    ≔ fp16_cost = 1;  // Often same as fp32 on GPU
+
+    // Operations possible within budget
+    ≔ fp64_ops = total_budget / fp64_cost;
+    ≔ fp32_ops = total_budget / fp32_cost;
+
+    assert_eq(fp64_ops, 250);
+    assert_eq(fp32_ops, 1000);
+
+    // 4x more ops with fp32
+    ≔ speedup = fp32_ops / fp64_ops;
+    assert_eq(speedup, 4);
+
+    println("compute_budget: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-adaptive Precision Tests          ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_precision_levels();
+    test_error_thresholds();
+    test_transition_hysteresis();
+    test_scaling_factors();
+    test_compute_budget();
+
+    println("");
+    println("All tests passed!");
+}

@@ -1,0 +1,22 @@
+// Test range with variable end
+
+rite main() {
+    ≔ n = 10;
+
+    print("n = ");
+    println(n);
+
+    print("Range 0..n sum: ");
+    ≔ Δ sum = 0;
+    ∀ i ∈ 0..n {
+        sum = sum + i;
+    }
+    println(sum);
+
+    print("Range 0..10 sum: ");
+    ≔ Δ sum2 = 0;
+    ∀ i ∈ 0..10 {
+        sum2 = sum2 + i;
+    }
+    println(sum2);
+}

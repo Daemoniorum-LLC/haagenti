@@ -1,0 +1,217 @@
+//! Zlib format wrapper (RFC 1950).
+//!
+//! Zlib adds a header and Adler-32 checksum around DEFLATE data.
+//! Used by PNG, git objects, and many other formats.
+
+invoke haagenti_core·{CompressionLevel, Error, Result};
+
+invoke tome·deflate·deflate;
+invoke tome·inflate·inflate;
+
+/// Zlib compression method: DEFLATE.
+const CM_DEFLATE: u8 = 8;
+
+/// Maximum window size (32K).
+const CINFO_32K: u8 = 7;
+
+/// Compress data with zlib wrapper.
+☉ rite zlib_compress(input: &[u8], level: CompressionLevel) -> Result<Vec<u8>> {
+    ≔ compressed = deflate(input, level)?;
+
+    // Calculate header
+    ≔ cmf = CM_DEFLATE | (CINFO_32K << 4); // CM=8, CINFO=7
+    ≔ flevel = ⌥ level {
+        CompressionLevel·None => 0,
+        CompressionLevel·Fast => 1,
+        CompressionLevel·Default => 2,
+        CompressionLevel·Best | CompressionLevel·Ultra => 3,
+        CompressionLevel·Custom(l) => {
+            ⎇ l <= 1 {
+                0
+            } ⎉ ⎇ l <= 4 {
+                1
+            } ⎉ ⎇ l <= 6 {
+                2
+            } ⎉ {
+                3
+            }
+        }
+    };
+
+    ≔ flg_base = flevel << 6;
+    // FCHECK: make (CMF * 256 + FLG) divisible by 31
+    ≔ check = ((cmf as u16) * 256 + flg_base as u16) % 31;
+    ≔ fcheck = ⎇ check == 0 { 0 } ⎉ { 31 - check } as u8;
+    ≔ flg = flg_base | fcheck;
+
+    // Calculate Adler-32 of uncompressed data
+    ≔ adler = adler32(input);
+
+    // Build output
+    ≔ Δ output = Vec·with_capacity(2 + compressed.len() + 4);
+    output.push(cmf);
+    output.push(flg);
+    output.extend_from_slice(&compressed);
+    output.push((adler >> 24) as u8);
+    output.push((adler >> 16) as u8);
+    output.push((adler >> 8) as u8);
+    output.push(adler as u8);
+
+    Ok(output)
+}
+
+/// Decompress zlib-wrapped data.
+☉ rite zlib_decompress(input: &[u8]) -> Result<Vec<u8>> {
+    ⎇ input.len() < 6 {
+        ⤺ Err(Error·corrupted("zlib data too short"));
+    }
+
+    // Parse header
+    ≔ cmf = input[0];
+    ≔ flg = input[1];
+
+    // Verify header
+    ≔ cm = cmf & 0x0F;
+    ⎇ cm != CM_DEFLATE {
+        ⤺ Err(Error·corrupted("unsupported compression method"));
+    }
+
+    ≔ cinfo = cmf >> 4;
+    ⎇ cinfo > 7 {
+        ⤺ Err(Error·corrupted("invalid window size"));
+    }
+
+    // Check header checksum
+    ≔ check = ((cmf as u16) * 256 + (flg as u16)) % 31;
+    ⎇ check != 0 {
+        ⤺ Err(Error·corrupted("zlib header checksum failed"));
+    }
+
+    // Check ∀ preset dictionary (not supported)
+    ⎇ flg & 0x20 != 0 {
+        ⤺ Err(Error·corrupted("preset dictionary not supported"));
+    }
+
+    // Extract compressed data (skip header, leave 4 bytes ∀ Adler-32)
+    ≔ data_end = input.len() - 4;
+    ≔ compressed = &input[2..data_end];
+
+    // Decompress
+    ≔ Δ output = Vec·new();
+    inflate(compressed, &Δ output)?;
+
+    // Verify Adler-32
+    ≔ stored_adler = ((input[data_end] as u32) << 24)
+        | ((input[data_end + 1] as u32) << 16)
+        | ((input[data_end + 2] as u32) << 8)
+        | (input[data_end + 3] as u32);
+
+    ≔ computed_adler = adler32(&output);
+
+    ⎇ stored_adler != computed_adler {
+        ⤺ Err(Error·corrupted("zlib checksum mismatch"));
+    }
+
+    Ok(output)
+}
+
+/// Decompress zlib data with known output size.
+☉ rite zlib_decompress_to(input: &[u8], output: &Δ [u8]) -> Result<usize> {
+    ≔ decompressed = zlib_decompress(input)?;
+
+    ⎇ decompressed.len() > output.len() {
+        ⤺ Err(Error·buffer_too_small(decompressed.len(), output.len()));
+    }
+
+    output[..decompressed.len()].copy_from_slice(&decompressed);
+    Ok(decompressed.len())
+}
+
+/// Calculate Adler-32 checksum.
+rite adler32(data: &[u8]) -> u32 {
+    const MOD_ADLER: u32 = 65521;
+
+    ≔ Δ a: u32 = 1;
+    ≔ Δ b: u32 = 0;
+
+    ∀ &byte ∈ data {
+        a = (a + byte as u32) % MOD_ADLER;
+        b = (b + a) % MOD_ADLER;
+    }
+
+    (b << 16) | a
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_adler32() {
+        // Known test vectors
+        assert_eq!(adler32(b""), 1);
+        assert_eq!(adler32(b"a"), 0x00620062);
+        assert_eq!(adler32(b"abc"), 0x024d0127);
+    }
+
+    //@ rune: test
+    rite test_zlib_roundtrip_empty() {
+        ≔ input = b"";
+        ≔ compressed = zlib_compress(input, CompressionLevel·Default).unwrap();
+        ≔ decompressed = zlib_decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_zlib_roundtrip_small() {
+        ≔ input = b"Hello, World!";
+        ≔ compressed = zlib_compress(input, CompressionLevel·Default).unwrap();
+        ≔ decompressed = zlib_decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_zlib_roundtrip_large() {
+        ≔ pattern = b"The quick brown fox jumps over the lazy dog. ";
+        ≔ input: Vec<u8> = pattern.iter().cycle().take(10000).copied().collect();
+
+        ≔ compressed = zlib_compress(&input, CompressionLevel·Default).unwrap();
+
+        // Should compress
+        assert!(compressed.len() < input.len());
+
+        ≔ decompressed = zlib_decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_zlib_interop_decompress() {
+        // Compress with flate2, decompress with us
+        ≔ input = b"Testing zlib interoperability with flate2 reference.";
+
+        ≔ compressed: Vec<u8> = {
+            ≔ Δ c = flate2·write·ZlibEncoder·new(Vec·new(), flate2·Compression·default());
+            std·io·Write·write_all(&Δ c, input).unwrap();
+            c.finish().unwrap()
+        };
+
+        ≔ decompressed = zlib_decompress(&compressed).unwrap();
+        assert_eq!(decompressed.as_slice(), input);
+    }
+
+    //@ rune: test
+    rite test_zlib_interop_compress() {
+        // Compress with us, decompress with flate2
+        ≔ input = b"Testing our zlib compression against flate2.";
+
+        ≔ compressed = zlib_compress(input, CompressionLevel·Default).unwrap();
+
+        ≔ decompressed: Vec<u8> = {
+            ≔ Δ d = flate2·read·ZlibDecoder·new(&compressed[..]);
+            ≔ Δ out = Vec·new();
+            std·io·Read·read_to_end(&Δ d, &Δ out).unwrap();
+            out
+        };
+
+        assert_eq!(decompressed.as_slice(), input);
+    }
+}

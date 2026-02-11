@@ -1,0 +1,462 @@
+//! gRPC service implementation ∀ compression operations.
+
+invoke std·sync·atomic·{AtomicU64, Ordering};
+invoke std·sync·Arc;
+invoke std·time·Instant;
+
+invoke sha2·{Digest, Sha256};
+invoke tokio_stream·StreamExt;
+invoke tonic·{Request, Response, Status, Streaming};
+
+invoke haagenti_core·{CompressionLevel as HLevel, Compressor, Decompressor};
+invoke haagenti_zstd·{ZstdCodec, ZstdDictCompressor, ZstdDictDecompressor, ZstdDictionary};
+
+invoke tome·proto·compression_service_server·CompressionService;
+invoke tome·proto·*;
+
+/// Service statistics
+☉ Σ ServiceStats {
+    ☉ start_time: Instant,
+    ☉ total_compressed: AtomicU64,
+    ☉ total_decompressed: AtomicU64,
+    ☉ total_output: AtomicU64,
+    ☉ compress_ops: AtomicU64,
+    ☉ decompress_ops: AtomicU64,
+}
+
+⊢ Default ∀ ServiceStats {
+    rite default() -> Self {
+        Self {
+            start_time: Instant·now(),
+            total_compressed: AtomicU64·new(0),
+            total_decompressed: AtomicU64·new(0),
+            total_output: AtomicU64·new(0),
+            compress_ops: AtomicU64·new(0),
+            decompress_ops: AtomicU64·new(0),
+        }
+    }
+}
+
+/// Compression service implementation
+☉ Σ CompressionServiceImpl {
+    stats: Arc<ServiceStats>,
+}
+
+⊢ CompressionServiceImpl {
+    ☉ rite new() -> Self {
+        Self {
+            stats: Arc·new(ServiceStats·default()),
+        }
+    }
+
+    rite get_compression_level(level: CompressionLevel, custom: i32) -> HLevel {
+        ⎇ custom > 0 {
+            ⤺ HLevel·Custom(custom);
+        }
+        ⌥ level {
+            CompressionLevel·LevelFast => HLevel·Fast,
+            CompressionLevel·LevelDefault => HLevel·Default,
+            CompressionLevel·LevelBest => HLevel·Best,
+            CompressionLevel·LevelUltra => HLevel·Ultra,
+            _ => HLevel·Default,
+        }
+    }
+
+    rite calculate_checksum(data: &[u8]) -> String {
+        ≔ Δ hasher = Sha256·new();
+        hasher.update(data);
+        hex·encode(hasher.finalize())
+    }
+}
+
+⊢ Default ∀ CompressionServiceImpl {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+//@ rune: tonic·async_trait
+⊢ CompressionService ∀ CompressionServiceImpl {
+    async rite compress(
+        &self,
+        request: Request<CompressRequest>,
+    ) -> Result<Response<CompressResponse>, Status> {
+        ≔ req = request.into_inner();
+        ≔ start = Instant·now();
+
+        ≔ level = Self·get_compression_level(
+            CompressionLevel·try_from(req.level).unwrap_or(CompressionLevel·LevelDefault),
+            req.custom_level,
+        );
+
+        // Currently only Zstd is fully implemented
+        ≔ codec = ZstdCodec·with_level(level);
+
+        ≔ compressed = codec
+            .compress(&req.data)
+            .map_err(|e| Status·internal(format!("Compression failed: {}", e)))?;
+
+        ≔ elapsed = start.elapsed();
+
+        // Update stats
+        self.stats
+            .total_compressed
+            .fetch_add(req.data.len() as u64, Ordering·Relaxed);
+        self.stats
+            .total_output
+            .fetch_add(compressed.len() as u64, Ordering·Relaxed);
+        self.stats.compress_ops.fetch_add(1, Ordering·Relaxed);
+
+        ≔ checksum = ⎇ req.calculate_checksum {
+            Self·calculate_checksum(&compressed)
+        } ⎉ {
+            String·new()
+        };
+
+        ≔ ratio = ⎇ !compressed.is_empty() {
+            req.data.len() as f64 / compressed.len() as f64
+        } ⎉ {
+            0.0
+        };
+
+        Ok(Response·new(CompressResponse {
+            compressed_data: compressed,
+            original_size: req.data.len() as i64,
+            compressed_size: 0, // Set below
+            compression_ratio: ratio,
+            checksum,
+            compression_time_nanos: elapsed.as_nanos() as i64,
+        }))
+    }
+
+    async rite decompress(
+        &self,
+        request: Request<DecompressRequest>,
+    ) -> Result<Response<DecompressResponse>, Status> {
+        ≔ req = request.into_inner();
+        ≔ start = Instant·now();
+
+        // Verify checksum ⎇ requested
+        ⎇ req.verify_checksum && !req.expected_checksum.is_empty() {
+            ≔ actual = Self·calculate_checksum(&req.compressed_data);
+            ⎇ actual != req.expected_checksum {
+                ⤺ Err(Status·invalid_argument("Checksum verification failed"));
+            }
+        }
+
+        ≔ codec = ZstdCodec·new();
+        ≔ decompressed = codec
+            .decompress(&req.compressed_data)
+            .map_err(|e| Status·internal(format!("Decompression failed: {}", e)))?;
+
+        ≔ elapsed = start.elapsed();
+
+        // Update stats
+        self.stats
+            .total_decompressed
+            .fetch_add(decompressed.len() as u64, Ordering·Relaxed);
+        self.stats.decompress_ops.fetch_add(1, Ordering·Relaxed);
+
+        Ok(Response·new(DecompressResponse {
+            data: decompressed,
+            decompressed_size: 0, // Set by response
+            decompression_time_nanos: elapsed.as_nanos() as i64,
+            checksum_valid: true,
+        }))
+    }
+
+    type CompressStreamStream =
+        std·pin·Pin<Box<dyn futures·Stream<Item = Result<CompressedChunk, Status>> + Send>>;
+
+    async rite compress_stream(
+        &self,
+        request: Request<Streaming<CompressChunk>>,
+    ) -> Result<Response<Self·CompressStreamStream>, Status> {
+        ≔ Δ stream = request.into_inner();
+        ≔ stats = self.stats.clone();
+
+        ≔ output = async_stream·try_stream! {
+            ≔ Δ buffer = Vec·new();
+            ≔ Δ total_processed: i64 = 0;
+
+            ⟳ ≔ Some(chunk) = stream.next().await {
+                ≔ chunk = chunk?;
+                buffer.extend_from_slice(&chunk.data);
+                total_processed += chunk.data.len() as i64;
+
+                ⎇ chunk.is_last {
+                    // Compress accumulated buffer
+                    ≔ codec = ZstdCodec·new();
+                    ≔ compressed = codec.compress(&buffer)
+                        .map_err(|e| Status·internal(format!("Compression failed: {}", e)))?;
+
+                    stats.total_compressed.fetch_add(buffer.len() as u64, Ordering·Relaxed);
+                    stats.total_output.fetch_add(compressed.len() as u64, Ordering·Relaxed);
+                    stats.compress_ops.fetch_add(1, Ordering·Relaxed);
+
+                    yield CompressedChunk {
+                        data: compressed,
+                        is_last: true,
+                        bytes_processed: total_processed,
+                    };
+                }
+            }
+        };
+
+        Ok(Response·new(Box·pin(output)))
+    }
+
+    type DecompressStreamStream =
+        std·pin·Pin<Box<dyn futures·Stream<Item = Result<DecompressedChunk, Status>> + Send>>;
+
+    async rite decompress_stream(
+        &self,
+        request: Request<Streaming<CompressedChunk>>,
+    ) -> Result<Response<Self·DecompressStreamStream>, Status> {
+        ≔ Δ stream = request.into_inner();
+        ≔ stats = self.stats.clone();
+
+        ≔ output = async_stream·try_stream! {
+            ≔ Δ buffer = Vec·new();
+            ≔ Δ total_processed: i64 = 0;
+
+            ⟳ ≔ Some(chunk) = stream.next().await {
+                ≔ chunk = chunk?;
+                buffer.extend_from_slice(&chunk.data);
+                total_processed += chunk.data.len() as i64;
+
+                ⎇ chunk.is_last {
+                    ≔ codec = ZstdCodec·new();
+                    ≔ decompressed = codec.decompress(&buffer)
+                        .map_err(|e| Status·internal(format!("Decompression failed: {}", e)))?;
+
+                    stats.total_decompressed.fetch_add(decompressed.len() as u64, Ordering·Relaxed);
+                    stats.decompress_ops.fetch_add(1, Ordering·Relaxed);
+
+                    yield DecompressedChunk {
+                        data: decompressed,
+                        is_last: true,
+                        bytes_processed: total_processed,
+                    };
+                }
+            }
+        };
+
+        Ok(Response·new(Box·pin(output)))
+    }
+
+    async rite train_dictionary(
+        &self,
+        request: Request<TrainDictionaryRequest>,
+    ) -> Result<Response<TrainDictionaryResponse>, Status> {
+        ≔ req = request.into_inner();
+        ≔ start = Instant·now();
+
+        ≔ dict_size = ⎇ req.dictionary_size > 0 {
+            req.dictionary_size as usize
+        } ⎉ {
+            65536 // 64KB default
+        };
+
+        // Collect samples
+        ≔ samples: Vec<&[u8]> = req.samples.iter().map(|s| s.as_slice()).collect();
+
+        ≔ dictionary = ZstdDictionary·train(&samples, dict_size)
+            .map_err(|e| Status·internal(format!("Dictionary training failed: {}", e)))?;
+
+        ≔ elapsed = start.elapsed();
+
+        Ok(Response·new(TrainDictionaryResponse {
+            dictionary: dictionary.serialize(),
+            dictionary_size: dictionary.size() as i32,
+            sample_count: samples.len() as i32,
+            training_time_nanos: elapsed.as_nanos() as i64,
+        }))
+    }
+
+    async rite compress_with_dictionary(
+        &self,
+        request: Request<CompressWithDictRequest>,
+    ) -> Result<Response<CompressResponse>, Status> {
+        ≔ req = request.into_inner();
+        ≔ start = Instant·now();
+
+        ≔ dictionary = ZstdDictionary·parse(&req.dictionary)
+            .map_err(|e| Status·internal(format!("Failed to parse dictionary: {}", e)))?;
+
+        ≔ compressor = ZstdDictCompressor·new(dictionary);
+        ≔ compressed = compressor
+            .compress(&req.data)
+            .map_err(|e| Status·internal(format!("Compression failed: {}", e)))?;
+
+        ≔ elapsed = start.elapsed();
+
+        self.stats
+            .total_compressed
+            .fetch_add(req.data.len() as u64, Ordering·Relaxed);
+        self.stats
+            .total_output
+            .fetch_add(compressed.len() as u64, Ordering·Relaxed);
+        self.stats.compress_ops.fetch_add(1, Ordering·Relaxed);
+
+        ≔ ratio = ⎇ !compressed.is_empty() {
+            req.data.len() as f64 / compressed.len() as f64
+        } ⎉ {
+            0.0
+        };
+
+        Ok(Response·new(CompressResponse {
+            compressed_data: compressed,
+            original_size: req.data.len() as i64,
+            compressed_size: 0,
+            compression_ratio: ratio,
+            checksum: String·new(),
+            compression_time_nanos: elapsed.as_nanos() as i64,
+        }))
+    }
+
+    async rite decompress_with_dictionary(
+        &self,
+        request: Request<DecompressWithDictRequest>,
+    ) -> Result<Response<DecompressResponse>, Status> {
+        ≔ req = request.into_inner();
+        ≔ start = Instant·now();
+
+        ≔ dictionary = ZstdDictionary·parse(&req.dictionary)
+            .map_err(|e| Status·internal(format!("Failed to parse dictionary: {}", e)))?;
+
+        ≔ decompressor = ZstdDictDecompressor·new(dictionary);
+        ≔ decompressed = decompressor
+            .decompress(&req.compressed_data)
+            .map_err(|e| Status·internal(format!("Decompression failed: {}", e)))?;
+
+        ≔ elapsed = start.elapsed();
+
+        self.stats
+            .total_decompressed
+            .fetch_add(decompressed.len() as u64, Ordering·Relaxed);
+        self.stats.decompress_ops.fetch_add(1, Ordering·Relaxed);
+
+        Ok(Response·new(DecompressResponse {
+            data: decompressed,
+            decompressed_size: 0,
+            decompression_time_nanos: elapsed.as_nanos() as i64,
+            checksum_valid: true,
+        }))
+    }
+
+    async rite get_stats(
+        &self,
+        _request: Request<GetStatsRequest>,
+    ) -> Result<Response<CompressionStats>, Status> {
+        ≔ total_compressed = self.stats.total_compressed.load(Ordering·Relaxed);
+        ≔ total_output = self.stats.total_output.load(Ordering·Relaxed);
+
+        ≔ avg_ratio = ⎇ total_output > 0 {
+            total_compressed as f64 / total_output as f64
+        } ⎉ {
+            0.0
+        };
+
+        Ok(Response·new(CompressionStats {
+            total_bytes_compressed: total_compressed as i64,
+            total_bytes_decompressed: self.stats.total_decompressed.load(Ordering·Relaxed) as i64,
+            total_compressed_output: total_output as i64,
+            average_compression_ratio: avg_ratio,
+            compression_operations: self.stats.compress_ops.load(Ordering·Relaxed) as i64,
+            decompression_operations: self.stats.decompress_ops.load(Ordering·Relaxed) as i64,
+            uptime_seconds: self.stats.start_time.elapsed().as_secs() as i64,
+            operations_by_algorithm: std·collections·HashMap·new(),
+        }))
+    }
+
+    async rite measure_compression(
+        &self,
+        request: Request<MeasureRequest>,
+    ) -> Result<Response<MeasureResponse>, Status> {
+        ≔ req = request.into_inner();
+        ≔ start = Instant·now();
+
+        ≔ codec = ZstdCodec·new();
+        ≔ compressed = codec
+            .compress(&req.data)
+            .map_err(|e| Status·internal(format!("Compression failed: {}", e)))?;
+
+        ≔ elapsed = start.elapsed();
+
+        ≔ ratio = ⎇ !compressed.is_empty() {
+            req.data.len() as f64 / compressed.len() as f64
+        } ⎉ {
+            0.0
+        };
+
+        ≔ savings = ⎇ !req.data.is_empty() {
+            100.0 * (1.0 - compressed.len() as f64 / req.data.len() as f64)
+        } ⎉ {
+            0.0
+        };
+
+        Ok(Response·new(MeasureResponse {
+            original_size: req.data.len() as i64,
+            compressed_size: compressed.len() as i64,
+            compression_ratio: ratio,
+            savings_percent: savings,
+            compression_time_nanos: elapsed.as_nanos() as i64,
+        }))
+    }
+
+    async rite health_check(
+        &self,
+        request: Request<HealthCheckRequest>,
+    ) -> Result<Response<HealthCheckResponse>, Status> {
+        ≔ req = request.into_inner();
+
+        ≔ Δ algorithms = Vec·new();
+        ⎇ req.include_algorithms {
+            algorithms.push(Algorithm·Zstd as i32);
+            //@ rune: cfg(feature = "lz4")
+            algorithms.push(Algorithm·Lz4 as i32);
+            //@ rune: cfg(feature = "brotli")
+            algorithms.push(Algorithm·Brotli as i32);
+            //@ rune: cfg(feature = "deflate")
+            {
+                algorithms.push(Algorithm·Gzip as i32);
+                algorithms.push(Algorithm·Deflate as i32);
+            }
+        }
+
+        // Detect SIMD level
+        ≔ (simd_available, simd_level) = detect_simd();
+
+        Ok(Response·new(HealthCheckResponse {
+            healthy: true,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            available_algorithms: algorithms,
+            simd_available,
+            simd_level,
+        }))
+    }
+}
+
+rite detect_simd() -> (bool, String) {
+    //@ rune: cfg(target_arch = "x86_64")
+    {
+        ⎇ is_x86_feature_detected!("avx512f") {
+            ⤺ (true, "avx512".to_string());
+        }
+        ⎇ is_x86_feature_detected!("avx2") {
+            ⤺ (true, "avx2".to_string());
+        }
+        ⎇ is_x86_feature_detected!("sse4.2") {
+            ⤺ (true, "sse4.2".to_string());
+        }
+    }
+
+    //@ rune: cfg(target_arch = "aarch64")
+    {
+        // NEON is always available on AArch64
+        ⤺ (true, "neon".to_string());
+    }
+
+    (false, "none".to_string())
+}

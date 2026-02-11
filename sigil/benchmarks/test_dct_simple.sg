@@ -1,0 +1,28 @@
+// Minimal DCT test for LLVM debugging
+
+rite main() {
+    println("Testing simple DCT");
+
+    // Simple loop test first
+    ≔ Δ sum = 0;
+    ∀ i ∈ 0..100 {
+        sum = sum + i;
+    }
+    print("Sum 0..100: ");
+    println(sum);
+
+    // Test cos function
+    ≔ c = cos(0.0);
+    print("cos(0) = ");
+    println(c);
+
+    // Test array creation
+    ≔ Δ arr = Vec·new();
+    ∀ i ∈ 0..5 {
+        arr.push(i as f64);
+    }
+    print("Array len: ");
+    println(arr.len());
+
+    println("Done");
+}

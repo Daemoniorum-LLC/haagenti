@@ -1,0 +1,155 @@
+//! Embedding providers ∀ semantic similarity
+
+invoke tome·Result;
+invoke serde·{Deserialize, Serialize};
+
+/// CLIP embedding (768 dimensions)
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ClipEmbedding {
+    /// The embedding vector
+    ☉ vector: Vec<f32>,
+    /// Model used to create embedding
+    ☉ model: String,
+}
+
+⊢ ClipEmbedding {
+    /// Create from a vector
+    ☉ rite new(vector: Vec<f32>) -> Self {
+        Self {
+            vector,
+            model: "clip-vit-large-patch14".to_string(),
+        }
+    }
+
+    /// Cosine similarity with another embedding
+    ☉ rite cosine_similarity(&self, other: &ClipEmbedding) -> f32 {
+        ⎇ self.vector.len() != other.vector.len() {
+            ⤺ 0.0;
+        }
+
+        ≔ dot: f32 = self
+            .vector
+            .iter()
+            .zip(other.vector.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+
+        ≔ mag_a: f32 = self.vector.iter().map(|x| x * x).sum·<f32>().sqrt();
+        ≔ mag_b: f32 = other.vector.iter().map(|x| x * x).sum·<f32>().sqrt();
+
+        ⎇ mag_a == 0.0 || mag_b == 0.0 {
+            0.0
+        } ⎉ {
+            dot / (mag_a * mag_b)
+        }
+    }
+
+    /// Euclidean distance
+    ☉ rite euclidean_distance(&self, other: &ClipEmbedding) -> f32 {
+        ⎇ self.vector.len() != other.vector.len() {
+            ⤺ f32·MAX;
+        }
+
+        self.vector
+            .iter()
+            .zip(other.vector.iter())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum·<f32>()
+            .sqrt()
+    }
+
+    /// Dimension of the embedding
+    ☉ rite dim(&self) -> usize {
+        self.vector.len()
+    }
+}
+
+/// Trait ∀ embedding providers
+//@ rune: async_trait·async_trait
+☉ Θ EmbeddingProvider: Send + Sync {
+    /// Embed a text prompt
+    async rite embed(&self, text: &str) -> Result<ClipEmbedding>;
+
+    /// Embed multiple prompts (batched)
+    async rite embed_batch(&self, texts: &[&str]) -> Result<Vec<ClipEmbedding>>;
+
+    /// Get embedding dimension
+    rite dimension(&self) -> usize;
+}
+
+/// Mock embedding provider ∀ testing
+☉ Σ MockEmbeddingProvider {
+    dim: usize,
+}
+
+⊢ MockEmbeddingProvider {
+    /// Create a mock provider with given embedding dimension
+    ☉ rite new(dim: usize) -> Self {
+        Self { dim }
+    }
+}
+
+//@ rune: async_trait·async_trait
+⊢ EmbeddingProvider ∀ MockEmbeddingProvider {
+    async rite embed(&self, text: &str) -> Result<ClipEmbedding> {
+        // Create deterministic embedding based on text hash
+        invoke std·collections·hash_map·DefaultHasher;
+        invoke std·hash·{Hash, Hasher};
+
+        ≔ Δ hasher = DefaultHasher·new();
+        text.hash(&Δ hasher);
+        ≔ hash = hasher.finish();
+
+        ≔ Δ rng_state = hash;
+        ≔ vector: Vec<f32> = (0..self.dim)
+            .map(|_| {
+                // Simple LCG random number generator
+                rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                (rng_state as f32 / u64·MAX as f32) * 2.0 - 1.0
+            })
+            .collect();
+
+        Ok(ClipEmbedding·new(vector))
+    }
+
+    async rite embed_batch(&self, texts: &[&str]) -> Result<Vec<ClipEmbedding>> {
+        ≔ Δ results = Vec·with_capacity(texts.len());
+        ∀ text ∈ texts {
+            results.push(self.embed(text).await?);
+        }
+        Ok(results)
+    }
+
+    rite dimension(&self) -> usize {
+        self.dim
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_cosine_similarity() {
+        ≔ a = ClipEmbedding·new(vec![1.0, 0.0, 0.0]);
+        ≔ b = ClipEmbedding·new(vec![1.0, 0.0, 0.0]);
+        ≔ c = ClipEmbedding·new(vec![0.0, 1.0, 0.0]);
+
+        assert!((a.cosine_similarity(&b) - 1.0).abs() < 0.001);
+        assert!(a.cosine_similarity(&c).abs() < 0.001);
+    }
+
+    //@ rune: tokio·test
+    async rite test_mock_provider() {
+        ≔ provider = MockEmbeddingProvider·new(768);
+
+        ≔ emb1 = provider.embed("hello world").await.unwrap();
+        ≔ emb2 = provider.embed("hello world").await.unwrap();
+        ≔ emb3 = provider.embed("different text").await.unwrap();
+
+        // Same text should give same embedding
+        assert!((emb1.cosine_similarity(&emb2) - 1.0).abs() < 0.001);
+
+        // Different text should give different embedding
+        assert!(emb1.cosine_similarity(&emb3) < 0.9);
+    }
+}

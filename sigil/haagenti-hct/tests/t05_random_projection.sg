@@ -13,7 +13,7 @@
 // Seeded RNG (from t01_seeded_rng)
 // ════════════════════════════════════════════════════════════════════════════
 
-sigil SeededRng {
+Σ SeededRng {
     state: u64,
 }
 

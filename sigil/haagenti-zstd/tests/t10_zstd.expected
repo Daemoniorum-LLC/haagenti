@@ -1,0 +1,20 @@
+╔════════════════════════════════════════════════╗
+║     haagenti-zstd Tests                        ║
+╚════════════════════════════════════════════════╝
+
+stats_ratio: PASS
+stats_savings: PASS
+level_constants: PASS
+level_validation: PASS
+frame_header_creation: PASS
+frame_header_size: PASS
+block_header_encode: PASS
+block_types: PASS
+hash_deterministic: PASS
+hash_different: PASS
+compressor_config_defaults: PASS
+window_log_validation: PASS
+decompressor_config_defaults: PASS
+magic_validation: PASS
+
+All tests passed!

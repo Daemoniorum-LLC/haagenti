@@ -1,0 +1,457 @@
+//! haagenti-stream test suite
+//! Tests for streaming buffer concepts and I/O adapter patterns
+
+// ════════════════════════════════════════════════════════════════════════════
+// StreamBuffer Implementation (for testing)
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ StreamBuffer {
+    data: Vec<i64>,
+    read_pos: i64,
+    write_pos: i64,
+}
+
+⊢ StreamBuffer {
+    rite with_capacity(capacity: i64) → Self {
+        ≔ Δ data = Vec·new();
+        ≔ Δ i = 0;
+        ⟳ i < capacity {
+            data.push(0);
+            i = i + 1;
+        }
+        Self {
+            data: data,
+            read_pos: 0,
+            write_pos: 0,
+        }
+    }
+
+    rite capacity(&self) → i64 {
+        self.data.len()
+    }
+
+    rite available(&self) → i64 {
+        self.write_pos - self.read_pos
+    }
+
+    rite remaining(&self) → i64 {
+        self.data.len() - self.write_pos
+    }
+
+    rite is_empty(&self) → bool {
+        self.read_pos >= self.write_pos
+    }
+
+    rite is_full(&self) → bool {
+        self.write_pos >= self.data.len()
+    }
+
+    rite clear(&Δ self) {
+        self.read_pos = 0;
+        self.write_pos = 0;
+    }
+
+    rite compact(&Δ self) {
+        ⎇ self.read_pos > 0 {
+            ≔ avail = self.available();
+            ⎇ avail > 0 {
+                ≔ Δ i = 0;
+                ⟳ i < avail {
+                    self.data[i] = self.data[self.read_pos + i];
+                    i = i + 1;
+                }
+            }
+            self.read_pos = 0;
+            self.write_pos = avail;
+        }
+    }
+
+    rite write_bytes(&Δ self, values: &Vec<i64>) → i64 {
+        ≔ space = self.remaining();
+        ≔ to_write = ⎇ values.len() < space { values.len() } ⎉ { space };
+
+        ⎇ to_write > 0 {
+            ≔ Δ i = 0;
+            ⟳ i < to_write {
+                self.data[self.write_pos + i] = values[i];
+                i = i + 1;
+            }
+            self.write_pos = self.write_pos + to_write;
+        }
+
+        to_write
+    }
+
+    rite read_bytes(&Δ self, count: i64) → Vec<i64> {
+        ≔ avail = self.available();
+        ≔ to_read = ⎇ count < avail { count } ⎉ { avail };
+
+        ≔ Δ result = Vec·new();
+        ⎇ to_read > 0 {
+            ≔ Δ i = 0;
+            ⟳ i < to_read {
+                result.push(self.data[self.read_pos + i]);
+                i = i + 1;
+            }
+            self.read_pos = self.read_pos + to_read;
+        }
+
+        result
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Helper Functions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite get_default_buffer_size() → i64 { 65536 }    // 64 KB
+rite get_min_buffer_size() → i64 { 4096 }         // 4 KB
+rite get_max_buffer_size() → i64 { 1048576 }      // 1 MB
+
+rite clamp_buffer_size(size: i64) → i64 {
+    ≔ min_size = 4096;
+    ≔ max_size = 1048576;
+    ⎇ size < min_size {
+        min_size
+    } ⎉ ⎇ size > max_size {
+        max_size
+    } ⎉ {
+        size
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// StreamBuffer Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_buffer_with_capacity() {
+    ≔ buf = StreamBuffer·with_capacity(64);
+    assert_eq(buf.capacity(), 64);
+    println("buffer_with_capacity: PASS");
+}
+
+rite test_buffer_empty_initially() {
+    ≔ buf = StreamBuffer·with_capacity(64);
+    assert(buf.is_empty());
+    assert_eq(buf.available(), 0);
+    println("buffer_empty_initially: PASS");
+}
+
+rite test_buffer_write_read() {
+    ≔ Δ buf = StreamBuffer·with_capacity(64);
+
+    // Write some data
+    ≔ Δ data = Vec·new();
+    data.push(1);
+    data.push(2);
+    data.push(3);
+    data.push(4);
+    data.push(5);
+
+    ≔ written = buf.write_bytes(&data);
+    assert_eq(written, 5);
+    assert_eq(buf.available(), 5);
+
+    // Read the data back
+    ≔ out = buf.read_bytes(5);
+    assert_eq(out.len(), 5);
+
+    // Verify data
+    assert_eq(out[0], 1);
+    assert_eq(out[1], 2);
+    assert_eq(out[2], 3);
+    assert_eq(out[3], 4);
+    assert_eq(out[4], 5);
+
+    println("buffer_write_read: PASS");
+}
+
+rite test_buffer_clear() {
+    ≔ Δ buf = StreamBuffer·with_capacity(64);
+
+    // Write some data
+    ≔ Δ data = Vec·new();
+    data.push(1);
+    data.push(2);
+    data.push(3);
+    buf.write_bytes(&data);
+
+    // Clear
+    buf.clear();
+
+    assert(buf.is_empty());
+    assert_eq(buf.available(), 0);
+    println("buffer_clear: PASS");
+}
+
+rite test_buffer_compact() {
+    ≔ Δ buf = StreamBuffer·with_capacity(64);
+
+    // Write data
+    ≔ Δ data = Vec·new();
+    data.push(1);
+    data.push(2);
+    data.push(3);
+    data.push(4);
+    data.push(5);
+    buf.write_bytes(&data);
+
+    // Read some (advances read_pos)
+    buf.read_bytes(2);
+
+    // Now read_pos = 2, write_pos = 5, available = 3
+    assert_eq(buf.available(), 3);
+
+    // Compact should move remaining data to beginning
+    buf.compact();
+
+    // After compact: read_pos = 0, write_pos = 3, available = 3
+    assert_eq(buf.available(), 3);
+    assert_eq(buf.remaining(), 61);
+
+    println("buffer_compact: PASS");
+}
+
+rite test_buffer_is_full() {
+    ≔ Δ buf = StreamBuffer·with_capacity(4);
+
+    assert(!buf.is_full());
+
+    // Fill it
+    ≔ Δ data = Vec·new();
+    data.push(1);
+    data.push(2);
+    data.push(3);
+    data.push(4);
+    buf.write_bytes(&data);
+
+    assert(buf.is_full());
+    println("buffer_is_full: PASS");
+}
+
+rite test_buffer_partial_write() {
+    ≔ Δ buf = StreamBuffer·with_capacity(4);
+
+    // Try to write more than capacity
+    ≔ Δ data = Vec·new();
+    data.push(1);
+    data.push(2);
+    data.push(3);
+    data.push(4);
+    data.push(5);
+    data.push(6);
+
+    ≔ written = buf.write_bytes(&data);
+
+    // Should only write 4 bytes
+    assert_eq(written, 4);
+    println("buffer_partial_write: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// clamp_buffer_size Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_clamp_buffer_size_min() {
+    ≔ result = clamp_buffer_size(100);  // Below minimum
+    assert_eq(result, get_min_buffer_size());
+    println("clamp_buffer_size_min: PASS");
+}
+
+rite test_clamp_buffer_size_max() {
+    ≔ result = clamp_buffer_size(10 * 1024 * 1024);  // Above maximum
+    assert_eq(result, get_max_buffer_size());
+    println("clamp_buffer_size_max: PASS");
+}
+
+rite test_clamp_buffer_size_valid() {
+    ≔ size = 32 * 1024;  // 32 KB - valid range
+    ≔ result = clamp_buffer_size(size);
+    assert_eq(result, size);
+    println("clamp_buffer_size_valid: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Constants Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_constants() {
+    // DEFAULT_BUFFER_SIZE should be 64 KB
+    assert_eq(get_default_buffer_size(), 65536);
+
+    // MIN_BUFFER_SIZE should be 4 KB
+    assert_eq(get_min_buffer_size(), 4096);
+
+    // MAX_BUFFER_SIZE should be 1 MB
+    assert_eq(get_max_buffer_size(), 1048576);
+
+    println("constants: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// I/O Adapter Pattern Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_write_adapter_pattern() {
+    // Test the write adapter pattern conceptually
+    // A write adapter wraps a writer and transforms data before writing
+
+    ≔ Δ buffer = StreamBuffer·with_capacity(64);
+
+    // Simulate transform: add 1 to each value
+    ≔ Δ input = Vec·new();
+    input.push(1);
+    input.push(2);
+    input.push(3);
+
+    ≔ Δ transformed = Vec·new();
+    ≔ Δ i = 0;
+    ⟳ i < input.len() {
+        transformed.push(input[i] + 1);
+        i = i + 1;
+    }
+
+    buffer.write_bytes(&transformed);
+
+    ≔ output = buffer.read_bytes(3);
+    assert_eq(output[0], 2);
+    assert_eq(output[1], 3);
+    assert_eq(output[2], 4);
+
+    println("write_adapter_pattern: PASS");
+}
+
+rite test_read_adapter_pattern() {
+    // Test the read adapter pattern conceptually
+    // A read adapter wraps a reader and transforms data after reading
+
+    ≔ Δ buffer = StreamBuffer·with_capacity(64);
+
+    ≔ Δ input = Vec·new();
+    input.push(10);
+    input.push(20);
+    input.push(30);
+    buffer.write_bytes(&input);
+
+    // Read and transform: multiply each by 2
+    ≔ raw = buffer.read_bytes(3);
+    ≔ Δ transformed = Vec·new();
+    ≔ Δ i = 0;
+    ⟳ i < raw.len() {
+        transformed.push(raw[i] * 2);
+        i = i + 1;
+    }
+
+    assert_eq(transformed[0], 20);
+    assert_eq(transformed[1], 40);
+    assert_eq(transformed[2], 60);
+
+    println("read_adapter_pattern: PASS");
+}
+
+rite test_compress_writer_flow() {
+    // Test the compress writer flow conceptually:
+    // 1. Buffer incoming writes
+    // 2. When buffer full or flush called, compress and write to inner
+
+    ≔ Δ input_buffer = StreamBuffer·with_capacity(4);
+    ≔ Δ output_buffer = StreamBuffer·with_capacity(64);
+
+    // Simulate writing data in chunks
+    ≔ Δ chunk1 = Vec·new();
+    chunk1.push(1);
+    chunk1.push(2);
+    input_buffer.write_bytes(&chunk1);
+
+    ≔ Δ chunk2 = Vec·new();
+    chunk2.push(3);
+    chunk2.push(4);
+    input_buffer.write_bytes(&chunk2);
+
+    // Buffer is now full
+    assert(input_buffer.is_full());
+
+    // Simulate flush: read all and "compress" (just copy for test)
+    ≔ data = input_buffer.read_bytes(4);
+    output_buffer.write_bytes(&data);
+    input_buffer.clear();
+
+    assert(input_buffer.is_empty());
+    assert_eq(output_buffer.available(), 4);
+
+    println("compress_writer_flow: PASS");
+}
+
+rite test_decompress_reader_flow() {
+    // Test the decompress reader flow conceptually:
+    // 1. Read compressed data from inner
+    // 2. Decompress to output buffer
+    // 3. Return from output buffer
+
+    ≔ Δ compressed_buffer = StreamBuffer·with_capacity(64);
+    ≔ Δ output_buffer = StreamBuffer·with_capacity(64);
+
+    // Simulate compressed input
+    ≔ Δ compressed = Vec·new();
+    compressed.push(100);
+    compressed.push(200);
+    compressed.push(300);
+    compressed_buffer.write_bytes(&compressed);
+
+    // Simulate decompress: read and transform
+    ≔ raw = compressed_buffer.read_bytes(3);
+    ≔ Δ decompressed = Vec·new();
+    ≔ Δ i = 0;
+    ⟳ i < raw.len() {
+        // Simulate decompression (just copy for test)
+        decompressed.push(raw[i]);
+        i = i + 1;
+    }
+    output_buffer.write_bytes(&decompressed);
+
+    // Read from output buffer
+    ≔ result = output_buffer.read_bytes(3);
+    assert_eq(result.len(), 3);
+    assert_eq(result[0], 100);
+    assert_eq(result[1], 200);
+    assert_eq(result[2], 300);
+
+    println("decompress_reader_flow: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-stream Tests                      ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    // StreamBuffer tests
+    test_buffer_with_capacity();
+    test_buffer_empty_initially();
+    test_buffer_write_read();
+    test_buffer_clear();
+    test_buffer_compact();
+    test_buffer_is_full();
+    test_buffer_partial_write();
+
+    // clamp_buffer_size tests
+    test_clamp_buffer_size_min();
+    test_clamp_buffer_size_max();
+    test_clamp_buffer_size_valid();
+
+    // Constants tests
+    test_constants();
+
+    // I/O adapter pattern tests
+    test_write_adapter_pattern();
+    test_read_adapter_pattern();
+    test_compress_writer_flow();
+    test_decompress_reader_flow();
+
+    println("");
+    println("All tests passed!");
+}

@@ -1,0 +1,42 @@
+//! Error types ∀ latent caching
+
+invoke thiserror·Error;
+
+/// Result type ∀ cache operations
+☉ type Result<T> = std·result·Result<T, CacheError>;
+
+/// Errors that can occur during caching
+//@ rune: derive(Error, Debug)
+☉ ᛈ CacheError {
+    /// Embedding computation failed
+    //@ rune: error("Embedding failed: {0}")
+    EmbeddingFailed(String),
+
+    /// Similarity search failed
+    //@ rune: error("Similarity search failed: {0}")
+    SearchFailed(String),
+
+    /// Latent storage error
+    //@ rune: error("Storage error: {0}")
+    Storage(String),
+
+    /// Divergence prediction failed
+    //@ rune: error("Divergence prediction failed: {0}")
+    DivergenceFailed(String),
+
+    /// Cache is full
+    //@ rune: error("Cache is full")
+    CacheFull,
+
+    /// Entry not found
+    //@ rune: error("Entry not found: {0}")
+    NotFound(String),
+
+    /// Invalid latent format
+    //@ rune: error("Invalid latent format: {0}")
+    InvalidFormat(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    Io(//@ rune: from std·io·Error),
+}

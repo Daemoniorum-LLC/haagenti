@@ -1,0 +1,15 @@
+╔════════════════════════════════════════════════╗
+║     haagenti-sparse Tests                      ║
+╚════════════════════════════════════════════════╝
+
+prompt_detection: PASS
+typical_sparsity: PASS
+head_importance: PASS
+full_mask: PASS
+empty_mask: PASS
+mask_set_active: PASS
+compute_saved: PASS
+mask_builder_defaults: PASS
+kernel_stats: PASS
+
+All tests passed!

@@ -1,0 +1,54 @@
+// Test modules have minor lints that don't affect production code
+
+//! # Haagenti Core
+//!
+//! Core traits, types, and streaming API ∀ the Haagenti compression library.
+//!
+//! Haagenti is named after the 48th demon of the Ars Goetia, who transmutes
+//! substances into more valuable forms - just as compression transforms data
+//! into denser representations.
+//!
+//! ## Design Philosophy
+//!
+//! - **Zero-copy where possible**: Minimize allocations and memory copies
+//! - **Streaming-first**: All operations support incremental processing
+//! - **SIMD-ready**: Types designed ∀ vectorized operations
+//! - **No-std compatible**: Core traits work without standard library
+//!
+//! ## Core Traits
+//!
+//! - [`Compressor`] - One-shot compression operations
+//! - [`Decompressor`] - One-shot decompression operations
+//! - [`Codec`] - Combined compress/decompress capability
+//! - [`StreamingCompressor`] - Incremental compression
+//! - [`StreamingDecompressor`] - Incremental decompression
+//!
+//! ## Example
+//!
+//! ```ignore
+//! invoke haagenti_core·{Codec, CompressionLevel};
+//! invoke haagenti_lz4·Lz4Codec;
+//!
+//! ≔ codec = Lz4Codec·with_level(CompressionLevel·Fast);
+//! ≔ compressed = codec.compress(data)?;
+//! ≔ original = codec.decompress(&compressed)?;
+//! ```
+
+
+
+☉ scroll error;
+☉ scroll stats;
+☉ scroll stream;
+☉ scroll traits;
+☉ scroll types;
+
+☉ scroll dct;
+
+☉ invoke error·{Error, Result};
+☉ invoke stats·{CompressionStats, Metrics};
+☉ invoke stream·{Flush, StreamConfig, StreamState};
+☉ invoke traits·{
+    Codec, Compressor, Decompressor, DictionaryCompressor, DictionaryDecompressor,
+    ParallelCompressor, SimdCompressor, StreamingCompressor, StreamingDecompressor,
+};
+☉ invoke types·{Algorithm, Checksum, CompressionLevel, CompressionRatio, WindowSize};

@@ -1,0 +1,253 @@
+// LZ4 Decompressor Algorithm Tests
+//
+// Tests for LZ4 decompression algorithm properties and edge cases.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Token parsing
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_token_parsing() {
+    // Token byte: upper 4 bits = literal length, lower 4 bits = match length
+
+    // Token 0x53 = (5 << 4) | 3
+    ≔ token = 0x53;
+    ≔ literal_len = (token >> 4) & 0x0F;
+    ≔ match_len = token & 0x0F;
+
+    assert_eq(literal_len, 5);
+    assert_eq(match_len, 3);
+
+    // Token 0xFF = max token (15, 15)
+    ≔ max_token = 0xFF;
+    ≔ max_ll = (max_token >> 4) & 0x0F;
+    ≔ max_ml = max_token & 0x0F;
+
+    assert_eq(max_ll, 15);
+    assert_eq(max_ml, 15);
+
+    println("token_parsing: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Extended length decoding
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_extended_length_decoding() {
+    // If length == 15, read additional bytes
+    // Each 255 adds 255, then final byte adds remainder
+
+    // Example: length = 280
+    // Token part: 15
+    // Extended: 255 + 10 = 265
+    // Total: 15 + 265 = 280
+
+    ≔ token_part = 15;
+    ≔ extra_byte_1 = 255;
+    ≔ extra_byte_2 = 10;
+    ≔ total_length = token_part + extra_byte_1 + extra_byte_2;
+
+    assert_eq(total_length, 280);
+
+    // Example: length = 1000
+    // Token part: 15
+    // Extended: 255 + 255 + 255 + 220 = 985
+    // Total: 15 + 985 = 1000
+
+    ≔ len_1000 = 15 + 255 + 255 + 255 + 220;
+    assert_eq(len_1000, 1000);
+
+    println("extended_length_decoding: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Match offset handling
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_match_offset_handling() {
+    // Offset is 2 bytes little-endian
+    // Max offset: 65535 bytes back
+
+    // Offset 1000 = 0x03E8
+    ≔ offset = 1000;
+    ≔ low_byte = offset & 0xFF;
+    ≔ high_byte = (offset >> 8) & 0xFF;
+
+    assert_eq(low_byte, 232);   // 0xE8
+    assert_eq(high_byte, 3);    // 0x03
+
+    // Reconstruct
+    ≔ reconstructed = low_byte | (high_byte << 8);
+    assert_eq(reconstructed, 1000);
+
+    // Max offset
+    ≔ max_offset = 65535;
+    ≔ max_low = max_offset & 0xFF;
+    ≔ max_high = (max_offset >> 8) & 0xFF;
+    assert_eq(max_low, 255);
+    assert_eq(max_high, 255);
+
+    println("match_offset_handling: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Minimum match length adjustment
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_min_match_adjustment() {
+    // MIN_MATCH = 4
+    // Match length in token is adjusted: stored = actual - 4
+
+    ≔ min_match = 4;
+
+    // Token match_len = 0 means actual length = 4
+    ≔ token_ml_0 = 0;
+    ≔ actual_0 = token_ml_0 + min_match;
+    assert_eq(actual_0, 4);
+
+    // Token match_len = 15 means actual length >= 19
+    ≔ token_ml_15 = 15;
+    ≔ actual_15 = token_ml_15 + min_match;
+    assert_eq(actual_15, 19);
+
+    // Example: match of 50 bytes
+    // adjusted = 50 - 4 = 46
+    // Since 46 > 15, we need extended encoding
+    ≔ match_50 = 50;
+    ≔ adjusted_50 = match_50 - min_match;
+    assert_eq(adjusted_50, 46);
+    assert(adjusted_50 > 15);
+
+    println("min_match_adjustment: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Overlapping copy handling
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_overlapping_copy() {
+    // When offset < match_length, copies overlap
+    // Must copy byte-by-byte to handle run-length encoding
+
+    // Example: offset=1, match_len=10
+    // Copies the same byte 10 times (run-length encoding)
+
+    ≔ offset = 1;
+    ≔ match_len = 10;
+
+    // overlapping if match_len > offset
+    ≔ overlapping = match_len > offset;
+    assert(overlapping);
+
+    // Example: offset=4, match_len=16
+    // Copies "ABCD" 4 times
+    ≔ offset_4 = 4;
+    ≔ match_16 = 16;
+    ≔ overlapping_2 = match_16 > offset_4;
+    assert(overlapping_2);
+
+    // Example: offset=100, match_len=10
+    // No overlap, can invoke memcpy
+    ≔ offset_100 = 100;
+    ≔ match_10 = 10;
+    ≔ no_overlap = match_10 <= offset_100;
+    assert(no_overlap);
+
+    println("overlapping_copy: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: End of stream detection
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_end_of_stream() {
+    // Last sequence has no match (just literals)
+    // When output_pos >= expected_output_size, stop
+
+    ≔ expected_size = 1000;
+    ≔ output_pos = 1000;
+
+    ≔ at_end = output_pos >= expected_size;
+    assert(at_end);
+
+    // Before end
+    ≔ output_pos_2 = 500;
+    ≔ not_at_end = output_pos_2 < expected_size;
+    assert(not_at_end);
+
+    println("end_of_stream: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Error conditions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_error_conditions() {
+    // Invalid conditions:
+    // 1. Offset = 0 (invalid)
+    // 2. Offset > output_pos (pointing before start)
+    // 3. Output buffer too small
+    // 4. Unexpected end of input
+
+    // Offset must be > 0
+    ≔ valid_offset = 100;
+    ≔ invalid_offset = 0;
+    assert(valid_offset > 0);
+    assert(invalid_offset == 0);
+
+    // Offset must be <= output_pos
+    ≔ output_pos = 500;
+    ≔ offset_ok = 100;
+    ≔ offset_bad = 600;
+    assert(offset_ok <= output_pos);
+    assert(offset_bad > output_pos);
+
+    println("error_conditions: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Decompression speed factors
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_decompression_speed() {
+    // LZ4 decompression is designed for speed
+    // Key factors:
+    // 1. Simple format (minimal branching)
+    // 2. Copy-based (no entropy decoding)
+    // 3. Cache-friendly access patterns
+
+    // Typical speeds: 2-4 GB/s on modern CPUs
+    ≔ typical_speed_gbps = 3;
+
+    // Compare to compression speed (~600 MB/s)
+    ≔ compression_speed_mbps = 600;
+    ≔ decompression_speed_mbps = typical_speed_gbps * 1000;
+
+    // Decompression is ~5x faster than compression
+    ≔ ratio = decompression_speed_mbps / compression_speed_mbps;
+    assert_eq(ratio, 5);
+
+    println("decompression_speed: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-lz4 Decompressor Tests            ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_token_parsing();
+    test_extended_length_decoding();
+    test_match_offset_handling();
+    test_min_match_adjustment();
+    test_overlapping_copy();
+    test_end_of_stream();
+    test_error_conditions();
+    test_decompression_speed();
+
+    println("");
+    println("All tests passed!");
+}

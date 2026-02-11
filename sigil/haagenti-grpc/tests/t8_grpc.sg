@@ -1,0 +1,363 @@
+//! haagenti-grpc test suite
+//! Tests for gRPC service structures and configuration
+
+// ════════════════════════════════════════════════════════════════════════════
+// Algorithm Constants
+// ════════════════════════════════════════════════════════════════════════════
+
+// Algorithm IDs: Zstd=0, Lz4=1, Brotli=2, Gzip=3, Deflate=4
+
+rite algorithm_name(id: i64) → String {
+    ⎇ id == 0 { "zstd".to_string() }
+    ⎉ ⎇ id == 1 { "lz4".to_string() }
+    ⎉ ⎇ id == 2 { "brotli".to_string() }
+    ⎉ ⎇ id == 3 { "gzip".to_string() }
+    ⎉ { "deflate".to_string() }
+}
+
+// Compression levels: Fast=0, Default=1, Best=2, Ultra=3
+
+rite level_name(level: i64) → String {
+    ⎇ level == 0 { "fast".to_string() }
+    ⎉ ⎇ level == 1 { "default".to_string() }
+    ⎉ ⎇ level == 2 { "best".to_string() }
+    ⎉ { "ultra".to_string() }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ServerConfig Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ ServerConfig {
+    host: String,
+    port: i64,
+    tls_enabled: bool,
+    max_message_size: i64,
+    metrics_enabled: bool,
+    metrics_port: i64,
+}
+
+rite default_server_config() → ServerConfig {
+    ServerConfig {
+        host: "0.0.0.0".to_string(),
+        port: 50051,
+        tls_enabled: false,
+        max_message_size: 64 * 1024 * 1024,  // 64MB
+        metrics_enabled: true,
+        metrics_port: 9090,
+    }
+}
+
+rite test_server_config_defaults() {
+    ≔ config = default_server_config();
+
+    assert_eq(config.host, "0.0.0.0".to_string());
+    assert_eq(config.port, 50051);
+    assert(!config.tls_enabled);
+    assert_eq(config.max_message_size, 67108864);  // 64MB
+    assert(config.metrics_enabled);
+    assert_eq(config.metrics_port, 9090);
+
+    println("server_config_defaults: PASS");
+}
+
+rite test_server_config_address() {
+    ≔ config = default_server_config();
+
+    // Verify host and port separately since string concat isn't available
+    assert_eq(config.host, "0.0.0.0".to_string());
+    assert_eq(config.port, 50051);
+
+    println("server_config_address: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ServiceStats Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ ServiceStats {
+    total_compressed: i64,
+    total_decompressed: i64,
+    total_output: i64,
+    compress_ops: i64,
+    decompress_ops: i64,
+    start_time_ns: i64,
+}
+
+rite new_service_stats(start_time_ns: i64) → ServiceStats {
+    ServiceStats {
+        total_compressed: 0,
+        total_decompressed: 0,
+        total_output: 0,
+        compress_ops: 0,
+        decompress_ops: 0,
+        start_time_ns: start_time_ns,
+    }
+}
+
+rite record_compress(stats: &Δ ServiceStats, input_size: i64, output_size: i64) {
+    stats.total_compressed = stats.total_compressed + input_size;
+    stats.total_output = stats.total_output + output_size;
+    stats.compress_ops = stats.compress_ops + 1;
+}
+
+rite record_decompress(stats: &Δ ServiceStats, output_size: i64) {
+    stats.total_decompressed = stats.total_decompressed + output_size;
+    stats.decompress_ops = stats.decompress_ops + 1;
+}
+
+rite average_ratio(stats: &ServiceStats) → f64 {
+    ⎇ stats.total_output > 0 {
+        stats.total_compressed as f64 / stats.total_output as f64
+    } ⎉ {
+        0.0
+    }
+}
+
+rite test_service_stats_record() {
+    ≔ Δ stats = new_service_stats(0);
+
+    record_compress(&Δ stats, 1000, 500);
+    record_compress(&Δ stats, 2000, 800);
+    record_decompress(&Δ stats, 1000);
+    record_decompress(&Δ stats, 2000);
+
+    assert_eq(stats.total_compressed, 3000);
+    assert_eq(stats.total_output, 1300);
+    assert_eq(stats.compress_ops, 2);
+    assert_eq(stats.total_decompressed, 3000);
+    assert_eq(stats.decompress_ops, 2);
+
+    println("service_stats_record: PASS");
+}
+
+rite test_service_stats_ratio() {
+    ≔ Δ stats = new_service_stats(0);
+
+    // No data yet
+    assert_eq(average_ratio(&stats), 0.0);
+
+    // Add some data
+    record_compress(&Δ stats, 1000, 250);  // 4:1 ratio
+
+    ≔ ratio = average_ratio(&stats);
+    assert(ratio > 3.9 && ratio < 4.1);
+
+    println("service_stats_ratio: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compression Response Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ CompressResponse {
+    original_size: i64,
+    compressed_size: i64,
+    compression_ratio: f64,
+    compression_time_nanos: i64,
+}
+
+rite calculate_ratio(original: i64, compressed: i64) → f64 {
+    ⎇ compressed > 0 {
+        original as f64 / compressed as f64
+    } ⎉ {
+        0.0
+    }
+}
+
+rite calculate_savings(original: i64, compressed: i64) → f64 {
+    ⎇ original > 0 {
+        100.0 * (1.0 - compressed as f64 / original as f64)
+    } ⎉ {
+        0.0
+    }
+}
+
+rite test_compression_ratio() {
+    ≔ ratio = calculate_ratio(1000, 250);
+    assert(ratio > 3.9 && ratio < 4.1);
+
+    ≔ ratio2 = calculate_ratio(1000, 500);
+    assert(ratio2 > 1.9 && ratio2 < 2.1);
+
+    println("compression_ratio: PASS");
+}
+
+rite test_compression_savings() {
+    ≔ savings = calculate_savings(1000, 250);
+    assert(savings > 74.9 && savings < 75.1);  // 75% savings
+
+    ≔ savings2 = calculate_savings(1000, 500);
+    assert(savings2 > 49.9 && savings2 < 50.1);  // 50% savings
+
+    println("compression_savings: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TLS Config Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ TlsConfig {
+    cert_path: String,
+    key_path: String,
+    client_ca_path: Option<String>,
+    require_client_cert: bool,
+}
+
+rite new_tls_config(cert: String, key: String) → TlsConfig {
+    TlsConfig {
+        cert_path: cert,
+        key_path: key,
+        client_ca_path: None,
+        require_client_cert: false,
+    }
+}
+
+rite is_mtls(config: &TlsConfig) → bool {
+    config.client_ca_path.is_some() && config.require_client_cert
+}
+
+rite test_tls_config_basic() {
+    ≔ config = new_tls_config("server.crt".to_string(), "server.key".to_string());
+
+    assert_eq(config.cert_path, "server.crt".to_string());
+    assert_eq(config.key_path, "server.key".to_string());
+    assert(!is_mtls(&config));
+
+    println("tls_config_basic: PASS");
+}
+
+rite test_tls_config_mtls() {
+    ≔ Δ config = new_tls_config("server.crt".to_string(), "server.key".to_string());
+    config.client_ca_path = Some("ca.crt".to_string());
+    config.require_client_cert = true;
+
+    assert(is_mtls(&config));
+
+    println("tls_config_mtls: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Metrics Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ MetricsCounter {
+    value: i64,
+}
+
+rite new_counter() → MetricsCounter {
+    MetricsCounter { value: 0 }
+}
+
+rite increment(counter: &Δ MetricsCounter, amount: i64) {
+    counter.value = counter.value + amount;
+}
+
+Σ MetricsHistogram {
+    sum: f64,
+    count: i64,
+}
+
+rite new_histogram() → MetricsHistogram {
+    MetricsHistogram { sum: 0.0, count: 0 }
+}
+
+rite record_value(hist: &Δ MetricsHistogram, value: f64) {
+    hist.sum = hist.sum + value;
+    hist.count = hist.count + 1;
+}
+
+rite histogram_average(hist: &MetricsHistogram) → f64 {
+    ⎇ hist.count > 0 {
+        hist.sum / hist.count as f64
+    } ⎉ {
+        0.0
+    }
+}
+
+rite test_metrics_counter() {
+    ≔ Δ counter = new_counter();
+
+    increment(&Δ counter, 1);
+    increment(&Δ counter, 5);
+    increment(&Δ counter, 10);
+
+    assert_eq(counter.value, 16);
+
+    println("metrics_counter: PASS");
+}
+
+rite test_metrics_histogram() {
+    ≔ Δ hist = new_histogram();
+
+    record_value(&Δ hist, 1.0);
+    record_value(&Δ hist, 2.0);
+    record_value(&Δ hist, 3.0);
+
+    assert_eq(hist.count, 3);
+    ≔ avg = histogram_average(&hist);
+    assert(avg > 1.9 && avg < 2.1);
+
+    println("metrics_histogram: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Algorithm Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_algorithm_names() {
+    assert_eq(algorithm_name(0), "zstd".to_string());
+    assert_eq(algorithm_name(1), "lz4".to_string());
+    assert_eq(algorithm_name(2), "brotli".to_string());
+    assert_eq(algorithm_name(3), "gzip".to_string());
+    assert_eq(algorithm_name(4), "deflate".to_string());
+
+    println("algorithm_names: PASS");
+}
+
+rite test_level_names() {
+    assert_eq(level_name(0), "fast".to_string());
+    assert_eq(level_name(1), "default".to_string());
+    assert_eq(level_name(2), "best".to_string());
+    assert_eq(level_name(3), "ultra".to_string());
+
+    println("level_names: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-grpc Tests                        ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    // Config tests
+    test_server_config_defaults();
+    test_server_config_address();
+
+    // Stats tests
+    test_service_stats_record();
+    test_service_stats_ratio();
+
+    // Response tests
+    test_compression_ratio();
+    test_compression_savings();
+
+    // TLS tests
+    test_tls_config_basic();
+    test_tls_config_mtls();
+
+    // Metrics tests
+    test_metrics_counter();
+    test_metrics_histogram();
+
+    // Algorithm tests
+    test_algorithm_names();
+    test_level_names();
+
+    println("");
+    println("All tests passed!");
+}

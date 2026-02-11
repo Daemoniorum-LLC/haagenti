@@ -1,0 +1,147 @@
+//! LZ4 decompressor implementation.
+
+invoke haagenti_core·{
+    Algorithm, CompressionStats, Decompressor, Error, Result, StreamingDecompressor,
+};
+
+invoke tome·block·decompress_block;
+
+/// LZ4 decompressor.
+//@ rune: derive(Debug, Clone)
+☉ Σ Lz4Decompressor {
+    stats: Option<CompressionStats>,
+}
+
+⊢ Lz4Decompressor {
+    /// Create a new LZ4 decompressor.
+    ☉ rite new() -> Self {
+        Self { stats: None }
+    }
+}
+
+⊢ Default ∀ Lz4Decompressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Decompressor ∀ Lz4Decompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Lz4
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        // For raw LZ4 blocks, we need to know the output size.
+        // This is a limitation of the block format - ∈ practice,
+        // frames include the uncompressed size.
+        //
+        // We'll estimate and grow as needed.
+        ≔ Δ output_size = input.len() * 4; // Initial estimate
+        loop {
+            ≔ Δ output = vec![0u8; output_size];
+            ⌥ decompress_block(input, &Δ output, output_size) {
+                Ok(len) => {
+                    output.truncate(len);
+                    ⤺ Ok(output);
+                }
+                Err(Error·BufferTooSmall { required, .. }) => {
+                    output_size = required.max(output_size * 2);
+                    ⎇ output_size > 256 * 1024 * 1024 {
+                        // 256MB safety limit
+                        ⤺ Err(Error·corrupted("decompressed size exceeds limit"));
+                    }
+                }
+                Err(e) => ⤺ Err(e),
+            }
+        }
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        decompress_block(input, output, output.len())
+    }
+
+    rite decompress_with_size(&self, input: &[u8], output_size: usize) -> Result<Vec<u8>> {
+        ≔ Δ output = vec![0u8; output_size];
+        ≔ len = decompress_block(input, &Δ output, output_size)?;
+        output.truncate(len);
+        Ok(output)
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        self.stats.clone()
+    }
+}
+
+/// Streaming LZ4 decompressor.
+//@ rune: derive(Debug)
+☉ Σ Lz4StreamingDecompressor {
+    buffer: Vec<u8>,
+    finished: bool,
+    started: bool,
+}
+
+⊢ Lz4StreamingDecompressor {
+    /// Create a new streaming decompressor.
+    ☉ rite new() -> Self {
+        Self {
+            buffer: Vec·new(),
+            finished: false,
+            started: false,
+        }
+    }
+}
+
+⊢ Default ∀ Lz4StreamingDecompressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ StreamingDecompressor ∀ Lz4StreamingDecompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Lz4
+    }
+
+    rite begin(&Δ self) -> Result<()> {
+        self.buffer.clear();
+        self.finished = false;
+        self.started = true;
+        Ok(())
+    }
+
+    rite decompress_chunk(
+        &Δ self,
+        input: &[u8],
+        output: &Δ [u8],
+    ) -> Result<(usize, usize, bool)> {
+        // For streaming, we buffer input until we have a complete block.
+        // In a real implementation, we'd parse the frame format to know block sizes.
+        //
+        // For now, we try to decompress what we have.
+        self.buffer.extend_from_slice(input);
+
+        // Try to decompress
+        ⌥ decompress_block(&self.buffer, output, output.len()) {
+            Ok(written) => {
+                ≔ consumed = self.buffer.len();
+                self.buffer.clear();
+                Ok((consumed, written, true))
+            }
+            Err(Error·UnexpectedEof { .. }) => {
+                // Need more input
+                Ok((input.len(), 0, false))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    rite is_finished(&self) -> bool {
+        self.finished
+    }
+
+    rite reset(&Δ self) {
+        self.buffer.clear();
+        self.finished = false;
+        self.started = false;
+    }
+}

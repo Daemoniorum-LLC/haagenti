@@ -9,7 +9,7 @@
 // Should print PASS for each test
 
 // Complex number type for FFT
-sigil Complex {
+Σ Complex {
     re: f64,
     im: f64,
 }

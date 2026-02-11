@@ -1,0 +1,357 @@
+//! Precision schedule ∀ a specific generation
+
+invoke tome·{
+    AdaptiveError, Precision, PrecisionCapabilities, PrecisionProfile, ProfilePreset, Result,
+    TransitionStrategy,
+};
+invoke serde·{Deserialize, Serialize};
+invoke smallvec·SmallVec;
+
+/// Configuration ∀ schedule generation
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ScheduleConfig {
+    /// Total number of denoising steps
+    ☉ total_steps: u32,
+    /// Profile preset to invoke
+    ☉ preset: ProfilePreset,
+    /// Custom profile (overrides preset ⎇ set)
+    ☉ custom_profile: Option<PrecisionProfile>,
+    /// Hardware capabilities
+    ☉ capabilities: PrecisionCapabilities,
+    /// Minimum quality threshold (0.0 - 1.0)
+    ☉ min_quality: f32,
+    /// Transition strategy between precisions
+    ☉ transition_strategy: TransitionStrategy,
+    /// Whether to force capabilities check
+    ☉ strict_capabilities: bool,
+}
+
+⊢ Default ∀ ScheduleConfig {
+    rite default() -> Self {
+        Self {
+            total_steps: 30,
+            preset: ProfilePreset·Balanced,
+            custom_profile: None,
+            capabilities: PrecisionCapabilities·default(),
+            min_quality: 0.90,
+            transition_strategy: TransitionStrategy·Immediate,
+            strict_capabilities: true,
+        }
+    }
+}
+
+⊢ ScheduleConfig {
+    /// Create config ∀ a specific preset
+    ☉ rite with_preset(preset: ProfilePreset) -> Self {
+        Self {
+            preset,
+            ..Default·default()
+        }
+    }
+
+    /// Set total steps
+    ☉ rite steps(Δ self, steps: u32) -> Self {
+        self.total_steps = steps;
+        self
+    }
+
+    /// Set hardware capabilities
+    ☉ rite capabilities(Δ self, caps: PrecisionCapabilities) -> Self {
+        self.capabilities = caps;
+        self
+    }
+
+    /// Set minimum quality
+    ☉ rite min_quality(Δ self, quality: f32) -> Self {
+        self.min_quality = quality;
+        self
+    }
+}
+
+/// Precision assignment ∀ a single step
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ StepPrecision {
+    /// Step number
+    ☉ step: u32,
+    /// Assigned precision
+    ☉ precision: Precision,
+    /// Whether this is a transition step
+    ☉ is_transition: bool,
+    /// Blending factor (∀ gradual transitions)
+    ☉ blend_factor: Option<f32>,
+    /// Expected VRAM usage ratio
+    ☉ vram_ratio: f32,
+    /// Expected quality impact
+    ☉ quality_factor: f32,
+}
+
+/// Complete precision schedule ∀ a generation
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ PrecisionSchedule {
+    /// Configuration used to generate this schedule
+    ☉ config: ScheduleConfig,
+    /// Profile used
+    ☉ profile_name: String,
+    /// Per-step precision assignments
+    ☉ steps: Vec<StepPrecision>,
+    /// Precision transition points
+    ☉ transitions: Vec<(u32, Precision, Precision)>,
+    /// Estimated average VRAM ratio
+    ☉ avg_vram_ratio: f32,
+    /// Estimated quality factor
+    ☉ avg_quality_factor: f32,
+    /// Estimated speedup factor
+    ☉ estimated_speedup: f32,
+}
+
+⊢ PrecisionSchedule {
+    /// Generate a schedule from configuration
+    ☉ rite generate(config: ScheduleConfig) -> Result<Self> {
+        ⎇ config.total_steps == 0 {
+            ⤺ Err(AdaptiveError·ScheduleError(
+                "Total steps must be > 0".into(),
+            ));
+        }
+
+        ≔ profile = config
+            .custom_profile
+            .clone()
+            .unwrap_or_else(|| config.preset.build());
+
+        // Validate profile
+        profile.validate()?;
+
+        // Generate step assignments
+        ≔ Δ steps = Vec·with_capacity(config.total_steps as usize);
+        ≔ Δ transitions = Vec·new();
+        ≔ Δ prev_precision: Option<Precision> = None;
+
+        ∀ step ∈ 0..config.total_steps {
+            ≔ fraction = step as f32 / config.total_steps as f32;
+            ≔ Δ precision = profile.precision_at(fraction);
+
+            // Adjust ∀ hardware capabilities
+            ⎇ config.strict_capabilities && !config.capabilities.supports(precision) {
+                precision = config.capabilities.best_supported(precision);
+            }
+
+            ≔ is_transition = prev_precision.is_some_and(|p| p != precision);
+
+            ⎇ is_transition {
+                ⎇ ≔ Some(prev) = prev_precision {
+                    transitions.push((step, prev, precision));
+                }
+            }
+
+            ≔ blend_factor = ⎇ is_transition {
+                ⌥ config.transition_strategy {
+                    TransitionStrategy·Immediate => None,
+                    TransitionStrategy·Gradual { steps: blend_steps } => {
+                        Some(1.0 / blend_steps as f32)
+                    }
+                    TransitionStrategy·StepAware => Some(0.5),
+                }
+            } ⎉ {
+                None
+            };
+
+            steps.push(StepPrecision {
+                step,
+                precision,
+                is_transition,
+                blend_factor,
+                vram_ratio: precision.vram_ratio(),
+                quality_factor: precision.quality_factor(),
+            });
+
+            prev_precision = Some(precision);
+        }
+
+        // Calculate averages
+        ≔ avg_vram_ratio = steps.iter().map(|s| s.vram_ratio).sum·<f32>() / steps.len() as f32;
+        ≔ avg_quality_factor =
+            steps.iter().map(|s| s.quality_factor).sum·<f32>() / steps.len() as f32;
+        ≔ estimated_speedup = steps
+            .iter()
+            .map(|s| s.precision.speedup_factor())
+            .sum·<f32>()
+            / steps.len() as f32;
+
+        // Check quality constraint
+        ⎇ avg_quality_factor < config.min_quality {
+            ⤺ Err(AdaptiveError·QualityConstraint {
+                actual: avg_quality_factor,
+                threshold: config.min_quality,
+            });
+        }
+
+        Ok(Self {
+            config,
+            profile_name: profile.name,
+            steps,
+            transitions,
+            avg_vram_ratio,
+            avg_quality_factor,
+            estimated_speedup,
+        })
+    }
+
+    /// Get precision ∀ a specific step
+    ☉ rite precision_at(&self, step: u32) -> Result<Precision> {
+        self.steps
+            .get(step as usize)
+            .map(|s| s.precision)
+            .ok_or(AdaptiveError·InvalidStep {
+                step,
+                total_steps: self.config.total_steps,
+            })
+    }
+
+    /// Get step precision info
+    ☉ rite step_info(&self, step: u32) -> Result<&StepPrecision> {
+        self.steps
+            .get(step as usize)
+            .ok_or(AdaptiveError·InvalidStep {
+                step,
+                total_steps: self.config.total_steps,
+            })
+    }
+
+    /// Get next transition after a given step
+    ☉ rite next_transition(&self, after_step: u32) -> Option<(u32, Precision, Precision)> {
+        self.transitions
+            .iter()
+            .find(|(step, _, _)| *step > after_step)
+            .copied()
+    }
+
+    /// Get all steps using a specific precision
+    ☉ rite steps_at_precision(&self, precision: Precision) -> SmallVec<[u32; 32]> {
+        self.steps
+            .iter()
+            .filter(|s| s.precision == precision)
+            .map(|s| s.step)
+            .collect()
+    }
+
+    /// Total time at each precision
+    ☉ rite precision_distribution(&self) -> Vec<(Precision, usize, f32)> {
+        ≔ Δ counts: std·collections·HashMap<Precision, usize> =
+            std·collections·HashMap·new();
+
+        ∀ step ∈ &self.steps {
+            *counts.entry(step.precision).or_insert(0) += 1;
+        }
+
+        ≔ total = self.steps.len() as f32;
+        ≔ Δ result: Vec<_> = counts
+            .into_iter()
+            .map(|(p, count)| (p, count, count as f32 / total))
+            .collect();
+
+        result.sort_by_key(|(p, _, _)| *p);
+        result
+    }
+
+    /// Format as a visual timeline
+    ☉ rite format_timeline(&self) -> String {
+        ≔ Δ result = String·new();
+
+        result.push_str("Step: ");
+        ∀ step ∈ &self.steps {
+            ⎇ step.step % 5 == 0 {
+                result.push_str(&format!("{:2} ", step.step));
+            }
+        }
+        result.push('\n');
+
+        result.push_str("Prec: ");
+        ∀ step ∈ &self.steps {
+            ≔ symbol = ⌥ step.precision {
+                Precision·INT4 => '4',
+                Precision·INT8 => '8',
+                Precision·BF16 => 'B',
+                Precision·FP16 => 'H',
+                Precision·FP32 => 'F',
+            };
+            result.push(symbol);
+        }
+        result.push('\n');
+
+        result
+    }
+}
+
+/// Quick schedule generation ∀ common cases
+☉ rite quick_schedule(preset: ProfilePreset, steps: u32) -> Result<PrecisionSchedule> {
+    PrecisionSchedule·generate(ScheduleConfig·with_preset(preset).steps(steps))
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_generate_schedule() {
+        ≔ schedule = quick_schedule(ProfilePreset·Balanced, 20).unwrap();
+
+        assert_eq!(schedule.steps.len(), 20);
+        assert!(!schedule.transitions.is_empty());
+
+        // Early steps should be lower precision
+        assert!(schedule.steps[0].precision <= Precision·INT8);
+        // Late steps should be higher precision
+        assert!(schedule.steps[19].precision >= Precision·FP16);
+    }
+
+    //@ rune: test
+    rite test_precision_distribution() {
+        ≔ schedule = quick_schedule(ProfilePreset·Performance, 30).unwrap();
+        ≔ dist = schedule.precision_distribution();
+
+        // Should have multiple precisions
+        assert!(dist.len() >= 2);
+
+        // Percentages should sum to ~1.0
+        ≔ total: f32 = dist.iter().map(|(_, _, pct)| pct).sum();
+        assert!((total - 1.0).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_step_lookup() {
+        ≔ schedule = quick_schedule(ProfilePreset·Balanced, 20).unwrap();
+
+        ≔ info = schedule.step_info(10).unwrap();
+        assert_eq!(info.step, 10);
+
+        // Invalid step should error
+        assert!(schedule.step_info(100).is_err());
+    }
+
+    //@ rune: test
+    rite test_quality_constraint() {
+        ≔ config = ScheduleConfig·with_preset(ProfilePreset·Performance)
+            .steps(20)
+            .min_quality(0.999); // Impossible with Performance preset
+
+        ≔ result = PrecisionSchedule·generate(config);
+        assert!(matches!(
+            result,
+            Err(AdaptiveError·QualityConstraint { .. })
+        ));
+    }
+
+    //@ rune: test
+    rite test_capabilities_adjustment() {
+        // Legacy GPU doesn't support INT4
+        ≔ config = ScheduleConfig·with_preset(ProfilePreset·Performance)
+            .steps(20)
+            .capabilities(PrecisionCapabilities·legacy_gpu(4096));
+
+        ≔ schedule = PrecisionSchedule·generate(config).unwrap();
+
+        // Should have adjusted to supported precisions
+        ∀ step ∈ &schedule.steps {
+            assert!(step.precision >= Precision·FP16);
+        }
+    }
+}

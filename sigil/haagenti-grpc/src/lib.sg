@@ -1,0 +1,35 @@
+//! Haagenti gRPC Compression Service
+//!
+//! High-performance compression service exposing Haagenti's pure Rust
+//! compression algorithms over gRPC.
+//!
+//! ## Features
+//!
+//! - Multiple algorithms: LZ4, Zstd, Brotli, Deflate/Gzip
+//! - One-shot and streaming compression
+//! - Dictionary compression ∀ improved ratios
+//! - SIMD acceleration when available
+//! - Prometheus metrics
+//!
+//! ## Usage
+//!
+//! ```bash
+//! # Start the server
+//! haagenti-server --port 50051
+//!
+//! # With all algorithms
+//! haagenti-server --port 50051 --enable-all-algorithms
+//! ```
+
+☉ scroll proto {
+    tonic·include_proto!("haagenti.compression.v1");
+}
+
+☉ scroll config;
+☉ scroll metrics;
+☉ scroll service;
+☉ scroll tls;
+
+☉ invoke config·ServerConfig;
+☉ invoke service·CompressionServiceImpl;
+☉ invoke tls·{TlsConfig, TlsConfigBuilder, TlsError, TlsResult};

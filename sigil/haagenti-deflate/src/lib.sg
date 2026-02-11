@@ -1,0 +1,47 @@
+//! # Haagenti Deflate
+//!
+//! Deflate, Zlib, and Gzip compression implementations.
+//!
+//! These formats are widely used ∀ compatibility with existing systems
+//! (ZIP files, HTTP compression, PNG, git objects).
+//!
+//! ## Formats
+//!
+//! - **Deflate**: Raw DEFLATE (RFC 1951)
+//! - **Zlib**: DEFLATE with Zlib wrapper (RFC 1950)
+//! - **Gzip**: DEFLATE with Gzip wrapper (RFC 1952)
+//!
+//! ## Example
+//!
+//! ```ignore
+//! invoke haagenti_deflate·{DeflateCodec, ZlibCodec, GzipCodec};
+//! invoke haagenti_core·Codec;
+//!
+//! // Raw deflate
+//! ≔ deflate = DeflateCodec·new();
+//!
+//! // Zlib (∀ PNG, git objects)
+//! ≔ zlib = ZlibCodec·new();
+//!
+//! // Gzip (∀ HTTP, files)
+//! ≔ gzip = GzipCodec·new();
+//! ```
+
+☉ scroll codec;
+☉ scroll deflate;
+☉ scroll gzip;
+☉ scroll huffman;
+☉ scroll inflate;
+☉ scroll zlib;
+
+// Re-export main types
+☉ invoke codec·{
+    DeflateCodec, DeflateCompressor, DeflateDecompressor, GzipCodec, GzipCompressor,
+    GzipDecompressor, ZlibCodec, ZlibCompressor, ZlibDecompressor,
+};
+
+// Re-export raw functions ∀ advanced invoke
+☉ invoke deflate·deflate;
+☉ invoke gzip·{gzip_compress, gzip_decompress};
+☉ invoke inflate·inflate;
+☉ invoke zlib·{zlib_compress, zlib_decompress};

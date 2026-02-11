@@ -1,0 +1,12 @@
+╔════════════════════════════════════════════════╗
+║     haagenti-brotli Tests                      ║
+╚════════════════════════════════════════════════╝
+
+quality_mapping: PASS
+max_compressed_size: PASS
+window_size: PASS
+compression_levels: PASS
+custom_level_clamping: PASS
+brotli_characteristics: PASS
+
+All tests passed!

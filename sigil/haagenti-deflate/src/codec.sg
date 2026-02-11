@@ -1,0 +1,685 @@
+//! Codec implementations ∀ DEFLATE, Zlib, and Gzip.
+
+invoke haagenti_core·{
+    Algorithm, Codec, CompressionLevel, CompressionStats, Compressor, Decompressor, Result,
+};
+
+invoke tome·deflate·deflate;
+invoke tome·gzip·{gzip_compress, gzip_decompress};
+invoke tome·inflate·inflate;
+invoke tome·zlib·{zlib_compress, zlib_decompress};
+
+// ============================================================================
+// Deflate Codec
+// ============================================================================
+
+/// Raw DEFLATE compressor.
+//@ rune: derive(Debug, Clone)
+☉ Σ DeflateCompressor {
+    level: CompressionLevel,
+}
+
+⊢ DeflateCompressor {
+    /// Create a new DEFLATE compressor.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+        }
+    }
+
+    /// Create with compression level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level }
+    }
+}
+
+⊢ Default ∀ DeflateCompressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ DeflateCompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Deflate
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        deflate(input, self.level)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ compressed = deflate(input, self.level)?;
+        ⎇ compressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                compressed.len(),
+                output.len(),
+            ));
+        }
+        output[..compressed.len()].copy_from_slice(&compressed);
+        Ok(compressed.len())
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        // DEFLATE worst case: stored blocks
+        input_len + (input_len / 65535 + 1) * 5 + 10
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Raw DEFLATE decompressor.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ DeflateDecompressor;
+
+⊢ DeflateDecompressor {
+    /// Create a new DEFLATE decompressor.
+    ☉ rite new() -> Self {
+        Self
+    }
+}
+
+⊢ Decompressor ∀ DeflateDecompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Deflate
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        ≔ Δ output = Vec·new();
+        inflate(input, &Δ output)?;
+        Ok(output)
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ decompressed = self.decompress(input)?;
+        ⎇ decompressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                decompressed.len(),
+                output.len(),
+            ));
+        }
+        output[..decompressed.len()].copy_from_slice(&decompressed);
+        Ok(decompressed.len())
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Raw DEFLATE codec.
+//@ rune: derive(Debug, Clone)
+☉ Σ DeflateCodec {
+    level: CompressionLevel,
+}
+
+⊢ DeflateCodec {
+    /// Create a new DEFLATE codec.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+        }
+    }
+
+    /// Create with compression level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level }
+    }
+}
+
+⊢ Default ∀ DeflateCodec {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ DeflateCodec {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Deflate
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        deflate(input, self.level)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ compressed = deflate(input, self.level)?;
+        ⎇ compressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                compressed.len(),
+                output.len(),
+            ));
+        }
+        output[..compressed.len()].copy_from_slice(&compressed);
+        Ok(compressed.len())
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        input_len + (input_len / 65535 + 1) * 5 + 10
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+⊢ Decompressor ∀ DeflateCodec {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Deflate
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        ≔ Δ output = Vec·new();
+        inflate(input, &Δ output)?;
+        Ok(output)
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ decompressed = self.decompress(input)?;
+        ⎇ decompressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                decompressed.len(),
+                output.len(),
+            ));
+        }
+        output[..decompressed.len()].copy_from_slice(&decompressed);
+        Ok(decompressed.len())
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+⊢ Codec ∀ DeflateCodec {
+    rite new() -> Self {
+        DeflateCodec·new()
+    }
+
+    rite with_level(level: CompressionLevel) -> Self {
+        DeflateCodec·with_level(level)
+    }
+}
+
+// ============================================================================
+// Zlib Codec
+// ============================================================================
+
+/// Zlib compressor.
+//@ rune: derive(Debug, Clone)
+☉ Σ ZlibCompressor {
+    level: CompressionLevel,
+}
+
+⊢ ZlibCompressor {
+    /// Create a new Zlib compressor.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+        }
+    }
+
+    /// Create with compression level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level }
+    }
+}
+
+⊢ Default ∀ ZlibCompressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ ZlibCompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Zlib
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        zlib_compress(input, self.level)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ compressed = zlib_compress(input, self.level)?;
+        ⎇ compressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                compressed.len(),
+                output.len(),
+            ));
+        }
+        output[..compressed.len()].copy_from_slice(&compressed);
+        Ok(compressed.len())
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        // Zlib: header (2) + deflate + adler32 (4)
+        input_len + (input_len / 65535 + 1) * 5 + 16
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Zlib decompressor.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ ZlibDecompressor;
+
+⊢ ZlibDecompressor {
+    /// Create a new Zlib decompressor.
+    ☉ rite new() -> Self {
+        Self
+    }
+}
+
+⊢ Decompressor ∀ ZlibDecompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Zlib
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        zlib_decompress(input)
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ decompressed = zlib_decompress(input)?;
+        ⎇ decompressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                decompressed.len(),
+                output.len(),
+            ));
+        }
+        output[..decompressed.len()].copy_from_slice(&decompressed);
+        Ok(decompressed.len())
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Zlib codec (DEFLATE with zlib wrapper).
+//@ rune: derive(Debug, Clone)
+☉ Σ ZlibCodec {
+    level: CompressionLevel,
+}
+
+⊢ ZlibCodec {
+    /// Create a new Zlib codec.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+        }
+    }
+
+    /// Create with compression level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level }
+    }
+}
+
+⊢ Default ∀ ZlibCodec {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ ZlibCodec {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Zlib
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        zlib_compress(input, self.level)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ compressed = zlib_compress(input, self.level)?;
+        ⎇ compressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                compressed.len(),
+                output.len(),
+            ));
+        }
+        output[..compressed.len()].copy_from_slice(&compressed);
+        Ok(compressed.len())
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        input_len + (input_len / 65535 + 1) * 5 + 16
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+⊢ Decompressor ∀ ZlibCodec {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Zlib
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        zlib_decompress(input)
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ decompressed = zlib_decompress(input)?;
+        ⎇ decompressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                decompressed.len(),
+                output.len(),
+            ));
+        }
+        output[..decompressed.len()].copy_from_slice(&decompressed);
+        Ok(decompressed.len())
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+⊢ Codec ∀ ZlibCodec {
+    rite new() -> Self {
+        ZlibCodec·new()
+    }
+
+    rite with_level(level: CompressionLevel) -> Self {
+        ZlibCodec·with_level(level)
+    }
+}
+
+// ============================================================================
+// Gzip Codec
+// ============================================================================
+
+/// Gzip compressor.
+//@ rune: derive(Debug, Clone)
+☉ Σ GzipCompressor {
+    level: CompressionLevel,
+}
+
+⊢ GzipCompressor {
+    /// Create a new Gzip compressor.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+        }
+    }
+
+    /// Create with compression level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level }
+    }
+}
+
+⊢ Default ∀ GzipCompressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ GzipCompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Gzip
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        gzip_compress(input, self.level)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ compressed = gzip_compress(input, self.level)?;
+        ⎇ compressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                compressed.len(),
+                output.len(),
+            ));
+        }
+        output[..compressed.len()].copy_from_slice(&compressed);
+        Ok(compressed.len())
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        // Gzip: header (10) + deflate + crc32 (4) + size (4)
+        input_len + (input_len / 65535 + 1) * 5 + 28
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Gzip decompressor.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ GzipDecompressor;
+
+⊢ GzipDecompressor {
+    /// Create a new Gzip decompressor.
+    ☉ rite new() -> Self {
+        Self
+    }
+}
+
+⊢ Decompressor ∀ GzipDecompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Gzip
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        gzip_decompress(input)
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ decompressed = gzip_decompress(input)?;
+        ⎇ decompressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                decompressed.len(),
+                output.len(),
+            ));
+        }
+        output[..decompressed.len()].copy_from_slice(&decompressed);
+        Ok(decompressed.len())
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+/// Gzip codec (DEFLATE with gzip wrapper).
+//@ rune: derive(Debug, Clone)
+☉ Σ GzipCodec {
+    level: CompressionLevel,
+}
+
+⊢ GzipCodec {
+    /// Create a new Gzip codec.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+        }
+    }
+
+    /// Create with compression level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level }
+    }
+}
+
+⊢ Default ∀ GzipCodec {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ GzipCodec {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Gzip
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        gzip_compress(input, self.level)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ compressed = gzip_compress(input, self.level)?;
+        ⎇ compressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                compressed.len(),
+                output.len(),
+            ));
+        }
+        output[..compressed.len()].copy_from_slice(&compressed);
+        Ok(compressed.len())
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        input_len + (input_len / 65535 + 1) * 5 + 28
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+⊢ Decompressor ∀ GzipCodec {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Gzip
+    }
+
+    rite decompress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        gzip_decompress(input)
+    }
+
+    rite decompress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        ≔ decompressed = gzip_decompress(input)?;
+        ⎇ decompressed.len() > output.len() {
+            ⤺ Err(haagenti_core·Error·buffer_too_small(
+                decompressed.len(),
+                output.len(),
+            ));
+        }
+        output[..decompressed.len()].copy_from_slice(&decompressed);
+        Ok(decompressed.len())
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        None
+    }
+}
+
+⊢ Codec ∀ GzipCodec {
+    rite new() -> Self {
+        GzipCodec·new()
+    }
+
+    rite with_level(level: CompressionLevel) -> Self {
+        GzipCodec·with_level(level)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_deflate_codec_roundtrip() {
+        ≔ codec = DeflateCodec·new();
+        ≔ input = b"Test DEFLATE codec roundtrip!";
+
+        ≔ compressed = codec.compress(input).unwrap();
+        ≔ decompressed = codec.decompress(&compressed).unwrap();
+
+        assert_eq!(decompressed.as_slice(), input);
+    }
+
+    //@ rune: test
+    rite test_zlib_codec_roundtrip() {
+        ≔ codec = ZlibCodec·new();
+        ≔ input = b"Test Zlib codec roundtrip!";
+
+        ≔ compressed = codec.compress(input).unwrap();
+        ≔ decompressed = codec.decompress(&compressed).unwrap();
+
+        assert_eq!(decompressed.as_slice(), input);
+    }
+
+    //@ rune: test
+    rite test_gzip_codec_roundtrip() {
+        ≔ codec = GzipCodec·new();
+        ≔ input = b"Test Gzip codec roundtrip!";
+
+        ≔ compressed = codec.compress(input).unwrap();
+        ≔ decompressed = codec.decompress(&compressed).unwrap();
+
+        assert_eq!(decompressed.as_slice(), input);
+    }
+
+    //@ rune: test
+    rite test_compression_levels() {
+        ≔ input = b"Testing compression levels ∀ DEFLATE family.";
+
+        ∀ level ∈ [
+            CompressionLevel·None,
+            CompressionLevel·Fast,
+            CompressionLevel·Default,
+            CompressionLevel·Best,
+        ] {
+            ≔ deflate = DeflateCodec·with_level(level);
+            ≔ c = deflate.compress(input).unwrap();
+            ≔ d = deflate.decompress(&c).unwrap();
+            assert_eq!(d.as_slice(), input);
+
+            ≔ zlib = ZlibCodec·with_level(level);
+            ≔ c = zlib.compress(input).unwrap();
+            ≔ d = zlib.decompress(&c).unwrap();
+            assert_eq!(d.as_slice(), input);
+
+            ≔ gzip = GzipCodec·with_level(level);
+            ≔ c = gzip.compress(input).unwrap();
+            ≔ d = gzip.decompress(&c).unwrap();
+            assert_eq!(d.as_slice(), input);
+        }
+    }
+
+    //@ rune: test
+    rite test_verify_roundtrip() {
+        ≔ deflate = DeflateCodec·new();
+        ≔ zlib = ZlibCodec·new();
+        ≔ gzip = GzipCodec·new();
+
+        ≔ input = b"Verify roundtrip functionality.";
+
+        assert!(deflate.verify_roundtrip(input).unwrap());
+        assert!(zlib.verify_roundtrip(input).unwrap());
+        assert!(gzip.verify_roundtrip(input).unwrap());
+    }
+}

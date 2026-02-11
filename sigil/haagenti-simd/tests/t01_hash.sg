@@ -1,0 +1,219 @@
+// SIMD Hash Tests
+//
+// Tests for hash functions used in compression match finding.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Hash table size calculations
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_hash_table_sizes() {
+    // Common hash table sizes (power of 2)
+    ≔ hash_12bit = 1 << 12;  // 4096 entries
+    ≔ hash_14bit = 1 << 14;  // 16384 entries
+    ≔ hash_16bit = 1 << 16;  // 65536 entries
+    ≔ hash_18bit = 1 << 18;  // 262144 entries
+
+    assert_eq(hash_12bit, 4096);
+    assert_eq(hash_14bit, 16384);
+    assert_eq(hash_16bit, 65536);
+    assert_eq(hash_18bit, 262144);
+
+    // Memory usage (4 bytes per entry)
+    ≔ mem_12bit = hash_12bit * 4;
+    ≔ mem_16bit = hash_16bit * 4;
+
+    assert_eq(mem_12bit, 16384);     // 16KB
+    assert_eq(mem_16bit, 262144);    // 256KB
+
+    println("hash_table_sizes: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Hash collision probability
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_hash_collision_probability() {
+    // Birthday problem approximation:
+    // P(collision) ≈ n^2 / (2 * table_size)
+
+    // For 1000 entries in 16-bit table (65536):
+    // P ≈ 1000^2 / (2 * 65536) = 1000000 / 131072 ≈ 7.6
+
+    ≔ entries = 1000;
+    ≔ table_size = 65536;
+    // Calculate as fraction: entries^2 / (2 * table_size)
+    ≔ collision_estimate = (entries * entries) / (2 * table_size);
+
+    assert_eq(collision_estimate, 7);  // ~7.6, truncated to 7
+
+    // For 10000 entries:
+    // P ≈ 10000^2 / (2 * 65536) = 100000000 / 131072 ≈ 762
+    // This means probability > 1, many collisions expected
+    ≔ entries_large = 10000;
+    ≔ collision_large = (entries_large * entries_large) / (2 * table_size);
+    assert(collision_large > 700);
+
+    println("hash_collision_probability: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Hash mask operations
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_hash_mask_operations() {
+    // Hash mask = table_size - 1 (for power of 2)
+    ≔ table_size = 65536;
+    ≔ mask = table_size - 1;
+
+    assert_eq(mask, 0xFFFF);
+
+    // Applying mask truncates to table size
+    ≔ large_hash = 0x12345678;
+    ≔ index = large_hash & mask;
+
+    assert_eq(index, 0x5678);
+    assert(index < table_size);
+
+    // All bits set
+    ≔ all_ones = 0xFFFFFFFF;
+    ≔ masked = all_ones & mask;
+    assert_eq(masked, 0xFFFF);
+
+    println("hash_mask_operations: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Hash4 input bytes
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_hash4_input() {
+    // Hash4 uses 4 consecutive bytes
+    // Read as 32-bit little-endian
+
+    // Bytes [0x01, 0x02, 0x03, 0x04] = 0x04030201 (LE)
+    ≔ b0 = 0x01;
+    ≔ b1 = 0x02;
+    ≔ b2 = 0x03;
+    ≔ b3 = 0x04;
+
+    ≔ combined = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+    assert_eq(combined, 0x04030201);
+
+    // Same bytes in big-endian would be 0x01020304
+    ≔ combined_be = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+    assert_eq(combined_be, 0x01020304);
+
+    println("hash4_input: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Hash prime mixing
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_hash_prime_mixing() {
+    // Golden ratio prime: 0x9E3779B9 = 2654435769
+    ≔ golden_prime = 0x9E3779B9;
+
+    // Multiplication spreads bits well
+    ≔ input1 = 0x00000001;
+    ≔ hash1 = (input1 * golden_prime) >> 16;
+
+    ≔ input2 = 0x00000002;
+    ≔ hash2 = (input2 * golden_prime) >> 16;
+
+    // Different inputs should give different hashes
+    assert(hash1 != hash2);
+
+    // Similar inputs should give different hashes
+    ≔ input3 = 0x01020304;
+    ≔ input4 = 0x01020305;  // 1 bit difference
+    ≔ hash3 = (input3 * golden_prime) >> 16;
+    ≔ hash4 = (input4 * golden_prime) >> 16;
+
+    assert(hash3 != hash4);
+
+    println("hash_prime_mixing: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: SIMD hash parallelism
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_simd_hash_parallelism() {
+    // SIMD allows computing multiple hashes in parallel
+
+    // SSE4.2: 4x 32-bit hashes = 128 bits
+    ≔ sse_lanes = 4;
+    ≔ sse_bits = sse_lanes * 32;
+    assert_eq(sse_bits, 128);
+
+    // AVX2: 8x 32-bit hashes = 256 bits
+    ≔ avx2_lanes = 8;
+    ≔ avx2_bits = avx2_lanes * 32;
+    assert_eq(avx2_bits, 256);
+
+    // AVX-512: 16x 32-bit hashes = 512 bits
+    ≔ avx512_lanes = 16;
+    ≔ avx512_bits = avx512_lanes * 32;
+    assert_eq(avx512_bits, 512);
+
+    // Throughput improvement (theoretical)
+    ≔ scalar_throughput = 1;
+    ≔ sse_throughput = 4;
+    ≔ avx2_throughput = 8;
+    ≔ avx512_throughput = 16;
+
+    assert(avx512_throughput > avx2_throughput);
+    assert(avx2_throughput > sse_throughput);
+    assert(sse_throughput > scalar_throughput);
+
+    println("simd_hash_parallelism: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Hash chain depth
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_hash_chain_depth() {
+    // Hash chains for collision handling
+    // Deeper chains = slower lookup
+
+    // LZ4 uses max chain depth of 64
+    ≔ lz4_max_chain = 64;
+
+    // Zstd uses configurable chain depth
+    ≔ zstd_fast_chain = 1;
+    ≔ zstd_normal_chain = 32;
+    ≔ zstd_max_chain = 256;
+
+    // Chain depth affects:
+    // - Compression ratio (more = better matches)
+    // - Compression speed (more = slower)
+
+    assert(zstd_max_chain > zstd_normal_chain);
+    assert(zstd_normal_chain > zstd_fast_chain);
+
+    println("hash_chain_depth: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-simd Hash Tests                   ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_hash_table_sizes();
+    test_hash_collision_probability();
+    test_hash_mask_operations();
+    test_hash4_input();
+    test_hash_prime_mixing();
+    test_simd_hash_parallelism();
+    test_hash_chain_depth();
+
+    println("");
+    println("All tests passed!");
+}

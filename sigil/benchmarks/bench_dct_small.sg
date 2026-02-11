@@ -1,0 +1,104 @@
+// Benchmark: DCT Performance (Small sizes for interpreter)
+//
+// Run with:
+//   Interpreter: sigil run benchmarks/bench_dct_small.sg
+//   JIT:         sigil jit benchmarks/bench_dct_small.sg
+
+rite dct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = 3.141592653589793;
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n { output.push(0.0); }
+
+    ∀ k ∈ 0..n {
+        ≔ Δ sum = 0.0_f64;
+        ∀ i ∈ 0..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+        }
+        output[k] = sum * scale;
+    }
+    output[0] = output[0] / sqrt2;
+    output
+}
+
+rite idct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = 3.141592653589793;
+    ≔ scale_dc = (1.0 / n as f64).sqrt();
+    ≔ scale_ac = (2.0 / n as f64).sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ∀ _ ∈ 0..n { output.push(0.0); }
+
+    ∀ i ∈ 0..n {
+        ≔ Δ sum = input[0] * scale_dc;
+        ∀ k ∈ 1..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[k] * scale_ac * cos(angle);
+        }
+        output[i] = sum;
+    }
+    output
+}
+
+rite generate_test_data(n: usize) → Vec<f64> {
+    ≔ Δ data = Vec·with_capacity(n);
+    ∀ i ∈ 0..n {
+        data.push(sin(i as f64 * 0.1) + cos(i as f64 * 0.03) * 0.5);
+    }
+    data
+}
+
+rite main() {
+    println("DCT/IDCT Benchmark - Sigil");
+    println("══════════════════════════════════════════════════");
+    println("");
+
+    // Small sizes only for interpreter
+    ≔ sizes = vec![16, 32, 64];
+    ≔ iterations = vec![100, 50, 10];
+
+    println("{:>8} {:>12} {:>12} {:>15}", "Size", "DCT (μs)", "IDCT (μs)", "Roundtrip (μs)");
+    println("──────────────────────────────────────────────────");
+
+    ∀ i ∈ 0..sizes.len() {
+        ≔ n = sizes[i];
+        ≔ iters = iterations[i];
+        ≔ data = generate_test_data(n);
+
+        // Warmup
+        ≔ _ = dct_1d(&data);
+
+        // DCT benchmark
+        ≔ start1 = now_micros();
+        ∀ _ ∈ 0..iters {
+            ≔ _ = dct_1d(&data);
+        }
+        ≔ dct_time = (now_micros() - start1) as f64 / iters as f64;
+
+        // IDCT benchmark
+        ≔ coeffs = dct_1d(&data);
+        ≔ start2 = now_micros();
+        ∀ _ ∈ 0..iters {
+            ≔ _ = idct_1d(&coeffs);
+        }
+        ≔ idct_time = (now_micros() - start2) as f64 / iters as f64;
+
+        // Roundtrip
+        ≔ start3 = now_micros();
+        ∀ _ ∈ 0..iters {
+            ≔ c = dct_1d(&data);
+            ≔ _ = idct_1d(&c);
+        }
+        ≔ rt_time = (now_micros() - start3) as f64 / iters as f64;
+
+        println("{:>8} {:>12.1} {:>12.1} {:>15.1}", n, dct_time, idct_time, rt_time);
+    }
+
+    println("");
+    println("Algorithm: Naive O(n²) DCT-II");
+}

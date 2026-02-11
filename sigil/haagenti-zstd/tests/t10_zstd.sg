@@ -1,0 +1,426 @@
+//! haagenti-zstd test suite
+//! Tests for Zstd compression and decompression
+
+// ════════════════════════════════════════════════════════════════════════════
+// Constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite zstd_magic() → u32 { 0xFD2FB528 }
+rite max_level() → i64 { 22 }
+rite default_level() → i64 { 3 }
+
+// Compression levels as integers
+rite LEVEL_FAST() → i64 { 1 }
+rite LEVEL_DEFAULT() → i64 { 3 }
+rite LEVEL_BETTER() → i64 { 7 }
+rite LEVEL_BEST() → i64 { 19 }
+rite LEVEL_ULTRA() → i64 { 22 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// ZstdStats Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ ZstdStats {
+    original_size: i64,
+    compressed_size: i64,
+    ratio: f64,
+}
+
+rite new_stats(original: i64, compressed: i64) → ZstdStats {
+    ≔ ratio = ⎇ compressed > 0 {
+        original as f64 / compressed as f64
+    } ⎉ {
+        0.0
+    };
+
+    ZstdStats {
+        original_size: original,
+        compressed_size: compressed,
+        ratio: ratio,
+    }
+}
+
+rite savings(stats: &ZstdStats) → f64 {
+    ⎇ stats.original_size > 0 {
+        100.0 * (1.0 - stats.compressed_size as f64 / stats.original_size as f64)
+    } ⎉ {
+        0.0
+    }
+}
+
+rite test_stats_ratio() {
+    // 1000 bytes compressed to 250 = 4:1 ratio
+    ≔ stats = new_stats(1000, 250);
+
+    assert(stats.ratio > 3.9 && stats.ratio < 4.1);
+    assert_eq(stats.original_size, 1000);
+    assert_eq(stats.compressed_size, 250);
+
+    println("stats_ratio: PASS");
+}
+
+rite test_stats_savings() {
+    // 1000 -> 250 = 75% savings
+    ≔ stats = new_stats(1000, 250);
+    ≔ s = savings(&stats);
+
+    assert(s > 74.9 && s < 75.1);
+
+    println("stats_savings: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Level Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite validate_level(level: i64) → bool {
+    level >= 1 && level <= 22
+}
+
+rite test_level_constants() {
+    assert_eq(LEVEL_FAST(), 1);
+    assert_eq(LEVEL_DEFAULT(), 3);
+    assert_eq(LEVEL_BETTER(), 7);
+    assert_eq(LEVEL_BEST(), 19);
+    assert_eq(LEVEL_ULTRA(), 22);
+
+    println("level_constants: PASS");
+}
+
+rite test_level_validation() {
+    // Valid levels
+    assert(validate_level(1));
+    assert(validate_level(11));
+    assert(validate_level(22));
+
+    // Invalid levels
+    assert(!validate_level(0));
+    assert(!validate_level(-1));
+    assert(!validate_level(23));
+
+    println("level_validation: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Frame Header Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ FrameHeader {
+    magic: u32,
+    has_checksum: bool,
+    content_size: i64,
+    window_log: i64,
+}
+
+rite new_frame_header(content_size: i64, has_checksum: bool) → FrameHeader {
+    FrameHeader {
+        magic: zstd_magic(),
+        has_checksum: has_checksum,
+        content_size: content_size,
+        window_log: 22,
+    }
+}
+
+rite header_size(header: &FrameHeader) → i64 {
+    // 4 (magic) + 1 (FHD) + content_size bytes
+    ⎇ header.content_size <= 255 {
+        6  // 4 + 1 + 1
+    } ⎉ ⎇ header.content_size <= 65535 {
+        7  // 4 + 1 + 2
+    } ⎉ {
+        9  // 4 + 1 + 4
+    }
+}
+
+rite test_frame_header_creation() {
+    ≔ header = new_frame_header(1000, true);
+
+    assert_eq(header.magic, 0xFD2FB528);
+    assert(header.has_checksum);
+    assert_eq(header.content_size, 1000);
+    assert_eq(header.window_log, 22);
+
+    println("frame_header_creation: PASS");
+}
+
+rite test_frame_header_size() {
+    // Small content (1 byte for size)
+    ≔ h1 = new_frame_header(100, false);
+    assert_eq(header_size(&h1), 6);
+
+    // Medium content (2 bytes for size)
+    ≔ h2 = new_frame_header(1000, false);
+    assert_eq(header_size(&h2), 7);
+
+    // Large content (4 bytes for size)
+    ≔ h3 = new_frame_header(100000, false);
+    assert_eq(header_size(&h3), 9);
+
+    println("frame_header_size: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Block Header Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+// Block types
+rite BLOCK_RAW() → i64 { 0 }
+rite BLOCK_RLE() → i64 { 1 }
+rite BLOCK_COMPRESSED() → i64 { 2 }
+
+Σ BlockHeader {
+    block_type: i64,
+    is_last: bool,
+    block_size: i64,
+}
+
+rite encode_block_header(header: &BlockHeader) → u32 {
+    ≔ Δ h = (header.block_size << 3) as u32;
+    h = h | ((header.block_type as u32) << 1);
+    ⎇ header.is_last { h = h | 0x01; }
+    h
+}
+
+rite decode_block_header(encoded: u32) → BlockHeader {
+    BlockHeader {
+        is_last: (encoded & 0x01) != 0,
+        block_type: ((encoded >> 1) & 0x03) as i64,
+        block_size: (encoded >> 3) as i64,
+    }
+}
+
+rite test_block_header_encode() {
+    ≔ header = BlockHeader {
+        block_type: BLOCK_RAW(),
+        is_last: true,
+        block_size: 1000,
+    };
+
+    ≔ encoded = encode_block_header(&header);
+    ≔ decoded = decode_block_header(encoded);
+
+    assert_eq(decoded.block_type, BLOCK_RAW());
+    assert(decoded.is_last);
+    assert_eq(decoded.block_size, 1000);
+
+    println("block_header_encode: PASS");
+}
+
+rite test_block_types() {
+    // Raw block
+    ≔ raw = BlockHeader { block_type: BLOCK_RAW(), is_last: false, block_size: 100 };
+    ≔ enc_raw = encode_block_header(&raw);
+    assert_eq((enc_raw >> 1) & 0x03, 0);
+
+    // RLE block
+    ≔ rle = BlockHeader { block_type: BLOCK_RLE(), is_last: false, block_size: 100 };
+    ≔ enc_rle = encode_block_header(&rle);
+    assert_eq((enc_rle >> 1) & 0x03, 1);
+
+    // Compressed block
+    ≔ comp = BlockHeader { block_type: BLOCK_COMPRESSED(), is_last: true, block_size: 100 };
+    ≔ enc_comp = encode_block_header(&comp);
+    assert_eq((enc_comp >> 1) & 0x03, 2);
+
+    println("block_types: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// XXHash Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+// Simplified hash for testing - doesn't need actual XXHash primes
+rite simple_hash(data: &Vec<u8>) → i64 {
+    ≔ Δ h = 5381;  // djb2 initial value
+
+    ≔ Δ i = 0;
+    ⟳ i < data.len() as i64 {
+        h = ((h << 5) + h) + data[i as usize] as i64;  // h * 33 + c
+        i = i + 1;
+    }
+
+    h
+}
+
+rite test_hash_deterministic() {
+    ≔ Δ data = Vec·new();
+    data.push(72);  // 'H'
+    data.push(101); // 'e'
+    data.push(108); // 'l'
+    data.push(108); // 'l'
+    data.push(111); // 'o'
+
+    ≔ hash1 = simple_hash(&data);
+    ≔ hash2 = simple_hash(&data);
+
+    assert_eq(hash1, hash2);
+
+    println("hash_deterministic: PASS");
+}
+
+rite test_hash_different() {
+    ≔ Δ data1 = Vec·new();
+    data1.push(65);
+    data1.push(66);
+
+    ≔ Δ data2 = Vec·new();
+    data2.push(67);
+    data2.push(68);
+
+    ≔ hash1 = simple_hash(&data1);
+    ≔ hash2 = simple_hash(&data2);
+
+    assert(hash1 != hash2);
+
+    println("hash_different: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Compressor Config Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ CompressorConfig {
+    level: i64,
+    include_checksum: bool,
+    window_log: i64,
+}
+
+rite new_compressor_config() → CompressorConfig {
+    CompressorConfig {
+        level: LEVEL_DEFAULT(),
+        include_checksum: true,
+        window_log: 22,
+    }
+}
+
+rite validate_window_log(log: i64) → bool {
+    log >= 10 && log <= 31
+}
+
+rite test_compressor_config_defaults() {
+    ≔ config = new_compressor_config();
+
+    assert_eq(config.level, 3);
+    assert(config.include_checksum);
+    assert_eq(config.window_log, 22);
+
+    println("compressor_config_defaults: PASS");
+}
+
+rite test_window_log_validation() {
+    assert(validate_window_log(10));
+    assert(validate_window_log(22));
+    assert(validate_window_log(31));
+
+    assert(!validate_window_log(9));
+    assert(!validate_window_log(32));
+
+    println("window_log_validation: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Decompressor Config Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ DecompressorConfig {
+    verify_checksum: bool,
+    max_output_size: i64,
+}
+
+rite new_decompressor_config() → DecompressorConfig {
+    DecompressorConfig {
+        verify_checksum: true,
+        max_output_size: 0,  // unlimited
+    }
+}
+
+rite test_decompressor_config_defaults() {
+    ≔ config = new_decompressor_config();
+
+    assert(config.verify_checksum);
+    assert_eq(config.max_output_size, 0);
+
+    println("decompressor_config_defaults: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Magic Number Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite validate_magic(data: &Vec<u8>) → bool {
+    ⎇ data.len() < 4 { ⤺ false; }
+
+    ≔ magic = (data[0] as u32) |
+              ((data[1] as u32) << 8) |
+              ((data[2] as u32) << 16) |
+              ((data[3] as u32) << 24);
+
+    magic == zstd_magic()
+}
+
+rite test_magic_validation() {
+    // Valid magic
+    ≔ Δ valid = Vec·new();
+    valid.push(0x28);
+    valid.push(0xB5);
+    valid.push(0x2F);
+    valid.push(0xFD);
+    assert(validate_magic(&valid));
+
+    // Invalid magic
+    ≔ Δ invalid = Vec·new();
+    invalid.push(0x00);
+    invalid.push(0x00);
+    invalid.push(0x00);
+    invalid.push(0x00);
+    assert(!validate_magic(&invalid));
+
+    // Too short
+    ≔ Δ short_data = Vec·new();
+    short_data.push(0x28);
+    assert(!validate_magic(&short_data));
+
+    println("magic_validation: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-zstd Tests                        ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    // Stats tests
+    test_stats_ratio();
+    test_stats_savings();
+
+    // Level tests
+    test_level_constants();
+    test_level_validation();
+
+    // Frame header tests
+    test_frame_header_creation();
+    test_frame_header_size();
+
+    // Block header tests
+    test_block_header_encode();
+    test_block_types();
+
+    // Hash tests
+    test_hash_deterministic();
+    test_hash_different();
+
+    // Config tests
+    test_compressor_config_defaults();
+    test_window_log_validation();
+    test_decompressor_config_defaults();
+
+    // Magic tests
+    test_magic_validation();
+
+    println("");
+    println("All tests passed!");
+}

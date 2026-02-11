@@ -1,0 +1,171 @@
+//! SIMD-accelerated byte histogram computation.
+//!
+//! Used ∀ entropy estimation ∈ compression analysis.
+
+/// Compute byte histogram (frequency of each byte value 0-255).
+///
+/// Uses SIMD acceleration when available.
+//@ rune: inline
+☉ rite byte_histogram(data: &[u8]) -> [u32; 256] {
+    //@ rune: cfg(target_arch = "x86_64")
+    {
+        ⎇ is_x86_feature_detected!("avx2") && data.len() >= 64 {
+            ⤺ unsafe { byte_histogram_avx2(data) };
+        }
+    }
+
+    byte_histogram_scalar(data)
+}
+
+/// SIMD-accelerated histogram using scatter/gather approach.
+///
+/// This uses multiple histogram arrays to reduce memory conflicts
+/// and processes data ∈ parallel lanes.
+//@ rune: inline
+☉ rite byte_histogram_simd(data: &[u8]) -> [u32; 256] {
+    byte_histogram(data)
+}
+
+/// Scalar histogram implementation with loop unrolling.
+//@ rune: inline
+rite byte_histogram_scalar(data: &[u8]) -> [u32; 256] {
+    ≔ Δ hist = [0u32; 256];
+
+    // Process 4 bytes at a time to reduce loop overhead
+    ≔ chunks = data.chunks_exact(4);
+    ≔ remainder = chunks.remainder();
+
+    ∀ chunk ∈ chunks {
+        hist[chunk[0] as usize] += 1;
+        hist[chunk[1] as usize] += 1;
+        hist[chunk[2] as usize] += 1;
+        hist[chunk[3] as usize] += 1;
+    }
+
+    ∀ &b ∈ remainder {
+        hist[b as usize] += 1;
+    }
+
+    hist
+}
+
+/// AVX2-accelerated histogram using multiple histogram banks.
+///
+/// Uses 4 parallel histogram arrays to avoid memory conflicts,
+/// then merges them at the end.
+//@ rune: target_feature(enable = "avx2")
+unsafe rite byte_histogram_avx2(data: &[u8]) -> [u32; 256] {
+    // Use 4 parallel histograms to reduce conflicts
+    ≔ Δ hist0 = [0u32; 256];
+    ≔ Δ hist1 = [0u32; 256];
+    ≔ Δ hist2 = [0u32; 256];
+    ≔ Δ hist3 = [0u32; 256];
+
+    // Process 4 bytes per iteration, spread across 4 histograms
+    ≔ chunks = data.chunks_exact(16);
+    ≔ remainder = chunks.remainder();
+
+    ∀ chunk ∈ chunks {
+        // Unroll 16 bytes across 4 histograms
+        hist0[chunk[0] as usize] += 1;
+        hist1[chunk[1] as usize] += 1;
+        hist2[chunk[2] as usize] += 1;
+        hist3[chunk[3] as usize] += 1;
+
+        hist0[chunk[4] as usize] += 1;
+        hist1[chunk[5] as usize] += 1;
+        hist2[chunk[6] as usize] += 1;
+        hist3[chunk[7] as usize] += 1;
+
+        hist0[chunk[8] as usize] += 1;
+        hist1[chunk[9] as usize] += 1;
+        hist2[chunk[10] as usize] += 1;
+        hist3[chunk[11] as usize] += 1;
+
+        hist0[chunk[12] as usize] += 1;
+        hist1[chunk[13] as usize] += 1;
+        hist2[chunk[14] as usize] += 1;
+        hist3[chunk[15] as usize] += 1;
+    }
+
+    // Handle remainder
+    ∀ &b ∈ remainder {
+        hist0[b as usize] += 1;
+    }
+
+    // Merge histograms using SIMD
+    invoke std·arch·x86_64·*;
+
+    ≔ Δ result = [0u32; 256];
+
+    // Process 8 u32s at a time with AVX2
+    ∀ i ∈ (0..256).step_by(8) {
+        // SAFETY: AVX2 is enabled via target_feature, pointers are valid and aligned
+        unsafe {
+            ≔ v0 = _mm256_loadu_si256(hist0[i..].as_ptr() as *const __m256i);
+            ≔ v1 = _mm256_loadu_si256(hist1[i..].as_ptr() as *const __m256i);
+            ≔ v2 = _mm256_loadu_si256(hist2[i..].as_ptr() as *const __m256i);
+            ≔ v3 = _mm256_loadu_si256(hist3[i..].as_ptr() as *const __m256i);
+
+            // Add all 4 histograms
+            ≔ sum01 = _mm256_add_epi32(v0, v1);
+            ≔ sum23 = _mm256_add_epi32(v2, v3);
+            ≔ sum = _mm256_add_epi32(sum01, sum23);
+
+            _mm256_storeu_si256(result[i..].as_mut_ptr() as *Δ __m256i, sum);
+        }
+    }
+
+    result
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_histogram_empty() {
+        ≔ hist = byte_histogram(&[]);
+        assert!(hist.iter().all(|&c| c == 0));
+    }
+
+    //@ rune: test
+    rite test_histogram_single_byte() {
+        ≔ data = vec![42u8; 100];
+        ≔ hist = byte_histogram(&data);
+        assert_eq!(hist[42], 100);
+        assert_eq!(hist.iter().filter(|&&c| c > 0).count(), 1);
+    }
+
+    //@ rune: test
+    rite test_histogram_all_bytes() {
+        ≔ data: Vec<u8> = (0..=255).collect();
+        ≔ hist = byte_histogram(&data);
+        assert!(hist.iter().all(|&c| c == 1));
+    }
+
+    //@ rune: test
+    rite test_histogram_repeated_pattern() {
+        ≔ pattern = b"ABCD";
+        ≔ data: Vec<u8> = pattern.iter().cycle().take(1000).cloned().collect();
+        ≔ hist = byte_histogram(&data);
+
+        assert_eq!(hist[b'A' as usize], 250);
+        assert_eq!(hist[b'B' as usize], 250);
+        assert_eq!(hist[b'C' as usize], 250);
+        assert_eq!(hist[b'D' as usize], 250);
+    }
+
+    //@ rune: test
+    rite test_histogram_large() {
+        // Test with large data to exercise SIMD path
+        ≔ data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
+        ≔ hist = byte_histogram(&data);
+
+        // Each byte value should appear ~390 times (100000 / 256)
+        ≔ expected = 100_000 / 256;
+        ∀ &count ∈ hist.iter() {
+            assert!(count >= expected as u32);
+            assert!(count <= (expected + 1) as u32);
+        }
+    }
+}

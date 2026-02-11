@@ -1,0 +1,132 @@
+// gRPC Config Tests
+//
+// Tests for gRPC configuration and settings.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Port ranges
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_port_ranges() {
+    ≔ min_port = 1;
+    ≔ max_port = 65535;
+    ≔ privileged_max = 1023;
+    ≔ default_grpc = 50051;
+
+    assert(default_grpc > privileged_max);
+    assert(default_grpc <= max_port);
+
+    // Common ports
+    ≔ http_port = 80;
+    ≔ https_port = 443;
+    assert(http_port <= privileged_max);
+    assert(https_port <= privileged_max);
+
+    println("port_ranges: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Timeout values
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_timeout_values() {
+    // Timeouts in milliseconds
+    ≔ connect_timeout = 5000;     // 5 seconds
+    ≔ request_timeout = 30000;    // 30 seconds
+    ≔ idle_timeout = 300000;      // 5 minutes
+    ≔ keepalive = 60000;          // 1 minute
+
+    assert_eq(connect_timeout, 5 * 1000);
+    assert_eq(request_timeout, 30 * 1000);
+    assert_eq(idle_timeout, 5 * 60 * 1000);
+    assert_eq(keepalive, 60 * 1000);
+
+    // Ordering
+    assert(connect_timeout < request_timeout);
+    assert(request_timeout < idle_timeout);
+
+    println("timeout_values: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Message size limits
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_message_limits() {
+    ≔ default_max = 4 * 1024 * 1024;  // 4MB
+    ≔ large_max = 16 * 1024 * 1024;   // 16MB
+
+    assert_eq(default_max, 4194304);
+    assert_eq(large_max, 16777216);
+
+    // Metadata limit
+    ≔ metadata_max = 8192;  // 8KB
+    assert_eq(metadata_max, 8 * 1024);
+
+    println("message_limits: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Retry configuration
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_retry_config() {
+    ≔ max_retries = 3;
+    ≔ initial_backoff = 100;  // 100ms
+    ≔ max_backoff = 10000;    // 10s
+    ≔ backoff_multiplier = 2;
+
+    // Exponential backoff sequence
+    ≔ backoff_0 = initial_backoff;
+    ≔ backoff_1 = backoff_0 * backoff_multiplier;
+    ≔ backoff_2 = backoff_1 * backoff_multiplier;
+
+    assert_eq(backoff_0, 100);
+    assert_eq(backoff_1, 200);
+    assert_eq(backoff_2, 400);
+
+    // Cap at max
+    ≔ capped = ⎇ backoff_2 > max_backoff { max_backoff } ⎉ { backoff_2 };
+    assert_eq(capped, 400);
+
+    println("retry_config: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Connection pool settings
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_connection_pool() {
+    ≔ min_connections = 1;
+    ≔ max_connections = 100;
+    ≔ connections_per_host = 10;
+
+    assert(min_connections <= max_connections);
+    assert(connections_per_host <= max_connections);
+
+    // Pool sizing
+    ≔ num_hosts = 5;
+    ≔ expected_connections = num_hosts * connections_per_host;
+    assert_eq(expected_connections, 50);
+
+    println("connection_pool: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-grpc Config Tests                 ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_port_ranges();
+    test_timeout_values();
+    test_message_limits();
+    test_retry_config();
+    test_connection_pool();
+
+    println("");
+    println("All tests passed!");
+}

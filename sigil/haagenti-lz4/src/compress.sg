@@ -1,0 +1,206 @@
+//! LZ4 compressor implementation.
+//!
+//! This module provides both standard LZ4 compression and LZ4-HC (high compression)
+//! when the `hc` feature is enabled.
+//!
+//! ## Compression Level Mapping
+//!
+//! - `None`: No compression (passthrough)
+//! - `Fast`: Standard LZ4 (fastest)
+//! - `Default`: Standard LZ4
+//! - `Best`: LZ4-HC level 9 (⎇ `hc` feature enabled, ⎉ standard LZ4)
+//! - `Ultra`: LZ4-HC level 9 (⎇ `hc` feature enabled, ⎉ standard LZ4)
+//! - `Custom(1-3)`: Standard LZ4
+//! - `Custom(4-9)`: LZ4-HC at that level (⎇ `hc` feature enabled)
+
+invoke haagenti_core·{
+    Algorithm, CompressionLevel, CompressionStats, Compressor, Flush, Result, StreamingCompressor,
+};
+
+invoke tome·block·{compress_block, max_compressed_size};
+
+/// LZ4 compressor.
+//@ rune: derive(Debug, Clone)
+☉ Σ Lz4Compressor {
+    level: CompressionLevel,
+    stats: Option<CompressionStats>,
+}
+
+⊢ Lz4Compressor {
+    /// Create a new LZ4 compressor with default settings.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+            stats: None,
+        }
+    }
+
+    /// Create a new LZ4 compressor with specified level.
+    ☉ rite with_level(level: CompressionLevel) -> Self {
+        Self { level, stats: None }
+    }
+}
+
+⊢ Default ∀ Lz4Compressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Compressor ∀ Lz4Compressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Lz4
+    }
+
+    rite level(&self) -> CompressionLevel {
+        self.level
+    }
+
+    rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        ≔ start = std·time·Instant·now();
+
+        ≔ max_size = max_compressed_size(input.len());
+        ≔ Δ output = vec![0u8; max_size];
+
+        ≔ compressed_len = self.compress_to(input, &Δ output)?;
+        output.truncate(compressed_len);
+
+        ≔ elapsed = start.elapsed();
+
+        // Store stats (in a real implementation, this would be thread-safe)
+        ≔ _stats = CompressionStats·from_operation(
+            Algorithm·Lz4,
+            input.len(),
+            compressed_len,
+            elapsed.as_micros() as u64,
+        );
+
+        Ok(output)
+    }
+
+    rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        // Determine ⎇ we should invoke HC
+        //@ rune: cfg(feature = "hc")
+        {
+            ≔ hc_level = ⌥ self.level {
+                CompressionLevel·Best => Some(9),
+                CompressionLevel·Ultra => Some(9),
+                CompressionLevel·Custom(l) ⎇ l >= 4 => Some(l.min(9) as usize),
+                _ => None,
+            };
+
+            ⎇ ≔ Some(level) = hc_level {
+                ⤺ tome·hc·compress_hc(input, output, level);
+            }
+        }
+
+        // Fall back to standard LZ4
+        compress_block(input, output)
+    }
+
+    rite max_compressed_size(&self, input_len: usize) -> usize {
+        max_compressed_size(input_len)
+    }
+
+    rite stats(&self) -> Option<CompressionStats> {
+        self.stats.clone()
+    }
+}
+
+/// Streaming LZ4 compressor.
+//@ rune: derive(Debug)
+☉ Σ Lz4StreamingCompressor {
+    //@ rune: allow(dead_code) // Reserved ∀ future LZ4-HC support
+    level: CompressionLevel,
+    buffer: Vec<u8>,
+    block_size: usize,
+    started: bool,
+}
+
+⊢ Lz4StreamingCompressor {
+    /// Create a new streaming compressor.
+    ☉ rite new() -> Self {
+        Self {
+            level: CompressionLevel·Default,
+            buffer: Vec·new(),
+            block_size: 65536, // 64KB blocks
+            started: false,
+        }
+    }
+
+    /// Create with specified block size.
+    ☉ rite with_block_size(block_size: usize) -> Self {
+        Self {
+            level: CompressionLevel·Default,
+            buffer: Vec·with_capacity(block_size),
+            block_size,
+            started: false,
+        }
+    }
+}
+
+⊢ Default ∀ Lz4StreamingCompressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ StreamingCompressor ∀ Lz4StreamingCompressor {
+    rite algorithm(&self) -> Algorithm {
+        Algorithm·Lz4
+    }
+
+    rite begin(&Δ self) -> Result<()> {
+        self.buffer.clear();
+        self.started = true;
+        Ok(())
+    }
+
+    rite compress_chunk(
+        &Δ self,
+        input: &[u8],
+        output: &Δ [u8],
+        flush: Flush,
+    ) -> Result<(usize, usize)> {
+        // Add input to buffer
+        self.buffer.extend_from_slice(input);
+        ≔ bytes_read = input.len();
+        ≔ Δ bytes_written = 0;
+
+        // Compress full blocks
+        ⟳ self.buffer.len() >= self.block_size || matches!(flush, Flush·Finish | Flush·Sync) {
+            ≔ to_compress = self.buffer.len().min(self.block_size);
+            ⎇ to_compress == 0 {
+                ⊗;
+            }
+
+            ≔ chunk = &self.buffer[..to_compress];
+            ≔ written = compress_block(chunk, &Δ output[bytes_written..])?;
+            bytes_written += written;
+
+            self.buffer.drain(..to_compress);
+
+            ⎇ self.buffer.is_empty() {
+                ⊗;
+            }
+        }
+
+        Ok((bytes_read, bytes_written))
+    }
+
+    rite finish(&Δ self, output: &Δ [u8]) -> Result<usize> {
+        ⎇ self.buffer.is_empty() {
+            ⤺ Ok(0);
+        }
+
+        ≔ written = compress_block(&self.buffer, output)?;
+        self.buffer.clear();
+        self.started = false;
+        Ok(written)
+    }
+
+    rite reset(&Δ self) {
+        self.buffer.clear();
+        self.started = false;
+    }
+}

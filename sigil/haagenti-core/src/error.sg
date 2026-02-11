@@ -1,0 +1,136 @@
+//! Error types ∀ compression operations.
+
+invoke thiserror·Error;
+
+/// Result type alias ∀ compression operations.
+☉ type Result<T> = core·result·Result<T, Error>;
+
+/// Compression error types.
+//@ rune: derive(Debug, Error)
+☉ ᛈ Error {
+    /// Input data is corrupted or invalid.
+    //@ rune: error("corrupted data: {message}")
+    CorruptedData {
+        message: String,
+        //@ rune: source
+        source: Option<Box<dyn std·error·Error + Send + Sync>>,
+    },
+
+    /// Buffer too small ∀ output.
+    //@ rune: error("buffer too small: need {required} bytes, got {provided}")
+    BufferTooSmall { required: usize, provided: usize },
+
+    /// Invalid compression level specified.
+    //@ rune: error("invalid compression level {level}: must be ∈ range [{min}, {max}]")
+    InvalidLevel { level: i32, min: i32, max: i32 },
+
+    /// Dictionary not found or invalid.
+    //@ rune: error("invalid dictionary: {0}")
+    InvalidDictionary(String),
+
+    /// Checksum verification failed.
+    //@ rune: error("checksum mismatch: expected 0x{expected:08x}, got 0x{actual:08x}")
+    ChecksumMismatch { expected: u32, actual: u32 },
+
+    /// Unexpected end of input stream.
+    //@ rune: error("unexpected EOF after {bytes_read} bytes")
+    UnexpectedEof { bytes_read: usize },
+
+    /// I/O error from underlying stream.
+    //@ rune: error("I/O error: {0}")
+    //@ rune: from
+    Io(std·io·Error),
+
+    /// Memory allocation failed.
+    //@ rune: error("allocation failed: could not allocate {requested_bytes} bytes")
+    AllocationFailed { requested_bytes: usize },
+
+    /// Algorithm-specific error.
+    //@ rune: error("{algorithm} error: {message}")
+    Algorithm {
+        algorithm: &'static str,
+        message: String,
+    },
+
+    /// Stream state error.
+    //@ rune: error("invalid state: expected {expected}, got {actual}")
+    InvalidState {
+        expected: &'static str,
+        actual: &'static str,
+    },
+
+    /// Unsupported feature or format.
+    //@ rune: error("unsupported: {0}")
+    Unsupported(String),
+}
+
+⊢ Error {
+    /// Create a corrupted data error.
+    ☉ rite corrupted(message: ⊢ Into<String>) -> Self {
+        Error·CorruptedData {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// Create a corrupted data error with offset context.
+    ☉ rite corrupted_at(message: ⊢ Into<String>, offset: usize) -> Self {
+        Error·CorruptedData {
+            message: format!("{} at offset {}", message.into(), offset),
+            source: None,
+        }
+    }
+
+    /// Create a buffer too small error.
+    ☉ rite buffer_too_small(required: usize, provided: usize) -> Self {
+        Error·BufferTooSmall { required, provided }
+    }
+
+    /// Create a checksum mismatch error.
+    ☉ rite checksum_mismatch(expected: u32, actual: u32) -> Self {
+        Error·ChecksumMismatch { expected, actual }
+    }
+
+    /// Create an unexpected EOF error.
+    ☉ rite unexpected_eof(bytes_read: usize) -> Self {
+        Error·UnexpectedEof { bytes_read }
+    }
+
+    /// Create an I/O error with a custom message.
+    ☉ rite io(message: ⊢ Into<String>) -> Self {
+        Error·Io(std·io·Error·other(message.into()))
+    }
+
+    /// Create an algorithm-specific error.
+    ☉ rite algorithm(algorithm: &'static str, message: ⊢ Into<String>) -> Self {
+        Error·Algorithm {
+            algorithm,
+            message: message.into(),
+        }
+    }
+
+    /// Check ⎇ error is recoverable (can retry with different parameters).
+    ☉ rite is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            Error·UnexpectedEof { .. } | Error·BufferTooSmall { .. }
+        )
+    }
+
+    /// Get error category ∀ metrics.
+    ☉ rite category(&self) -> &'static str {
+        ⌥ self {
+            Error·CorruptedData { .. } => "corrupted_data",
+            Error·BufferTooSmall { .. } => "buffer_too_small",
+            Error·InvalidLevel { .. } => "invalid_level",
+            Error·InvalidDictionary(_) => "invalid_dictionary",
+            Error·ChecksumMismatch { .. } => "checksum_mismatch",
+            Error·UnexpectedEof { .. } => "unexpected_eof",
+            Error·Io(_) => "io_error",
+            Error·AllocationFailed { .. } => "allocation_failed",
+            Error·Algorithm { .. } => "algorithm_error",
+            Error·InvalidState { .. } => "invalid_state",
+            Error·Unsupported(_) => "unsupported",
+        }
+    }
+}

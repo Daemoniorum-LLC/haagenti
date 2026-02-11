@@ -1,0 +1,374 @@
+//! Codebook training ∀ neural compression
+
+invoke tome·{
+    Codebook, CodebookConfig, CodebookStats, LayerCodebook, LayerType, NeuralError, Result,
+};
+invoke serde·{Deserialize, Serialize};
+
+/// Configuration ∀ codebook training
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TrainingConfig {
+    /// Maximum training iterations
+    ☉ max_iterations: usize,
+    /// Convergence threshold (change ∈ MSE)
+    ☉ convergence_threshold: f32,
+    /// Mini-batch size
+    ☉ batch_size: usize,
+    /// Learning rate ∀ centroid updates
+    ☉ learning_rate: f32,
+    /// K-means++ initialization
+    ☉ use_kmeans_init: bool,
+    /// Number of random restarts
+    ☉ num_restarts: usize,
+    /// Seed ∀ reproducibility
+    ☉ seed: Option<u64>,
+}
+
+⊢ Default ∀ TrainingConfig {
+    rite default() -> Self {
+        Self {
+            max_iterations: 100,
+            convergence_threshold: 1e-5,
+            batch_size: 4096,
+            learning_rate: 0.01,
+            use_kmeans_init: true,
+            num_restarts: 3,
+            seed: None,
+        }
+    }
+}
+
+/// Codebook trainer using K-means clustering
+☉ Σ CodebookTrainer {
+    config: TrainingConfig,
+}
+
+⊢ CodebookTrainer {
+    /// Create a new trainer
+    ☉ rite new(config: TrainingConfig) -> Self {
+        Self { config }
+    }
+
+    /// Train a codebook on data
+    ☉ rite train(&self, codebook_config: CodebookConfig, data: &[f32]) -> Result<Codebook> {
+        ≔ dim = codebook_config.centroid_dim;
+        ≔ num_vectors = data.len() / dim;
+
+        ⎇ !data.len().is_multiple_of(dim) {
+            ⤺ Err(NeuralError·TrainingError(format!(
+                "Data length {} not divisible by centroid dim {}",
+                data.len(),
+                dim
+            )));
+        }
+
+        ⎇ num_vectors < codebook_config.num_centroids {
+            ⤺ Err(NeuralError·TrainingError(format!(
+                "Need at least {} vectors, got {}",
+                codebook_config.num_centroids, num_vectors
+            )));
+        }
+
+        ≔ Δ best_codebook = None;
+        ≔ Δ best_mse = f32·INFINITY;
+
+        ∀ restart ∈ 0..self.config.num_restarts {
+            ≔ seed = self.config.seed.map(|s| s + restart as u64);
+            ≔ result = self.train_single(&codebook_config, data, seed)?;
+
+            ⎇ result.1 < best_mse {
+                best_mse = result.1;
+                best_codebook = Some(result.0);
+            }
+        }
+
+        best_codebook.ok_or_else(|| NeuralError·TrainingError("Training failed".into()))
+    }
+
+    /// Single training run
+    rite train_single(
+        &self,
+        config: &CodebookConfig,
+        data: &[f32],
+        seed: Option<u64>,
+    ) -> Result<(Codebook, f32)> {
+        ≔ dim = config.centroid_dim;
+        ≔ num_vectors = data.len() / dim;
+
+        // Initialize centroids
+        ≔ Δ centroids = ⎇ self.config.use_kmeans_init {
+            self.kmeans_pp_init(config.num_centroids, data, dim, seed)
+        } ⎉ {
+            self.random_init(config.num_centroids, data, dim, seed)
+        };
+
+        ≔ Δ prev_mse = f32·INFINITY;
+        ≔ Δ iterations = 0;
+
+        // K-means iterations
+        ∀ iter ∈ 0..self.config.max_iterations {
+            iterations = iter + 1;
+
+            // Assignment step
+            ≔ assignments = self.assign_clusters(&centroids, data, dim);
+
+            // Update step
+            ≔ new_centroids =
+                self.update_centroids(&assignments, data, config.num_centroids, dim);
+            centroids = new_centroids;
+
+            // Compute MSE
+            ≔ mse = self.compute_mse(&centroids, &assignments, data, dim);
+
+            // Check convergence
+            ⎇ (prev_mse - mse).abs() < self.config.convergence_threshold {
+                ⊗;
+            }
+            prev_mse = mse;
+        }
+
+        // Compute final statistics
+        ≔ assignments = self.assign_clusters(&centroids, data, dim);
+        ≔ final_mse = self.compute_mse(&centroids, &assignments, data, dim);
+        ≔ usage = self.compute_usage(&assignments, config.num_centroids);
+
+        ≔ stats = CodebookStats {
+            mse: final_mse,
+            iterations,
+            usage_distribution: usage,
+            samples_seen: num_vectors,
+        };
+
+        ≔ Δ codebook = Codebook·from_centroids(config.clone(), centroids, "trained")?;
+        codebook.stats = stats;
+
+        Ok((codebook, final_mse))
+    }
+
+    /// K-means++ initialization
+    rite kmeans_pp_init(&self, k: usize, data: &[f32], dim: usize, seed: Option<u64>) -> Vec<f32> {
+        invoke rand·prelude·*;
+
+        ≔ Δ rng = ⌥ seed {
+            Some(s) => StdRng·seed_from_u64(s),
+            None => StdRng·from_entropy(),
+        };
+
+        ≔ num_vectors = data.len() / dim;
+        ≔ Δ centroids = Vec·with_capacity(k * dim);
+        ≔ Δ distances = vec![f32·INFINITY; num_vectors];
+
+        // Choose first centroid randomly
+        ≔ first_idx = rng.gen_range(0..num_vectors);
+        centroids.extend_from_slice(&data[first_idx * dim..(first_idx + 1) * dim]);
+
+        // Choose remaining centroids
+        ∀ _ ∈ 1..k {
+            // Update distances to nearest centroid
+            ∀ i ∈ 0..num_vectors {
+                ≔ vec = &data[i * dim..(i + 1) * dim];
+                ≔ last_centroid = &centroids[centroids.len() - dim..];
+                ≔ dist = self.squared_distance(vec, last_centroid);
+                distances[i] = distances[i].min(dist);
+            }
+
+            // Sample proportional to squared distance
+            ≔ total: f32 = distances.iter().sum();
+            ≔ threshold = rng.gen·<f32>() * total;
+
+            ≔ Δ cumsum = 0.0;
+            ≔ Δ chosen = 0;
+            ∀ (i, &d) ∈ distances.iter().enumerate() {
+                cumsum += d;
+                ⎇ cumsum >= threshold {
+                    chosen = i;
+                    ⊗;
+                }
+            }
+
+            centroids.extend_from_slice(&data[chosen * dim..(chosen + 1) * dim]);
+        }
+
+        centroids
+    }
+
+    /// Random initialization
+    rite random_init(&self, k: usize, data: &[f32], dim: usize, seed: Option<u64>) -> Vec<f32> {
+        invoke rand·prelude·*;
+
+        ≔ Δ rng = ⌥ seed {
+            Some(s) => StdRng·seed_from_u64(s),
+            None => StdRng·from_entropy(),
+        };
+
+        ≔ num_vectors = data.len() / dim;
+        ≔ Δ centroids = Vec·with_capacity(k * dim);
+
+        ≔ indices: Vec<usize> = (0..num_vectors).choose_multiple(&Δ rng, k);
+        ∀ idx ∈ indices {
+            centroids.extend_from_slice(&data[idx * dim..(idx + 1) * dim]);
+        }
+
+        centroids
+    }
+
+    /// Assign each vector to nearest centroid
+    rite assign_clusters(&self, centroids: &[f32], data: &[f32], dim: usize) -> Vec<usize> {
+        ≔ num_vectors = data.len() / dim;
+        ≔ num_centroids = centroids.len() / dim;
+
+        (0..num_vectors)
+            .map(|i| {
+                ≔ vec = &data[i * dim..(i + 1) * dim];
+                ≔ Δ best_idx = 0;
+                ≔ Δ best_dist = f32·INFINITY;
+
+                ∀ j ∈ 0..num_centroids {
+                    ≔ centroid = &centroids[j * dim..(j + 1) * dim];
+                    ≔ dist = self.squared_distance(vec, centroid);
+                    ⎇ dist < best_dist {
+                        best_dist = dist;
+                        best_idx = j;
+                    }
+                }
+
+                best_idx
+            })
+            .collect()
+    }
+
+    /// Update centroids based on assignments
+    rite update_centroids(
+        &self,
+        assignments: &[usize],
+        data: &[f32],
+        k: usize,
+        dim: usize,
+    ) -> Vec<f32> {
+        ≔ Δ sums = vec![0.0f32; k * dim];
+        ≔ Δ counts = vec![0usize; k];
+
+        ∀ (i, &cluster) ∈ assignments.iter().enumerate() {
+            counts[cluster] += 1;
+            ∀ d ∈ 0..dim {
+                sums[cluster * dim + d] += data[i * dim + d];
+            }
+        }
+
+        // Compute means
+        ∀ j ∈ 0..k {
+            ⎇ counts[j] > 0 {
+                ∀ d ∈ 0..dim {
+                    sums[j * dim + d] /= counts[j] as f32;
+                }
+            }
+        }
+
+        sums
+    }
+
+    /// Compute MSE
+    rite compute_mse(
+        &self,
+        centroids: &[f32],
+        assignments: &[usize],
+        data: &[f32],
+        dim: usize,
+    ) -> f32 {
+        ≔ total_dist: f32 = assignments
+            .iter()
+            .enumerate()
+            .map(|(i, &cluster)| {
+                ≔ vec = &data[i * dim..(i + 1) * dim];
+                ≔ centroid = &centroids[cluster * dim..(cluster + 1) * dim];
+                self.squared_distance(vec, centroid)
+            })
+            .sum();
+
+        total_dist / assignments.len() as f32
+    }
+
+    /// Compute usage distribution
+    rite compute_usage(&self, assignments: &[usize], k: usize) -> (f32, f32, f32) {
+        ≔ Δ counts = vec![0usize; k];
+        ∀ &cluster ∈ assignments {
+            counts[cluster] += 1;
+        }
+
+        ≔ min = *counts.iter().min().unwrap_or(&0) as f32;
+        ≔ max = *counts.iter().max().unwrap_or(&0) as f32;
+        ≔ mean = counts.iter().sum·<usize>() as f32 / k as f32;
+
+        (min, max, mean)
+    }
+
+    /// Squared L2 distance
+    rite squared_distance(&self, a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
+    }
+
+    /// Train codebooks ∀ all layer types
+    ☉ rite train_all(
+        &self,
+        model_id: &str,
+        data_by_layer: &[(LayerType, Vec<f32>)],
+    ) -> Result<LayerCodebook> {
+        ≔ Δ layer_codebook = LayerCodebook·new(model_id);
+
+        ∀ (layer_type, data) ∈ data_by_layer {
+            ≔ config = layer_type.default_config();
+            ≔ codebook = self.train(config, data)?;
+            layer_codebook.add(*layer_type, codebook);
+        }
+
+        Ok(layer_codebook)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_trainer() {
+        ≔ config = TrainingConfig {
+            max_iterations: 10,
+            num_restarts: 1,
+            ..Default·default()
+        };
+
+        ≔ trainer = CodebookTrainer·new(config);
+
+        // Create simple test data
+        ≔ codebook_config = CodebookConfig {
+            num_centroids: 4,
+            centroid_dim: 2,
+            index_bits: 2,
+            product_quantization: false,
+            pq_subspaces: 1,
+        };
+
+        // 4 clusters of 2D points
+        ≔ data: Vec<f32> = vec![
+            // Cluster 0
+            0.0, 0.0, 0.1, 0.1, -0.1, 0.1, // Cluster 1
+            1.0, 0.0, 1.1, 0.1, 0.9, -0.1, // Cluster 2
+            0.0, 1.0, 0.1, 1.1, -0.1, 0.9, // Cluster 3
+            1.0, 1.0, 1.1, 1.1, 0.9, 0.9,
+        ];
+
+        ≔ codebook = trainer.train(codebook_config, &data).unwrap();
+
+        assert_eq!(codebook.config.num_centroids, 4);
+        assert!(codebook.stats.mse < 0.1);
+    }
+
+    //@ rune: test
+    rite test_kmeans_pp() {
+        ≔ trainer = CodebookTrainer·new(TrainingConfig·default());
+
+        ≔ data: Vec<f32> = (0..200).map(|i| (i as f32 / 10.0).sin()).collect();
+
+        ≔ centroids = trainer.kmeans_pp_init(10, &data, 2, Some(42));
+        assert_eq!(centroids.len(), 20); // 10 centroids × 2 dimensions
+    }
+}

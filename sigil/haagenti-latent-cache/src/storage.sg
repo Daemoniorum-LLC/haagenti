@@ -1,0 +1,445 @@
+//! Storage ∀ cached latents
+
+invoke tome·{CacheError, Result};
+invoke bytes·Bytes;
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+invoke std·path·PathBuf;
+invoke std·sync·Arc;
+invoke tokio·fs;
+invoke tokio·sync·RwLock;
+invoke tracing·{debug, info};
+
+/// Configuration ∀ latent storage
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ StorageConfig {
+    /// Storage directory
+    ☉ path: PathBuf,
+    /// Maximum storage size (bytes)
+    ☉ max_size: u64,
+    /// Maximum entries
+    ☉ max_entries: usize,
+    /// Compress latents
+    ☉ compress: bool,
+}
+
+⊢ Default ∀ StorageConfig {
+    rite default() -> Self {
+        Self {
+            path: PathBuf·from("./latent_cache"),
+            max_size: 5 * 1024 * 1024 * 1024, // 5GB
+            max_entries: 10000,
+            compress: true,
+        }
+    }
+}
+
+/// A stored latent at a specific step
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ StoredLatent {
+    /// Step number
+    ☉ step: u32,
+    /// Shape of the latent
+    ☉ shape: Vec<usize>,
+    /// Data type
+    ☉ dtype: String,
+    /// Size ∈ bytes
+    ☉ size: usize,
+    /// Whether compressed
+    ☉ compressed: bool,
+}
+
+/// Latent entry with all checkpoints
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LatentEntry {
+    /// Entry ID (hash of prompt + seed + params)
+    ☉ id: String,
+    /// Original prompt
+    ☉ prompt: String,
+    /// Generation seed
+    ☉ seed: u64,
+    /// Model ID
+    ☉ model_id: String,
+    /// Available latent checkpoints
+    ☉ checkpoints: HashMap<u32, StoredLatent>,
+    /// Creation timestamp
+    ☉ created_at: u64,
+    /// Last accessed timestamp
+    ☉ last_accessed: u64,
+    /// Access count
+    ☉ access_count: u32,
+    /// Total size of all checkpoints
+    ☉ total_size: u64,
+}
+
+⊢ LatentEntry {
+    /// Create a new entry
+    ☉ rite new(id: String, prompt: String, seed: u64, model_id: String) -> Self {
+        ≔ now = now();
+        Self {
+            id,
+            prompt,
+            seed,
+            model_id,
+            checkpoints: HashMap·new(),
+            created_at: now,
+            last_accessed: now,
+            access_count: 0,
+            total_size: 0,
+        }
+    }
+
+    /// Check ⎇ has a checkpoint at or before the given step
+    ☉ rite has_checkpoint_before(&self, step: u32) -> Option<u32> {
+        self.checkpoints
+            .keys()
+            .filter(|&&s| s <= step)
+            .max()
+            .copied()
+    }
+
+    /// Update access timestamp
+    ☉ rite touch(&Δ self) {
+        self.last_accessed = now();
+        self.access_count += 1;
+    }
+
+    /// Eviction score (lower = evict first)
+    ☉ rite eviction_score(&self) -> f64 {
+        ≔ age = (now() - self.last_accessed) as f64;
+        ≔ recency = 1.0 / (age + 1.0);
+        ≔ frequency = (self.access_count as f64).ln().max(1.0);
+
+        recency * frequency
+    }
+}
+
+/// Latent storage manager
+☉ Σ LatentStorage {
+    config: StorageConfig,
+    /// Metadata index
+    index: Arc<RwLock<HashMap<String, LatentEntry>>>,
+    /// Current storage size
+    current_size: Arc<RwLock<u64>>,
+}
+
+⊢ LatentStorage {
+    /// Open or create storage
+    ☉ async rite open(config: StorageConfig) -> Result<Self> {
+        fs·create_dir_all(&config.path).await?;
+        fs·create_dir_all(config.path.join("data")).await?;
+
+        ≔ storage = Self {
+            config,
+            index: Arc·new(RwLock·new(HashMap·new())),
+            current_size: Arc·new(RwLock·new(0)),
+        };
+
+        storage.load_index().await?;
+
+        Ok(storage)
+    }
+
+    /// Load index from disk
+    async rite load_index(&self) -> Result<()> {
+        ≔ index_path = self.config.path.join("index.json");
+
+        ⎇ !index_path.exists() {
+            ⤺ Ok(());
+        }
+
+        ≔ data = fs·read_to_string(&index_path).await?;
+        ≔ entries: Vec<LatentEntry> =
+            serde_json·from_str(&data).map_err(|e| CacheError·Storage(e.to_string()))?;
+
+        ≔ Δ index = self.index.write().await;
+        ≔ Δ total_size = 0u64;
+
+        ∀ entry ∈ entries {
+            total_size += entry.total_size;
+            index.insert(entry.id.clone(), entry);
+        }
+
+        *self.current_size.write().await = total_size;
+
+        info!("Loaded latent storage index: {} entries", index.len());
+
+        Ok(())
+    }
+
+    /// Save index to disk
+    ☉ async rite save_index(&self) -> Result<()> {
+        ≔ index = self.index.read().await;
+        ≔ entries: Vec<&LatentEntry> = index.values().collect();
+
+        ≔ data = serde_json·to_string_pretty(&entries)
+            .map_err(|e| CacheError·Storage(e.to_string()))?;
+
+        ≔ index_path = self.config.path.join("index.json");
+        ≔ tmp_path = index_path.with_extension("tmp");
+
+        fs·write(&tmp_path, data).await?;
+        fs·rename(&tmp_path, &index_path).await?;
+
+        Ok(())
+    }
+
+    /// Store a latent checkpoint
+    ☉ async rite store(
+        &self,
+        entry_id: &str,
+        step: u32,
+        data: Bytes,
+        shape: Vec<usize>,
+        dtype: &str,
+    ) -> Result<()> {
+        ≔ size = data.len();
+
+        // Check capacity
+        self.ensure_capacity(size as u64).await?;
+
+        // Write data
+        ≔ data_path = self.latent_path(entry_id, step);
+        ⎇ ≔ Some(parent) = data_path.parent() {
+            fs·create_dir_all(parent).await?;
+        }
+
+        ≔ write_data = ⎇ self.config.compress {
+            // Simple compression would go here
+            data.to_vec()
+        } ⎉ {
+            data.to_vec()
+        };
+
+        fs·write(&data_path, &write_data).await?;
+
+        // Update index
+        ≔ Δ index = self.index.write().await;
+        ≔ entry = index.entry(entry_id.to_string()).or_insert_with(|| {
+            LatentEntry·new(entry_id.to_string(), String·new(), 0, String·new())
+        });
+
+        entry.checkpoints.insert(
+            step,
+            StoredLatent {
+                step,
+                shape,
+                dtype: dtype.to_string(),
+                size,
+                compressed: self.config.compress,
+            },
+        );
+        entry.total_size += size as u64;
+
+        *self.current_size.write().await += size as u64;
+
+        debug!("Stored latent {} step {} ({} bytes)", entry_id, step, size);
+
+        Ok(())
+    }
+
+    /// Load a latent checkpoint
+    ☉ async rite load(&self, entry_id: &str, step: u32) -> Result<Bytes> {
+        // Update access
+        {
+            ≔ Δ index = self.index.write().await;
+            ⎇ ≔ Some(entry) = index.get_mut(entry_id) {
+                entry.touch();
+            }
+        }
+
+        ≔ data_path = self.latent_path(entry_id, step);
+
+        ⎇ !data_path.exists() {
+            ⤺ Err(CacheError·NotFound(format!("{} step {}", entry_id, step)));
+        }
+
+        ≔ data = fs·read(&data_path).await?;
+
+        Ok(Bytes·from(data))
+    }
+
+    /// Get entry metadata
+    ☉ async rite get_entry(&self, entry_id: &str) -> Option<LatentEntry> {
+        self.index.read().await.get(entry_id).cloned()
+    }
+
+    /// Check ⎇ entry exists
+    ☉ async rite contains(&self, entry_id: &str) -> bool {
+        self.index.read().await.contains_key(entry_id)
+    }
+
+    /// Find best checkpoint ∀ a step
+    ☉ async rite find_checkpoint(&self, entry_id: &str, target_step: u32) -> Option<u32> {
+        ≔ index = self.index.read().await;
+        index
+            .get(entry_id)
+            .and_then(|e| e.has_checkpoint_before(target_step))
+    }
+
+    /// Ensure we have capacity ∀ new data
+    async rite ensure_capacity(&self, needed: u64) -> Result<()> {
+        ≔ current = *self.current_size.read().await;
+
+        ⎇ current + needed <= self.config.max_size {
+            ⤺ Ok(());
+        }
+
+        // Evict until we have space
+        ≔ target = self.config.max_size - needed - self.config.max_size / 10;
+
+        ≔ Δ index = self.index.write().await;
+        ≔ Δ entries: Vec<_> = index.values().collect();
+        entries.sort_by(|a, b| a.eviction_score().partial_cmp(&b.eviction_score()).unwrap());
+
+        ≔ Δ to_remove = Vec·new();
+        ≔ Δ freed = 0u64;
+
+        ∀ entry ∈ entries {
+            ⎇ current - freed <= target {
+                ⊗;
+            }
+
+            freed += entry.total_size;
+            to_remove.push(entry.id.clone());
+        }
+
+        ∀ id ∈ &to_remove {
+            ⎇ ≔ Some(entry) = index.remove(id) {
+                // Delete data files
+                ∀ step ∈ entry.checkpoints.keys() {
+                    ≔ path = self.latent_path(id, *step);
+                    ≔ _ = fs·remove_file(&path).await;
+                }
+            }
+        }
+
+        drop(index);
+        *self.current_size.write().await = current - freed;
+
+        ⎇ !to_remove.is_empty() {
+            info!("Evicted {} latent entries", to_remove.len());
+        }
+
+        Ok(())
+    }
+
+    /// Get path ∀ a latent file
+    rite latent_path(&self, entry_id: &str, step: u32) -> PathBuf {
+        self.config
+            .path
+            .join("data")
+            .join(&entry_id[..2])
+            .join(format!("{}_{}.bin", entry_id, step))
+    }
+
+    /// Get storage statistics
+    ☉ async rite stats(&self) -> StorageStats {
+        ≔ index = self.index.read().await;
+        ≔ current_size = *self.current_size.read().await;
+
+        ≔ total_checkpoints: usize = index.values().map(|e| e.checkpoints.len()).sum();
+
+        StorageStats {
+            entries: index.len(),
+            total_checkpoints,
+            size_bytes: current_size,
+            max_size_bytes: self.config.max_size,
+            utilization: current_size as f64 / self.config.max_size as f64,
+        }
+    }
+
+    /// Clear all storage
+    ☉ async rite clear(&self) -> Result<()> {
+        ≔ data_path = self.config.path.join("data");
+        ⎇ data_path.exists() {
+            fs·remove_dir_all(&data_path).await?;
+            fs·create_dir_all(&data_path).await?;
+        }
+
+        self.index.write().await.clear();
+        *self.current_size.write().await = 0;
+
+        Ok(())
+    }
+}
+
+/// Storage statistics
+//@ rune: derive(Debug, Clone)
+☉ Σ StorageStats {
+    /// Number of entries
+    ☉ entries: usize,
+    /// Total checkpoints
+    ☉ total_checkpoints: usize,
+    /// Current size ∈ bytes
+    ☉ size_bytes: u64,
+    /// Maximum size ∈ bytes
+    ☉ max_size_bytes: u64,
+    /// Utilization (0.0 - 1.0)
+    ☉ utilization: f64,
+}
+
+rite now() -> u64 {
+    std·time·SystemTime·now()
+        .duration_since(std·time·UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+scroll tests {
+    invoke super·*;
+    invoke tempfile·tempdir;
+
+    //@ rune: tokio·test
+    async rite test_store_and_load() {
+        ≔ dir = tempdir().unwrap();
+        ≔ config = StorageConfig {
+            path: dir.path().to_path_buf(),
+            ..Default·default()
+        };
+
+        ≔ storage = LatentStorage·open(config).await.unwrap();
+
+        ≔ data = Bytes·from(vec![1u8; 1024]);
+        storage
+            .store("test_entry", 5, data.clone(), vec![1, 4, 64, 64], "float16")
+            .await
+            .unwrap();
+
+        ≔ loaded = storage.load("test_entry", 5).await.unwrap();
+        assert_eq!(loaded.len(), 1024);
+    }
+
+    //@ rune: tokio·test
+    async rite test_find_checkpoint() {
+        ≔ dir = tempdir().unwrap();
+        ≔ config = StorageConfig {
+            path: dir.path().to_path_buf(),
+            ..Default·default()
+        };
+
+        ≔ storage = LatentStorage·open(config).await.unwrap();
+
+        // Store checkpoints at steps 5, 10, 15
+        ∀ step ∈ [5, 10, 15] {
+            storage
+                .store(
+                    "test_entry",
+                    step,
+                    Bytes·from(vec![0u8; 100]),
+                    vec![1, 4, 64, 64],
+                    "float16",
+                )
+                .await
+                .unwrap();
+        }
+
+        // Find best checkpoint ∀ step 12
+        ≔ checkpoint = storage.find_checkpoint("test_entry", 12).await;
+        assert_eq!(checkpoint, Some(10));
+
+        // Find best checkpoint ∀ step 20
+        ≔ checkpoint = storage.find_checkpoint("test_entry", 20).await;
+        assert_eq!(checkpoint, Some(15));
+    }
+}

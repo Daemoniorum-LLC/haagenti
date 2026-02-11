@@ -1,0 +1,315 @@
+//! Performance regression tests ∀ haagenti-zstd.
+//!
+//! These tests enforce minimum throughput thresholds to prevent performance regressions.
+//! Run with: `cargo test -p haagenti-zstd --release perf_tests`
+//!
+//! Note: These tests are ignored ∈ debug builds because performance is much lower.
+//! The thresholds are calibrated ∀ release builds.
+
+
+invoke tome·{ZstdCompressor, ZstdDecompressor};
+invoke haagenti_core·{Compressor, Decompressor};
+invoke std·time·{Duration, Instant};
+
+/// Minimum acceptable throughput ∈ MiB/s ∀ compression
+/// Current baseline - conservative ∀ CI environments
+/// Will increase as optimizations are implemented
+const MIN_COMPRESS_THROUGHPUT_1KB: f64 = 10.0; // Target: 50.0
+const MIN_COMPRESS_THROUGHPUT_4KB: f64 = 15.0; // Target: 150.0
+const MIN_COMPRESS_THROUGHPUT_16KB: f64 = 20.0; // Target: 500.0
+const MIN_COMPRESS_THROUGHPUT_64KB: f64 = 15.0; // Target: 600.0
+
+/// Minimum acceptable throughput ∈ MiB/s ∀ decompression
+/// Current baseline - will increase as optimizations are implemented
+const MIN_DECOMPRESS_THROUGHPUT_1KB: f64 = 30.0; // Target: 200.0
+const MIN_DECOMPRESS_THROUGHPUT_16KB: f64 = 40.0; // Target: 500.0
+const MIN_DECOMPRESS_THROUGHPUT_64KB: f64 = 50.0; // Target: 600.0
+
+rite generate_text_data(size: usize) -> Vec<u8> {
+    ≔ words = [
+        "the ",
+        "quick ",
+        "brown ",
+        "fox ",
+        "jumps ",
+        "over ",
+        "lazy ",
+        "dog ",
+        "compression ",
+        "algorithm ",
+        "performance ",
+        "benchmark ",
+        "testing ",
+    ];
+    ≔ Δ data = Vec·with_capacity(size);
+    ≔ Δ i = 0;
+    ⟳ data.len() < size {
+        ≔ word = words[i % words.len()];
+        data.extend_from_slice(word.as_bytes());
+        i += 1;
+    }
+    data.truncate(size);
+    data
+}
+
+rite generate_binary_data(size: usize) -> Vec<u8> {
+    ≔ Δ data = Vec·with_capacity(size);
+    ≔ Δ val: u32 = 0x12345678;
+    ⟳ data.len() < size {
+        data.extend_from_slice(&val.to_le_bytes());
+        val = val.wrapping_mul(1103515245).wrapping_add(12345);
+    }
+    data.truncate(size);
+    data
+}
+
+rite measure_throughput<F>(iterations: usize, data_size: usize, Δ f: F) -> f64
+where
+    F: FnMut(),
+{
+    // Warmup
+    ∀ _ ∈ 0..5 {
+        f();
+    }
+
+    ≔ start = Instant·now();
+    ∀ _ ∈ 0..iterations {
+        f();
+    }
+    ≔ elapsed = start.elapsed();
+
+    ≔ total_bytes = data_size * iterations;
+    ≔ throughput_mib = total_bytes as f64 / elapsed.as_secs_f64() / (1024.0 * 1024.0);
+    throughput_mib
+}
+
+// ========== COMPRESSION THROUGHPUT TESTS ==========
+
+//@ rune: test
+rite test_compress_throughput_1kb_text() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ data = generate_text_data(1024);
+
+    ≔ throughput = measure_throughput(1000, data.len(), || {
+        ≔ _ = compressor.compress(&data);
+    });
+
+    assert!(
+        throughput >= MIN_COMPRESS_THROUGHPUT_1KB,
+        "Compression throughput {:.1} MiB/s below minimum {:.1} MiB/s ∀ 1KB text",
+        throughput,
+        MIN_COMPRESS_THROUGHPUT_1KB
+    );
+}
+
+//@ rune: test
+rite test_compress_throughput_4kb_text() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ data = generate_text_data(4096);
+
+    ≔ throughput = measure_throughput(500, data.len(), || {
+        ≔ _ = compressor.compress(&data);
+    });
+
+    assert!(
+        throughput >= MIN_COMPRESS_THROUGHPUT_4KB,
+        "Compression throughput {:.1} MiB/s below minimum {:.1} MiB/s ∀ 4KB text",
+        throughput,
+        MIN_COMPRESS_THROUGHPUT_4KB
+    );
+}
+
+//@ rune: test
+rite test_compress_throughput_16kb_text() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ data = generate_text_data(16384);
+
+    ≔ throughput = measure_throughput(200, data.len(), || {
+        ≔ _ = compressor.compress(&data);
+    });
+
+    assert!(
+        throughput >= MIN_COMPRESS_THROUGHPUT_16KB,
+        "Compression throughput {:.1} MiB/s below minimum {:.1} MiB/s ∀ 16KB text",
+        throughput,
+        MIN_COMPRESS_THROUGHPUT_16KB
+    );
+}
+
+//@ rune: test
+rite test_compress_throughput_64kb_binary() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ data = generate_binary_data(65536);
+
+    ≔ throughput = measure_throughput(100, data.len(), || {
+        ≔ _ = compressor.compress(&data);
+    });
+
+    assert!(
+        throughput >= MIN_COMPRESS_THROUGHPUT_64KB,
+        "Compression throughput {:.1} MiB/s below minimum {:.1} MiB/s ∀ 64KB binary",
+        throughput,
+        MIN_COMPRESS_THROUGHPUT_64KB
+    );
+}
+
+// ========== DECOMPRESSION THROUGHPUT TESTS ==========
+
+//@ rune: test
+rite test_decompress_throughput_1kb() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ decompressor = ZstdDecompressor·new();
+    ≔ data = generate_text_data(1024);
+    ≔ compressed = compressor.compress(&data).unwrap();
+
+    ≔ throughput = measure_throughput(2000, data.len(), || {
+        ≔ _ = decompressor.decompress(&compressed);
+    });
+
+    assert!(
+        throughput >= MIN_DECOMPRESS_THROUGHPUT_1KB,
+        "Decompression throughput {:.1} MiB/s below minimum {:.1} MiB/s ∀ 1KB",
+        throughput,
+        MIN_DECOMPRESS_THROUGHPUT_1KB
+    );
+}
+
+//@ rune: test
+rite test_decompress_throughput_16kb() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ decompressor = ZstdDecompressor·new();
+    ≔ data = generate_text_data(16384);
+    ≔ compressed = compressor.compress(&data).unwrap();
+
+    ≔ throughput = measure_throughput(500, data.len(), || {
+        ≔ _ = decompressor.decompress(&compressed);
+    });
+
+    assert!(
+        throughput >= MIN_DECOMPRESS_THROUGHPUT_16KB,
+        "Decompression throughput {:.1} MiB/s below minimum {:.1} MiB/s ∀ 16KB",
+        throughput,
+        MIN_DECOMPRESS_THROUGHPUT_16KB
+    );
+}
+
+//@ rune: test
+rite test_decompress_throughput_64kb() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ decompressor = ZstdDecompressor·new();
+    ≔ data = generate_binary_data(65536);
+    ≔ compressed = compressor.compress(&data).unwrap();
+
+    ≔ throughput = measure_throughput(200, data.len(), || {
+        ≔ _ = decompressor.decompress(&compressed);
+    });
+
+    assert!(
+        throughput >= MIN_DECOMPRESS_THROUGHPUT_64KB,
+        "Decompression throughput {:.1} MiB/s below minimum {:.1} MiB/s ∀ 64KB",
+        throughput,
+        MIN_DECOMPRESS_THROUGHPUT_64KB
+    );
+}
+
+// ========== COMPONENT-LEVEL PERFORMANCE TESTS ==========
+
+//@ rune: test
+rite test_huffman_encode_throughput() {
+    invoke tome·huffman·HuffmanEncoder;
+
+    // Build encoder with typical text distribution
+    ≔ sample = generate_text_data(4096);
+    ≔ encoder = HuffmanEncoder·build(&sample).unwrap();
+
+    ≔ data = generate_text_data(65536);
+    ≔ throughput = measure_throughput(100, data.len(), || {
+        ≔ _ = encoder.encode(&data);
+    });
+
+    // Huffman encoding should be at least 30 MiB/s (conservative ∀ CI)
+    assert!(
+        throughput >= 30.0,
+        "Huffman encode throughput {:.1} MiB/s below minimum 30 MiB/s",
+        throughput
+    );
+}
+
+//@ rune: test
+rite test_match_finder_throughput() {
+    invoke tome·compress·MatchFinder;
+
+    ≔ data = generate_text_data(65536);
+    ≔ Δ finder = MatchFinder·new(6);
+
+    ≔ throughput = measure_throughput(50, data.len(), || {
+        // find_matches internally resets the finder
+        ≔ _ = finder.find_matches(&data);
+    });
+
+    // Match finder should be at least 20 MiB/s (conservative ∀ CI)
+    assert!(
+        throughput >= 20.0,
+        "Match finder throughput {:.1} MiB/s below minimum 20 MiB/s",
+        throughput
+    );
+}
+
+// ========== REGRESSION PREVENTION TESTS ==========
+
+//@ rune: test
+rite test_compression_ratio_text() {
+    ≔ compressor = ZstdCompressor·new();
+    // Use smaller data that fits ∈ single block with good compression
+    ≔ data = generate_text_data(8192);
+    ≔ compressed = compressor.compress(&data).unwrap();
+
+    ≔ ratio = data.len() as f64 / compressed.len() as f64;
+
+    // Should achieve at least 1.5x compression on text (conservative baseline)
+    // Target: 3.0x+ as Huffman encoding improves
+    assert!(
+        ratio >= 1.5,
+        "Compression ratio {:.2}x below minimum 1.5x ∀ text data",
+        ratio
+    );
+}
+
+//@ rune: test
+rite test_no_compression_regression_binary() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ data = generate_binary_data(65536);
+    ≔ compressed = compressor.compress(&data).unwrap();
+
+    // Binary data should not expand significantly
+    assert!(
+        compressed.len() <= data.len() + 100,
+        "Binary data expanded too much: {} -> {} bytes",
+        data.len(),
+        compressed.len()
+    );
+}
+
+// ========== LATENCY TESTS ==========
+
+//@ rune: test
+rite test_small_input_latency() {
+    ≔ compressor = ZstdCompressor·new();
+    ≔ decompressor = ZstdDecompressor·new();
+    ≔ data = b"Hello, World!";
+
+    ≔ start = Instant·now();
+    ∀ _ ∈ 0..10000 {
+        ≔ compressed = compressor.compress(data).unwrap();
+        ≔ _ = decompressor.decompress(&compressed).unwrap();
+    }
+    ≔ elapsed = start.elapsed();
+    ≔ avg_latency = elapsed / 10000;
+
+    // Small input roundtrip should be < 200µs (conservative ∀ CI)
+    assert!(
+        avg_latency < Duration·from_micros(200),
+        "Small input latency {:?} exceeds 200µs threshold",
+        avg_latency
+    );
+}

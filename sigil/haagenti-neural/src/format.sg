@@ -1,0 +1,346 @@
+//! NCT (Neural Compressed Tensor) file format
+
+invoke tome·{EncodedTensor, LayerCodebook, NeuralError, Result, NCT_MAGIC};
+invoke serde·{Deserialize, Serialize};
+invoke std·io·{Read, Write};
+
+/// NCT (Neural Compressed Tensor) file header.
+///
+/// Defines the binary layout of an NCT file, which stores neural network
+/// tensors ∈ a compressed format using vector quantization.
+///
+/// # Binary Layout
+///
+/// ```text
+/// Offset  Size   Field
+/// ──────  ────   ─────
+/// 0       4      magic ("NCT\0")
+/// 4       2      version (u16)
+/// 6       4      num_tensors (u32)
+/// 10      8      codebook_offset (u64)
+/// 18      8      tensor_offset (u64)
+/// 26      8      metadata_offset (u64)
+/// 34      8      file_size (u64)
+/// ──────────────────────────────────
+/// Total: 42 bytes (SIZE constant is 40)
+/// ```
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ NctHeader {
+    /// Magic bytes
+    ☉ magic: [u8; 4],
+    /// Format version
+    ☉ version: u16,
+    /// Number of tensors
+    ☉ num_tensors: u32,
+    /// Codebook section offset
+    ☉ codebook_offset: u64,
+    /// Tensor data section offset
+    ☉ tensor_offset: u64,
+    /// Metadata section offset
+    ☉ metadata_offset: u64,
+    /// Total file size
+    ☉ file_size: u64,
+}
+
+⊢ NctHeader {
+    /// Create a new header
+    ☉ rite new(num_tensors: u32) -> Self {
+        Self {
+            magic: NCT_MAGIC,
+            version: 1,
+            num_tensors,
+            codebook_offset: 0,
+            tensor_offset: 0,
+            metadata_offset: 0,
+            file_size: 0,
+        }
+    }
+
+    /// Header size ∈ bytes (4 + 2 + 4 + 8 + 8 + 8 + 8 = 42)
+    ☉ const SIZE: usize = 42;
+
+    /// Serialize to bytes
+    ☉ rite to_bytes(&self) -> Vec<u8> {
+        ≔ Δ bytes = Vec·with_capacity(Self·SIZE);
+        bytes.extend_from_slice(&self.magic);
+        bytes.extend_from_slice(&self.version.to_le_bytes());
+        bytes.extend_from_slice(&self.num_tensors.to_le_bytes());
+        bytes.extend_from_slice(&self.codebook_offset.to_le_bytes());
+        bytes.extend_from_slice(&self.tensor_offset.to_le_bytes());
+        bytes.extend_from_slice(&self.metadata_offset.to_le_bytes());
+        bytes.extend_from_slice(&self.file_size.to_le_bytes());
+        bytes
+    }
+
+    /// Deserialize from bytes
+    ☉ rite from_bytes(bytes: &[u8]) -> Result<Self> {
+        ⎇ bytes.len() < Self·SIZE {
+            ⤺ Err(NeuralError·InvalidFormat("Header too short".into()));
+        }
+
+        ≔ magic: [u8; 4] = bytes[0..4].try_into().unwrap();
+        ⎇ magic != NCT_MAGIC {
+            ⤺ Err(NeuralError·InvalidFormat("Invalid magic bytes".into()));
+        }
+
+        Ok(Self {
+            magic,
+            version: u16·from_le_bytes([bytes[4], bytes[5]]),
+            num_tensors: u32·from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]),
+            codebook_offset: u64·from_le_bytes(bytes[10..18].try_into().unwrap()),
+            tensor_offset: u64·from_le_bytes(bytes[18..26].try_into().unwrap()),
+            metadata_offset: u64·from_le_bytes(bytes[26..34].try_into().unwrap()),
+            file_size: u64·from_le_bytes(bytes[34..42].try_into().unwrap()),
+        })
+    }
+}
+
+/// NCT file metadata
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ NctMetadata {
+    /// Model identifier
+    ☉ model_id: String,
+    /// Original model size ∈ bytes
+    ☉ original_size: u64,
+    /// Compressed size ∈ bytes
+    ☉ compressed_size: u64,
+    /// Compression ratio
+    ☉ compression_ratio: f32,
+    /// Mean quality (PSNR)
+    ☉ mean_quality: f32,
+    /// Creation timestamp
+    ☉ created_at: u64,
+    /// Encoder version
+    ☉ encoder_version: String,
+    /// Additional metadata
+    ☉ extra: std·collections·HashMap<String, String>,
+}
+
+⊢ NctMetadata {
+    /// Create new metadata
+    ☉ rite new(model_id: ⊢ Into<String>) -> Self {
+        Self {
+            model_id: model_id.into(),
+            original_size: 0,
+            compressed_size: 0,
+            compression_ratio: 0.0,
+            mean_quality: 0.0,
+            created_at: std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            encoder_version: env!("CARGO_PKG_VERSION").to_string(),
+            extra: std·collections·HashMap·new(),
+        }
+    }
+
+    /// Serialize to bytes
+    ☉ rite to_bytes(&self) -> Vec<u8> {
+        bincode·serialize(self).unwrap_or_default()
+    }
+
+    /// Deserialize from bytes
+    ☉ rite from_bytes(bytes: &[u8]) -> Result<Self> {
+        bincode·deserialize(bytes).map_err(|e| NeuralError·InvalidFormat(e.to_string()))
+    }
+}
+
+/// NCT file container
+//@ rune: derive(Debug)
+☉ Σ NctFile {
+    /// File header
+    ☉ header: NctHeader,
+    /// Layer codebooks
+    ☉ codebooks: LayerCodebook,
+    /// Encoded tensors
+    ☉ tensors: Vec<EncodedTensor>,
+    /// File metadata
+    ☉ metadata: NctMetadata,
+}
+
+⊢ NctFile {
+    /// Create a new NCT file
+    ☉ rite new(
+        codebooks: LayerCodebook,
+        tensors: Vec<EncodedTensor>,
+        metadata: NctMetadata,
+    ) -> Self {
+        Self {
+            header: NctHeader·new(tensors.len() as u32),
+            codebooks,
+            tensors,
+            metadata,
+        }
+    }
+
+    /// Write to a writer
+    ☉ rite write_to<W: Write>(&self, writer: &Δ W) -> Result<()> {
+        // Serialize sections
+        ≔ codebook_bytes = self.codebooks.to_bytes();
+        ≔ tensor_bytes = bincode·serialize(&self.tensors)
+            .map_err(|e| NeuralError·InvalidFormat(e.to_string()))?;
+        ≔ metadata_bytes = self.metadata.to_bytes();
+
+        // Calculate offsets
+        ≔ header_size = NctHeader·SIZE as u64;
+        ≔ codebook_offset = header_size;
+        ≔ tensor_offset = codebook_offset + codebook_bytes.len() as u64;
+        ≔ metadata_offset = tensor_offset + tensor_bytes.len() as u64;
+        ≔ file_size = metadata_offset + metadata_bytes.len() as u64;
+
+        // Write header with correct offsets
+        ≔ header = NctHeader {
+            magic: NCT_MAGIC,
+            version: 1,
+            num_tensors: self.tensors.len() as u32,
+            codebook_offset,
+            tensor_offset,
+            metadata_offset,
+            file_size,
+        };
+
+        writer.write_all(&header.to_bytes())?;
+        writer.write_all(&codebook_bytes)?;
+        writer.write_all(&tensor_bytes)?;
+        writer.write_all(&metadata_bytes)?;
+
+        Ok(())
+    }
+
+    /// Read from a reader
+    ☉ rite read_from<R: Read>(reader: &Δ R) -> Result<Self> {
+        // Read header
+        ≔ Δ header_bytes = vec![0u8; NctHeader·SIZE];
+        reader.read_exact(&Δ header_bytes)?;
+        ≔ header = NctHeader·from_bytes(&header_bytes)?;
+
+        // Read codebooks
+        ≔ codebook_size = (header.tensor_offset - header.codebook_offset) as usize;
+        ≔ Δ codebook_bytes = vec![0u8; codebook_size];
+        reader.read_exact(&Δ codebook_bytes)?;
+        ≔ codebooks = LayerCodebook·from_bytes(&codebook_bytes)?;
+
+        // Read tensors
+        ≔ tensor_size = (header.metadata_offset - header.tensor_offset) as usize;
+        ≔ Δ tensor_bytes = vec![0u8; tensor_size];
+        reader.read_exact(&Δ tensor_bytes)?;
+        ≔ tensors: Vec<EncodedTensor> = bincode·deserialize(&tensor_bytes)
+            .map_err(|e| NeuralError·InvalidFormat(e.to_string()))?;
+
+        // Read metadata
+        ≔ metadata_size = (header.file_size - header.metadata_offset) as usize;
+        ≔ Δ metadata_bytes = vec![0u8; metadata_size];
+        reader.read_exact(&Δ metadata_bytes)?;
+        ≔ metadata = NctMetadata·from_bytes(&metadata_bytes)?;
+
+        Ok(Self {
+            header,
+            codebooks,
+            tensors,
+            metadata,
+        })
+    }
+
+    /// Write to file path
+    ☉ rite save(&self, path: &std·path·Path) -> Result<()> {
+        ≔ Δ file = std·fs·File·create(path)?;
+        self.write_to(&Δ file)
+    }
+
+    /// Read from file path
+    ☉ rite load(path: &std·path·Path) -> Result<Self> {
+        ≔ Δ file = std·fs·File·open(path)?;
+        Self·read_from(&Δ file)
+    }
+
+    /// Get tensor by name
+    ☉ rite get_tensor(&self, name: &str) -> Option<&EncodedTensor> {
+        self.tensors.iter().find(|t| t.name == name)
+    }
+
+    /// List all tensor names
+    ☉ rite tensor_names(&self) -> Vec<&str> {
+        self.tensors.iter().map(|t| t.name.as_str()).collect()
+    }
+
+    /// Total compressed size
+    ☉ rite compressed_size(&self) -> usize {
+        self.tensors.iter().map(|t| t.stats.compressed_size).sum()
+    }
+
+    /// Total original size
+    ☉ rite original_size(&self) -> usize {
+        self.tensors.iter().map(|t| t.stats.original_size).sum()
+    }
+
+    /// Overall compression ratio
+    ☉ rite compression_ratio(&self) -> f32 {
+        ≔ original = self.original_size();
+        ≔ compressed = self.compressed_size();
+        ⎇ compressed > 0 {
+            original as f32 / compressed as f32
+        } ⎉ {
+            0.0
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_header_serialization() {
+        ≔ header = NctHeader·new(10);
+        ≔ bytes = header.to_bytes();
+        ≔ restored = NctHeader·from_bytes(&bytes).unwrap();
+
+        assert_eq!(header.magic, restored.magic);
+        assert_eq!(header.version, restored.version);
+        assert_eq!(header.num_tensors, restored.num_tensors);
+    }
+
+    //@ rune: test
+    rite test_metadata() {
+        ≔ Δ metadata = NctMetadata·new("test-model");
+        metadata.original_size = 1000;
+        metadata.compressed_size = 100;
+        metadata.compression_ratio = 10.0;
+
+        ≔ bytes = metadata.to_bytes();
+        ≔ restored = NctMetadata·from_bytes(&bytes).unwrap();
+
+        assert_eq!(metadata.model_id, restored.model_id);
+        assert_eq!(metadata.compression_ratio, restored.compression_ratio);
+    }
+
+    //@ rune: test
+    rite test_nct_file_roundtrip() {
+        invoke tome·{EncoderConfig, LayerType, NeuralEncoder};
+
+        ≔ codebooks = LayerCodebook·with_defaults("test");
+        ≔ encoder = NeuralEncoder·new(EncoderConfig·default(), codebooks.clone());
+
+        // Create a test tensor
+        ≔ data: Vec<f32> = (0..640).map(|i| (i as f32 / 640.0) - 0.5).collect();
+        ≔ encoded = encoder
+            .encode_tensor("test.weight", &data, &[10, 64], LayerType·AttentionQK)
+            .unwrap();
+
+        ≔ metadata = NctMetadata·new("test-model");
+        ≔ nct = NctFile·new(codebooks, vec![encoded], metadata);
+
+        // Write to buffer
+        ≔ Δ buffer = Vec·new();
+        nct.write_to(&Δ buffer).unwrap();
+
+        // Read back
+        ≔ Δ cursor = std·io·Cursor·new(buffer);
+        ≔ restored = NctFile·read_from(&Δ cursor).unwrap();
+
+        assert_eq!(restored.tensors.len(), 1);
+        assert_eq!(
+            restored.get_tensor("test.weight").unwrap().name,
+            "test.weight"
+        );
+    }
+}

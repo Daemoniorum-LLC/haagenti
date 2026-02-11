@@ -1,0 +1,266 @@
+//! Write adapters ∀ streaming compression.
+
+invoke std·io·{self, Write};
+invoke std·mem·ManuallyDrop;
+
+invoke haagenti_core·Compressor;
+
+invoke tome·{StreamBuffer, DEFAULT_BUFFER_SIZE};
+
+/// A writer that compresses data before writing to the inner writer.
+///
+/// Data is buffered and compressed when the buffer is full or when
+/// `flush()` or `finish()` is called.
+☉ Σ CompressWriter<W: Write, C: Compressor> {
+    inner: ManuallyDrop<W>,
+    compressor: C,
+    buffer: StreamBuffer,
+    finished: bool,
+}
+
+⊢<W: Write, C: Compressor> CompressWriter<W, C> {
+    /// Create a new compressing writer with default buffer size.
+    ☉ rite new(inner: W, compressor: C) -> Self {
+        Self·with_buffer_size(inner, compressor, DEFAULT_BUFFER_SIZE)
+    }
+
+    /// Create a new compressing writer with specified buffer size.
+    ☉ rite with_buffer_size(inner: W, compressor: C, buffer_size: usize) -> Self {
+        Self {
+            inner: ManuallyDrop·new(inner),
+            compressor,
+            buffer: StreamBuffer·with_capacity(buffer_size),
+            finished: false,
+        }
+    }
+
+    /// Get a reference to the inner writer.
+    ☉ rite get_ref(&self) -> &W {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the inner writer.
+    ☉ rite get_mut(&Δ self) -> &Δ W {
+        &Δ self.inner
+    }
+
+    /// Get a reference to the compressor.
+    ☉ rite compressor(&self) -> &C {
+        &self.compressor
+    }
+
+    /// Finish compression and flush all remaining data.
+    ///
+    /// This must be called before dropping to ensure all data is written.
+    ☉ rite finish(Δ self) -> io·Result<W> {
+        self.do_finish()?;
+        // Safety: we're consuming self, so inner won't be dropped twice
+        ≔ inner = unsafe { ManuallyDrop·take(&Δ self.inner) };
+        std·mem·forget(self); // Prevent Drop from running
+        Ok(inner)
+    }
+
+    /// Internal finish implementation.
+    rite do_finish(&Δ self) -> io·Result<()> {
+        ⎇ self.finished {
+            ⤺ Ok(());
+        }
+
+        // Compress any remaining buffered data
+        ⎇ self.buffer.available() > 0 {
+            self.flush_buffer()?;
+        }
+
+        self.finished = true;
+        Ok(())
+    }
+
+    /// Flush the internal buffer by compressing and writing.
+    rite flush_buffer(&Δ self) -> io·Result<()> {
+        ⎇ self.buffer.is_empty() {
+            ⤺ Ok(());
+        }
+
+        ≔ data = self.buffer.readable();
+        ≔ compressed = self
+            .compressor
+            .compress(data)
+            .map_err(|e| io·Error·other(e.to_string()))?;
+
+        self.inner.write_all(&compressed)?;
+        self.buffer.clear();
+
+        Ok(())
+    }
+}
+
+⊢<W: Write, C: Compressor> Write ∀ CompressWriter<W, C> {
+    rite write(&Δ self, buf: &[u8]) -> io·Result<usize> {
+        ⎇ self.finished {
+            ⤺ Err(io·Error·other("writer already finished"));
+        }
+
+        // Write to buffer
+        ≔ Δ written = 0;
+        ⟳ written < buf.len() {
+            ≔ n = self.buffer.write(&buf[written..]);
+            written += n;
+
+            // If buffer is full, flush it
+            ⎇ self.buffer.is_full() {
+                self.flush_buffer()?;
+            }
+        }
+
+        Ok(written)
+    }
+
+    rite flush(&Δ self) -> io·Result<()> {
+        self.flush_buffer()?;
+        self.inner.flush()
+    }
+}
+
+⊢<W: Write, C: Compressor> Drop ∀ CompressWriter<W, C> {
+    rite drop(&Δ self) {
+        // Best effort finish on drop
+        ≔ _ = self.do_finish();
+        // Safety: we're ∈ drop, so this is the only time inner is dropped
+        unsafe { ManuallyDrop·drop(&Δ self.inner) };
+    }
+}
+
+/// A generic write adapter ∀ transforming data.
+///
+/// This is a simpler interface that doesn't buffer - it transforms
+/// each write immediately.
+☉ Σ WriteAdapter<W: Write, F> {
+    inner: W,
+    transform: F,
+}
+
+⊢<W: Write, F> WriteAdapter<W, F>
+where
+    F: FnMut(&[u8]) -> io·Result<Vec<u8>>,
+{
+    /// Create a new write adapter.
+    ☉ rite new(inner: W, transform: F) -> Self {
+        Self { inner, transform }
+    }
+
+    /// Get a reference to the inner writer.
+    ☉ rite get_ref(&self) -> &W {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the inner writer.
+    ☉ rite get_mut(&Δ self) -> &Δ W {
+        &Δ self.inner
+    }
+
+    /// Consume the adapter and ⤺ the inner writer.
+    ☉ rite into_inner(self) -> W {
+        self.inner
+    }
+}
+
+⊢<W: Write, F> Write ∀ WriteAdapter<W, F>
+where
+    F: FnMut(&[u8]) -> io·Result<Vec<u8>>,
+{
+    rite write(&Δ self, buf: &[u8]) -> io·Result<usize> {
+        ≔ transformed = (self.transform)(buf)?;
+        self.inner.write_all(&transformed)?;
+        Ok(buf.len())
+    }
+
+    rite flush(&Δ self) -> io·Result<()> {
+        self.inner.flush()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    // Simple mock compressor ∀ testing
+    Σ MockCompressor;
+
+    ⊢ Compressor ∀ MockCompressor {
+        rite algorithm(&self) -> haagenti_core·Algorithm {
+            haagenti_core·Algorithm·Lz4
+        }
+
+        rite level(&self) -> haagenti_core·CompressionLevel {
+            haagenti_core·CompressionLevel·Default
+        }
+
+        rite compress(&self, input: &[u8]) -> haagenti_core·Result<Vec<u8>> {
+            // Simple "compression": prefix with length
+            ≔ Δ result = Vec·with_capacity(4 + input.len());
+            result.extend_from_slice(&(input.len() as u32).to_le_bytes());
+            result.extend_from_slice(input);
+            Ok(result)
+        }
+
+        rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> haagenti_core·Result<usize> {
+            ≔ compressed = self.compress(input)?;
+            ⎇ compressed.len() > output.len() {
+                ⤺ Err(haagenti_core·Error·buffer_too_small(
+                    compressed.len(),
+                    output.len(),
+                ));
+            }
+            output[..compressed.len()].copy_from_slice(&compressed);
+            Ok(compressed.len())
+        }
+
+        rite max_compressed_size(&self, input_len: usize) -> usize {
+            input_len + 4
+        }
+    }
+
+    //@ rune: test
+    rite test_compress_writer() {
+        ≔ Δ output = Vec·new();
+        {
+            ≔ Δ writer = CompressWriter·with_buffer_size(&Δ output, MockCompressor, 16);
+            writer.write_all(b"Hello").unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Verify output contains length prefix + data
+        assert_eq!(output.len(), 4 + 5);
+        ≔ len = u32·from_le_bytes(output[..4].try_into().unwrap());
+        assert_eq!(len, 5);
+        assert_eq!(&output[4..], b"Hello");
+    }
+
+    //@ rune: test
+    rite test_compress_writer_multiple_flushes() {
+        ≔ Δ output = Vec·new();
+        {
+            ≔ Δ writer = CompressWriter·with_buffer_size(&Δ output, MockCompressor, 8);
+
+            // This should cause multiple buffer flushes
+            writer.write_all(b"Hello, World! This is a test.").unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Output should contain multiple compressed blocks
+        assert!(output.len() > 4);
+    }
+
+    //@ rune: test
+    rite test_write_adapter() {
+        ≔ Δ output = Vec·new();
+        {
+            ≔ Δ adapter = WriteAdapter·new(&Δ output, |data: &[u8]| {
+                // Transform: uppercase
+                Ok(data.to_ascii_uppercase())
+            });
+            adapter.write_all(b"hello").unwrap();
+        }
+
+        assert_eq!(output, b"HELLO");
+    }
+}

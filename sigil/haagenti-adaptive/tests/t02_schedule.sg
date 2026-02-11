@@ -1,0 +1,139 @@
+// Adaptive Schedule Tests
+//
+// Tests for adaptive scheduling of compute resources.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Priority levels
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_priority_levels() {
+    ≔ priority_critical = 0;
+    ≔ priority_high = 1;
+    ≔ priority_normal = 2;
+    ≔ priority_low = 3;
+    ≔ priority_background = 4;
+
+    // Lower number = higher priority
+    assert(priority_critical < priority_high);
+    assert(priority_high < priority_normal);
+    assert(priority_normal < priority_low);
+    assert(priority_low < priority_background);
+
+    println("priority_levels: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Time slice allocation
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_time_slices() {
+    ≔ total_time = 1000;  // ms
+
+    // Weighted allocation by priority
+    ≔ critical_weight = 8;
+    ≔ high_weight = 4;
+    ≔ normal_weight = 2;
+    ≔ low_weight = 1;
+
+    ≔ total_weight = critical_weight + high_weight + normal_weight + low_weight;
+    assert_eq(total_weight, 15);
+
+    // Time per priority
+    ≔ critical_time = total_time * critical_weight / total_weight;
+    ≔ high_time = total_time * high_weight / total_weight;
+    ≔ normal_time = total_time * normal_weight / total_weight;
+    ≔ low_time = total_time * low_weight / total_weight;
+
+    assert_eq(critical_time, 533);
+    assert_eq(high_time, 266);
+    assert_eq(normal_time, 133);
+    assert_eq(low_time, 66);
+
+    println("time_slices: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Deadline scheduling
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_deadline_scheduling() {
+    // Tasks with deadlines
+    ≔ current_time = 1000;
+    ≔ deadline_soon = 1100;    // 100ms away
+    ≔ deadline_later = 2000;   // 1000ms away
+
+    ≔ urgency_soon = deadline_soon - current_time;
+    ≔ urgency_later = deadline_later - current_time;
+
+    assert_eq(urgency_soon, 100);
+    assert_eq(urgency_later, 1000);
+
+    // More urgent = smaller urgency value
+    assert(urgency_soon < urgency_later);
+
+    println("deadline_scheduling: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Load balancing
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_load_balancing() {
+    // Balance work across processors
+    ≔ total_work = 1000;
+    ≔ num_processors = 4;
+
+    ≔ work_per_processor = total_work / num_processors;
+    assert_eq(work_per_processor, 250);
+
+    // With imbalance (some processors slower)
+    ≔ fast_capacity = 300;
+    ≔ slow_capacity = 200;
+
+    // Weighted distribution
+    ≔ total_capacity = fast_capacity * 2 + slow_capacity * 2;
+    assert_eq(total_capacity, 1000);
+
+    println("load_balancing: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Preemption thresholds
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_preemption() {
+    // Preemption for higher priority tasks
+    ≔ current_priority = 3;
+    ≔ incoming_priority = 1;
+
+    // Preempt if incoming is higher (lower number)
+    ≔ should_preempt = incoming_priority < current_priority;
+    assert(should_preempt);
+
+    // Don't preempt for same or lower priority
+    ≔ same_priority = 3;
+    ≔ no_preempt = same_priority >= current_priority;
+    assert(no_preempt);
+
+    println("preemption: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-adaptive Schedule Tests           ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_priority_levels();
+    test_time_slices();
+    test_deadline_scheduling();
+    test_load_balancing();
+    test_preemption();
+
+    println("");
+    println("All tests passed!");
+}

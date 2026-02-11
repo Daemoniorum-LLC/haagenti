@@ -1,0 +1,30 @@
+// Test range with n=64
+
+rite main() {
+    ≔ n = 64;
+
+    print("n = ");
+    println(n);
+
+    print("Range 0..64 sum: ");
+    ≔ Δ sum1 = 0;
+    ∀ i ∈ 0..64 {
+        sum1 = sum1 + 1;
+    }
+    println(sum1);
+
+    print("Range 0..n sum: ");
+    ≔ Δ sum2 = 0;
+    ∀ i ∈ 0..n {
+        sum2 = sum2 + 1;
+    }
+    println(sum2);
+
+    // Vec push test
+    ≔ Δ data = Vec·new();
+    ∀ i ∈ 0..n {
+        data.push(i);
+    }
+    print("Vec length: ");
+    println(data.len());
+}

@@ -1,0 +1,218 @@
+// LZ4 Block Compression Tests
+//
+// Tests for haagenti-lz4 block-level compression/decompression.
+// The block module is the core of LZ4 - compress_block and decompress_block.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: max_compressed_size calculation
+// ════════════════════════════════════════════════════════════════════════════
+
+// LZ4 formula: input_len + (input_len / 255) + 16
+// For 0 bytes: 0 + 0 + 16 = 16
+// For 1000 bytes: 1000 + 3 + 16 = 1019
+// For 65536 bytes: 65536 + 257 + 16 = 65809
+
+rite test_max_compressed_size() {
+    // Empty input
+    ≔ max0 = 0 + (0 / 255) + 16;
+    assert_eq(max0, 16);
+
+    // Small input
+    ≔ max100 = 100 + (100 / 255) + 16;
+    assert_eq(max100, 116);
+
+    // 1KB input
+    ≔ max1k = 1024 + (1024 / 255) + 16;
+    assert_eq(max1k, 1044);
+
+    // 64KB input
+    ≔ max64k = 65536 + (65536 / 255) + 16;
+    assert_eq(max64k, 65809);
+
+    println("max_compressed_size: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Helper functions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_read_u32_le() {
+    // Little-endian: 0x04030201
+    // Bytes: [0x01, 0x02, 0x03, 0x04]
+    ≔ val = 0x01 | (0x02 << 8) | (0x03 << 16) | (0x04 << 24);
+    assert_eq(val, 0x04030201);
+    println("read_u32_le: PASS");
+}
+
+rite test_read_u16_le() {
+    // Little-endian: 0x0201
+    // Bytes: [0x01, 0x02]
+    ≔ val = 0x01 | (0x02 << 8);
+    assert_eq(val, 0x0201);
+    println("read_u16_le: PASS");
+}
+
+rite test_hash_distribution() {
+    // Hash function: ((data * 2654435761) >> 16) & 0xFFFF
+    // This should produce well-distributed values in 0..65535
+
+    ≔ h1 = ((0x01020304 * 2654435761) >> 16) & 65535;
+    ≔ h2 = ((0x05060708 * 2654435761) >> 16) & 65535;
+    ≔ h3 = ((0x01020305 * 2654435761) >> 16) & 65535;  // One bit different from h1
+
+    // Different inputs should produce different hashes
+    assert(h1 != h2);
+    assert(h1 != h3);
+    assert(h2 != h3);
+
+    // Hashes should be in valid range
+    assert(h1 < 65536);
+    assert(h2 < 65536);
+    assert(h3 < 65536);
+
+    println("hash_distribution: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Token encoding
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_token_encoding() {
+    // Token byte: (literal_length: 4 bits, match_length: 4 bits)
+    // literal_len = 5, match_len = 3 -> token = (5 << 4) | 3 = 0x53 = 83
+
+    ≔ ll = 5;
+    ≔ ml = 3;
+    ≔ token = (ll << 4) | ml;
+    assert_eq(token, 83);
+
+    // Max values in token: 15 and 15
+    ≔ ll_max = 15;
+    ≔ ml_max = 15;
+    ≔ token_max = (ll_max << 4) | ml_max;
+    assert_eq(token_max, 255);
+
+    // Extract back
+    ≔ extracted_ll = (token >> 4) & 0x0F;
+    ≔ extracted_ml = token & 0x0F;
+    assert_eq(extracted_ll, ll);
+    assert_eq(extracted_ml, ml);
+
+    println("token_encoding: PASS");
+}
+
+rite test_extended_length_encoding() {
+    // If literal_len >= 15, we need extra bytes
+    // literal_len = 270 = 15 + 255 (one extra byte of 255)
+    // literal_len = 280 = 15 + 255 + 10
+
+    ≔ len = 280;
+    ≔ token_part = 15;  // Max in token
+    ≔ remaining = len - 15;  // 265
+
+    // Count 255s
+    ≔ num_255s = remaining / 255;  // 1
+    ≔ final_byte = remaining % 255;  // 10
+
+    assert_eq(num_255s, 1);
+    assert_eq(final_byte, 10);
+
+    // Reconstruct
+    ≔ reconstructed = token_part + (num_255s * 255) + final_byte;
+    assert_eq(reconstructed, len);
+
+    println("extended_length_encoding: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Match offset encoding
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_match_offset() {
+    // Match offset is 2 bytes little-endian
+    // Max offset: 65535 bytes back
+
+    // Offset = 1000 = 0x03E8
+    ≔ offset = 1000;
+    ≔ low_byte = offset & 0xFF;  // 0xE8 = 232
+    ≔ high_byte = (offset >> 8) & 0xFF;  // 0x03 = 3
+
+    assert_eq(low_byte, 232);
+    assert_eq(high_byte, 3);
+
+    // Reconstruct
+    ≔ reconstructed = low_byte | (high_byte << 8);
+    assert_eq(reconstructed, offset);
+
+    println("match_offset: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Match length minimum
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_min_match() {
+    // LZ4 minimum match length is 4 bytes
+    ≔ min_match = 4;
+
+    // Match length in token is adjusted: ml_adjusted = match_len - MIN_MATCH
+    // So a match of 4 bytes has ml_adjusted = 0
+    ≔ match_len = 7;  // 7 byte match
+    ≔ ml_adjusted = match_len - min_match;  // 3
+
+    assert_eq(ml_adjusted, 3);
+
+    // When decoding, we add MIN_MATCH back
+    ≔ decoded_len = ml_adjusted + min_match;
+    assert_eq(decoded_len, match_len);
+
+    println("min_match: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Repetitive pattern compression potential
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_compression_potential() {
+    // Highly repetitive data compresses well
+    // "ABCDABCDABCDABCD" - 16 bytes, should compress to ~8 bytes
+
+    // Token: 4 literal bytes (ABCD), then match of 12 at offset 4
+    // Structure:
+    //   1 byte token: (4 << 4) | (12-4) = 0x48 = 72
+    //   4 bytes literals: ABCD
+    //   2 bytes offset: 4 (LE)
+    // Total: 7 bytes for 16 bytes of data
+
+    ≔ original_size = 16;
+    ≔ estimated_compressed = 7;
+
+    // Integer ratio: 16/7 = 2 (integer division)
+    // But 16 > 7*2, showing compression is better than 2x
+    assert(original_size > estimated_compressed * 2);  // Better than 2:1 compression
+    println("compression_potential: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-lz4 Block Tests                   ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_max_compressed_size();
+    test_read_u32_le();
+    test_read_u16_le();
+    test_hash_distribution();
+    test_token_encoding();
+    test_extended_length_encoding();
+    test_match_offset();
+    test_min_match();
+    test_compression_potential();
+
+    println("");
+    println("All tests passed!");
+}

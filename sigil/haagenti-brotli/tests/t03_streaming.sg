@@ -1,0 +1,263 @@
+// Brotli Streaming Tests
+//
+// Tests for Brotli streaming compression/decompression.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Stream state machine
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_stream_states() {
+    // Brotli streaming has states:
+    // 1. Header parsing
+    // 2. Meta-block header
+    // 3. Meta-block data
+    // 4. Finished
+
+    ≔ state_header = 0;
+    ≔ state_metablock_header = 1;
+    ≔ state_metablock_data = 2;
+    ≔ state_finished = 3;
+
+    // Valid transitions:
+    // header -> metablock_header
+    // metablock_header -> metablock_data
+    // metablock_data -> metablock_header (more blocks)
+    // metablock_data -> finished (last block)
+
+    println("stream_states: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Ring buffer for decompression
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_ring_buffer() {
+    // Decompressor uses ring buffer sized by window bits
+
+    // Window size = 2^WBITS
+    ≔ wbits_10 = 10;
+    ≔ wbits_22 = 22;
+    ≔ wbits_24 = 24;
+
+    ≔ ring_10 = 1 << wbits_10;   // 1KB
+    ≔ ring_22 = 1 << wbits_22;   // 4MB
+    ≔ ring_24 = 1 << wbits_24;   // 16MB
+
+    assert_eq(ring_10, 1024);
+    assert_eq(ring_22, 4194304);
+    assert_eq(ring_24, 16777216);
+
+    // Ring buffer allows back-references up to window size
+    ≔ max_back_ref = ring_22;
+    assert_eq(max_back_ref, 4194304);
+
+    println("ring_buffer: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Compression memory usage
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_compression_memory() {
+    // Brotli compression memory depends on quality and window size
+
+    // Quality 0: minimal memory
+    ≔ mem_q0 = 1 << 16;  // ~64KB
+
+    // Quality 6 (default): moderate memory
+    ≔ mem_q6 = 1 << 20;  // ~1MB
+
+    // Quality 11: maximum memory
+    ≔ mem_q11 = 1 << 22;  // ~4MB
+
+    // Plus window buffer
+    ≔ window_size = 1 << 22;  // 4MB default
+
+    // Total memory = algorithm + window
+    ≔ total_q6 = mem_q6 + window_size;
+    assert_eq(total_q6, 5242880);  // ~5MB
+
+    println("compression_memory: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Decompression memory usage
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_decompression_memory() {
+    // Brotli decompression is memory efficient
+    // Only needs ring buffer + small state
+
+    // Ring buffer (depends on stream)
+    ≔ ring_4mb = 1 << 22;
+
+    // State overhead
+    ≔ state_size = 4096;  // ~4KB
+
+    // Huffman tables
+    ≔ huffman_size = 65536;  // ~64KB
+
+    // Total
+    ≔ total = ring_4mb + state_size + huffman_size;
+    assert_eq(total, 4263936);  // ~4MB
+
+    // Much less than compression memory
+    assert(total < 5000000);
+
+    println("decompression_memory: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Chunk processing
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_chunk_processing() {
+    // Streaming processes data in chunks
+    // Input chunk -> output bytes (variable)
+
+    // Recommended chunk sizes
+    ≔ min_chunk = 4096;      // 4KB min for efficiency
+    ≔ recommended = 65536;   // 64KB typical
+    ≔ max_chunk = 1048576;   // 1MB max practical
+
+    assert_eq(min_chunk, 4 * 1024);
+    assert_eq(recommended, 64 * 1024);
+    assert_eq(max_chunk, 1024 * 1024);
+
+    // Output buffer should be >= expected decompressed size
+    // Or invoke streaming with small output buffer
+
+    println("chunk_processing: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Flush behavior
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_flush_behavior() {
+    // Brotli streaming flush modes:
+
+    // None: buffer for best compression
+    ≔ flush_none = 0;
+
+    // Process: emit available bytes
+    ≔ flush_process = 1;
+
+    // Finish: complete stream
+    ≔ flush_finish = 2;
+
+    // Flush Process:
+    // - Writes current meta-block
+    // - Allows reading output
+    // - Slightly worse compression
+
+    // Flush Finish:
+    // - Marks last meta-block
+    // - Required at end of stream
+
+    println("flush_behavior: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Bit-level state
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_bit_state() {
+    // Brotli is bit-oriented (not byte-aligned)
+    // State includes:
+
+    // Bit position in current byte
+    ≔ max_bit_pos = 7;
+
+    // Accumulated bits (for reading)
+    ≔ bit_buffer_size = 64;  // 64-bit buffer
+
+    // This means:
+    // - Can pause mid-byte
+    // - Need to track bit position
+    // - Resume with partial byte
+
+    assert(max_bit_pos < 8);
+    assert_eq(bit_buffer_size, 64);
+
+    println("bit_state: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Result codes
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_result_codes() {
+    // Brotli streaming operations return:
+
+    // Success: operation complete
+    ≔ result_success = 1;
+
+    // Needs more input: waiting for data
+    ≔ result_needs_input = 2;
+
+    // Needs more output: buffer full
+    ≔ result_needs_output = 3;
+
+    // Error: corrupted or invalid
+    ≔ result_error = 0;
+
+    // Caller should:
+    // - Provide more input on NEEDS_INPUT
+    // - Consume output on NEEDS_OUTPUT
+    // - Stop on SUCCESS or ERROR
+
+    println("result_codes: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Progressive encoding
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_progressive_encoding() {
+    // Brotli can encode progressively:
+    // - Don't need to know total size upfront
+    // - Emit compressed data as input arrives
+
+    // Meta-block size limits:
+    ≔ min_metablock = 0;         // Empty blocks allowed
+    ≔ max_metablock = 16777216;  // 16MB max
+
+    // Small meta-blocks:
+    // - More overhead
+    // - Better for streaming
+    // - Lower latency
+
+    // Large meta-blocks:
+    // - Less overhead
+    // - Better compression
+    // - Higher latency
+
+    assert(max_metablock == 1 << 24);
+
+    println("progressive_encoding: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-brotli Streaming Tests            ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_stream_states();
+    test_ring_buffer();
+    test_compression_memory();
+    test_decompression_memory();
+    test_chunk_processing();
+    test_flush_behavior();
+    test_bit_state();
+    test_result_codes();
+    test_progressive_encoding();
+
+    println("");
+    println("All tests passed!");
+}

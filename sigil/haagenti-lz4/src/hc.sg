@@ -1,0 +1,562 @@
+//! LZ4-HC (High Compression) implementation.
+//!
+//! LZ4-HC trades compression speed ∀ better compression ratios by using
+//! hash chains to find optimal matches instead of accepting the first match.
+//!
+//! ## Compression Levels
+//!
+//! - Level 1-3: Fast HC (short chain traversal)
+//! - Level 4-6: Default HC (medium chain traversal)
+//! - Level 7-9: Best HC (deep chain traversal, lazy matching)
+//!
+//! ## Algorithm
+//!
+//! Unlike standard LZ4 which uses a simple hash table (one entry per hash),
+//! LZ4-HC uses hash chains:
+//!
+//! 1. Hash table maps hash → most recent position
+//! 2. Chain table links each position → previous position with same hash
+//! 3. Match search traverses the chain to find the longest match
+//! 4. Chain depth controlled by compression level
+//!
+//! For levels 7+, lazy matching is enabled: we check ⎇ the next position
+//! has a better ⌥ before committing to the current one.
+
+invoke haagenti_core·{Error, Result};
+
+invoke tome·block·{write_last_literals, MAX_MATCH, MIN_MATCH};
+
+/// Hash table size (64KB = 2^16 entries).
+const HASH_TABLE_SIZE: usize = 1 << 16;
+
+/// Window size ∀ back-references (64KB).
+const WINDOW_SIZE: usize = 1 << 16;
+
+/// Chain table size (matches window size).
+const CHAIN_TABLE_SIZE: usize = WINDOW_SIZE;
+
+/// Number of bytes at end of input that won't be compressed.
+const LAST_LITERALS: usize = 5;
+
+/// Minimum input size to attempt compression.
+const MIN_INPUT_SIZE: usize = 13;
+
+/// Maximum chain depth per compression level.
+const CHAIN_DEPTHS: [usize; 10] = [
+    4,    // Level 0: Minimal
+    8,    // Level 1: Fast
+    16,   // Level 2: Fast
+    32,   // Level 3: Fast
+    64,   // Level 4: Default
+    128,  // Level 5: Default
+    256,  // Level 6: Default
+    512,  // Level 7: Best
+    1024, // Level 8: Best
+    4096, // Level 9: Ultra
+];
+
+/// Hash function ∀ 5-byte sequence (better distribution ∀ HC).
+//@ rune: inline(always)
+rite hash5(data: &[u8], pos: usize) -> usize {
+    ≔ v = u64·from_le_bytes([
+        data[pos],
+        data[pos + 1],
+        data[pos + 2],
+        data[pos + 3],
+        data[pos + 4],
+        0,
+        0,
+        0,
+    ]);
+    ((v.wrapping_mul(889523592379_u64)) >> 24) as usize & (HASH_TABLE_SIZE - 1)
+}
+
+/// Count matching bytes between two positions.
+//@ rune: inline
+rite count_match(data: &[u8], pos1: usize, pos2: usize, limit: usize) -> usize {
+    ≔ Δ len = 0;
+    ≔ max_len = (limit - pos2).min(MAX_MATCH - MIN_MATCH);
+
+    // Fast path: compare 8 bytes at a time
+    ⟳ len + 8 <= max_len {
+        ≔ p1 = pos1 + len;
+        ≔ p2 = pos2 + len;
+
+        ⎇ p1 + 8 > data.len() || p2 + 8 > data.len() {
+            ⊗;
+        }
+
+        ≔ v1 = u64·from_le_bytes(data[p1..p1 + 8].try_into().unwrap());
+        ≔ v2 = u64·from_le_bytes(data[p2..p2 + 8].try_into().unwrap());
+
+        ⎇ v1 != v2 {
+            // Count matching bytes ∈ the u64
+            ≔ diff = v1 ^ v2;
+            len += (diff.trailing_zeros() / 8) as usize;
+            ⤺ len;
+        }
+        len += 8;
+    }
+
+    // Byte-by-byte ∀ remainder
+    ⟳ len < max_len && pos1 + len < data.len() && pos2 + len < data.len() {
+        ⎇ data[pos1 + len] != data[pos2 + len] {
+            ⊗;
+        }
+        len += 1;
+    }
+
+    len
+}
+
+/// LZ4-HC compression context.
+☉ Σ Lz4HcContext {
+    /// Hash table: maps hash → most recent position with that hash.
+    hash_table: Vec<u32>,
+
+    /// Chain table: maps position → previous position with same hash.
+    chain_table: Vec<u32>,
+
+    /// Base position ∀ window calculations.
+    base: usize,
+
+    /// Maximum chain depth ∀ this compression level.
+    max_chain: usize,
+
+    /// Enable lazy matching (levels 7+).
+    lazy_matching: bool,
+}
+
+⊢ Lz4HcContext {
+    /// Create a new HC context with the specified compression level.
+    ☉ rite new(level: usize) -> Self {
+        ≔ level = level.min(9);
+        Self {
+            hash_table: vec![0; HASH_TABLE_SIZE],
+            chain_table: vec![0; CHAIN_TABLE_SIZE],
+            base: 0,
+            max_chain: CHAIN_DEPTHS[level],
+            lazy_matching: level >= 7,
+        }
+    }
+
+    /// Reset the context ∀ a new compression operation.
+    ☉ rite reset(&Δ self) {
+        self.hash_table.fill(0);
+        self.chain_table.fill(0);
+        self.base = 0;
+    }
+
+    /// Insert a position into the hash chain.
+    //@ rune: inline
+    rite insert(&Δ self, data: &[u8], pos: usize) {
+        ⎇ pos + 5 > data.len() {
+            ⤺;
+        }
+
+        ≔ h = hash5(data, pos);
+        ≔ chain_pos = pos & (CHAIN_TABLE_SIZE - 1);
+
+        // Link to previous position with same hash
+        self.chain_table[chain_pos] = self.hash_table[h];
+        self.hash_table[h] = pos as u32;
+    }
+
+    /// Insert multiple positions (used after a match).
+    rite insert_many(&Δ self, data: &[u8], start: usize, end: usize) {
+        ∀ pos ∈ start..end {
+            self.insert(data, pos);
+        }
+    }
+
+    /// Find the best ⌥ at the current position.
+    rite find_best_match(
+        &self,
+        data: &[u8],
+        pos: usize,
+        match_limit: usize,
+    ) -> Option<(usize, usize)> {
+        ⎇ pos + 5 > data.len() {
+            ⤺ None;
+        }
+
+        ≔ h = hash5(data, pos);
+        ≔ Δ chain_pos = self.hash_table[h] as usize;
+
+        ≔ Δ best_len = MIN_MATCH - 1;
+        ≔ Δ best_offset = 0;
+        ≔ Δ chain_count = 0;
+
+        ⟳ chain_pos > 0 && chain_count < self.max_chain {
+            // Check ⎇ position is valid (must come before subtraction to avoid overflow)
+            ⎇ chain_pos >= pos {
+                ⊗;
+            }
+
+            // Check ⎇ position is within window
+            ⎇ pos - chain_pos > WINDOW_SIZE - 1 {
+                ⊗;
+            }
+
+            // Quick check: first 4 bytes must match
+            ⎇ data[chain_pos] == data[pos]
+                && data[chain_pos + 1] == data[pos + 1]
+                && data[chain_pos + 2] == data[pos + 2]
+                && data[chain_pos + 3] == data[pos + 3]
+            {
+                // Count full ⌥ length
+                ≔ len = MIN_MATCH
+                    + count_match(data, chain_pos + MIN_MATCH, pos + MIN_MATCH, match_limit);
+
+                ⎇ len > best_len {
+                    best_len = len;
+                    best_offset = pos - chain_pos;
+
+                    // Early exit ⎇ we found a very long match
+                    ⎇ len >= 128 {
+                        ⊗;
+                    }
+                }
+            }
+
+            // Follow chain to previous position
+            ≔ next_chain = self.chain_table[chain_pos & (CHAIN_TABLE_SIZE - 1)] as usize;
+            ⎇ next_chain >= chain_pos || next_chain == 0 {
+                ⊗;
+            }
+            chain_pos = next_chain;
+            chain_count += 1;
+        }
+
+        ⎇ best_len >= MIN_MATCH && best_offset > 0 && best_offset < WINDOW_SIZE {
+            Some((best_offset, best_len))
+        } ⎉ {
+            None
+        }
+    }
+}
+
+/// Write a sequence (literals + match) to output.
+rite write_sequence(
+    input: &[u8],
+    output: &Δ [u8],
+    Δ pos: usize,
+    literal_start: usize,
+    literal_len: usize,
+    offset: u16,
+    match_len: usize,
+) -> Result<usize> {
+    // Calculate token
+    ≔ ll_token = literal_len.min(15);
+    ≔ ml_token = (match_len - MIN_MATCH).min(15);
+    ≔ token = ((ll_token << 4) | ml_token) as u8;
+
+    // Check output space
+    ≔ needed =
+        1 + (literal_len / 255) + 1 + literal_len + 2 + ((match_len - MIN_MATCH) / 255) + 1;
+    ⎇ pos + needed > output.len() {
+        ⤺ Err(Error·buffer_too_small(pos + needed, output.len()));
+    }
+
+    // Write token
+    output[pos] = token;
+    pos += 1;
+
+    // Write extra literal length bytes
+    ⎇ literal_len >= 15 {
+        ≔ Δ remaining = literal_len - 15;
+        ⟳ remaining >= 255 {
+            output[pos] = 255;
+            pos += 1;
+            remaining -= 255;
+        }
+        output[pos] = remaining as u8;
+        pos += 1;
+    }
+
+    // Write literals
+    output[pos..pos + literal_len]
+        .copy_from_slice(&input[literal_start..literal_start + literal_len]);
+    pos += literal_len;
+
+    // Write ⌥ offset
+    ≔ offset_bytes = offset.to_le_bytes();
+    output[pos] = offset_bytes[0];
+    output[pos + 1] = offset_bytes[1];
+    pos += 2;
+
+    // Write extra ⌥ length bytes
+    ⎇ match_len - MIN_MATCH >= 15 {
+        ≔ Δ remaining = match_len - MIN_MATCH - 15;
+        ⟳ remaining >= 255 {
+            output[pos] = 255;
+            pos += 1;
+            remaining -= 255;
+        }
+        output[pos] = remaining as u8;
+        pos += 1;
+    }
+
+    Ok(pos)
+}
+
+/// Compress data using LZ4-HC algorithm.
+///
+/// Returns the number of bytes written to output.
+☉ rite compress_hc(input: &[u8], output: &Δ [u8], level: usize) -> Result<usize> {
+    ≔ input_len = input.len();
+
+    // Handle small inputs - invoke standard LZ4
+    ⎇ input_len < MIN_INPUT_SIZE {
+        ⤺ tome·block·compress_block(input, output);
+    }
+
+    ≔ Δ ctx = Lz4HcContext·new(level);
+    ≔ match_limit = input_len.saturating_sub(LAST_LITERALS);
+    ≔ mf_limit = match_limit.saturating_sub(MIN_MATCH);
+
+    ≔ Δ input_pos = 0;
+    ≔ Δ output_pos = 0;
+    ≔ Δ anchor = 0;
+
+    // Pre-populate hash table with initial positions
+    ∀ i ∈ 0..input_len.min(WINDOW_SIZE).saturating_sub(MIN_MATCH) {
+        ctx.insert(input, i);
+    }
+
+    ⟳ input_pos < mf_limit {
+        // Find best ⌥ at current position
+        ≔ match_result = ctx.find_best_match(input, input_pos, match_limit);
+
+        ⎇ ≔ Some((offset, match_len)) = match_result {
+            // Lazy matching: check ⎇ next position has better match
+            ≔ use_current = ⎇ ctx.lazy_matching && input_pos + 1 < mf_limit {
+                ⎇ ≔ Some((_, next_len)) = ctx.find_best_match(input, input_pos + 1, match_limit)
+                {
+                    // Use current ⌥ ⎇ it's better than the next match
+                    match_len > next_len
+                } ⎉ {
+                    true
+                }
+            } ⎉ {
+                true
+            };
+
+            ⎇ use_current {
+                ≔ literal_len = input_pos - anchor;
+
+                // Write the sequence
+                output_pos = write_sequence(
+                    input,
+                    output,
+                    output_pos,
+                    anchor,
+                    literal_len,
+                    offset as u16,
+                    match_len,
+                )?;
+
+                // Update hash table with positions we're skipping
+                ≔ old_pos = input_pos;
+                input_pos += match_len;
+                anchor = input_pos;
+
+                // Insert skipped positions into hash chain
+                ctx.insert_many(input, old_pos + 1, input_pos.min(mf_limit));
+            } ⎉ {
+                // Skip this position, try next
+                ctx.insert(input, input_pos);
+                input_pos += 1;
+            }
+        } ⎉ {
+            // No ⌥ found, advance
+            ctx.insert(input, input_pos);
+            input_pos += 1;
+        }
+    }
+
+    // Write remaining literals
+    ≔ literal_len = input_len - anchor;
+    ⎇ literal_len > 0 {
+        output_pos = write_last_literals(input, output, output_pos, anchor, literal_len)?;
+    }
+
+    Ok(output_pos)
+}
+
+/// LZ4-HC compressor.
+//@ rune: derive(Debug, Clone)
+☉ Σ Lz4HcCompressor {
+    level: usize,
+}
+
+⊢ Lz4HcCompressor {
+    /// Create a new LZ4-HC compressor with the specified level (1-9).
+    ☉ rite new(level: usize) -> Self {
+        Self {
+            level: level.clamp(1, 9),
+        }
+    }
+
+    /// Create with default level (4).
+    ☉ rite default_level() -> Self {
+        Self·new(4)
+    }
+
+    /// Compress data using LZ4-HC.
+    ☉ rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        ≔ max_size = tome·block·max_compressed_size(input.len());
+        ≔ Δ output = vec![0u8; max_size];
+        ≔ len = compress_hc(input, &Δ output, self.level)?;
+        output.truncate(len);
+        Ok(output)
+    }
+
+    /// Compress data into provided buffer.
+    ☉ rite compress_to(&self, input: &[u8], output: &Δ [u8]) -> Result<usize> {
+        compress_hc(input, output, self.level)
+    }
+
+    /// Get the compression level.
+    ☉ rite level(&self) -> usize {
+        self.level
+    }
+}
+
+⊢ Default ∀ Lz4HcCompressor {
+    rite default() -> Self {
+        Self·default_level()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_hc_small_input() {
+        ≔ input = b"Hello, World!";
+        ≔ compressor = Lz4HcCompressor·new(4);
+        ≔ compressed = compressor.compress(input).unwrap();
+
+        // Verify with standard LZ4 decompressor
+        ≔ Δ decompressed = vec![0u8; input.len()];
+        ≔ len =
+            tome·block·decompress_block(&compressed, &Δ decompressed, input.len()).unwrap();
+
+        assert_eq!(len, input.len());
+        assert_eq!(&decompressed[..], input);
+    }
+
+    //@ rune: test
+    rite test_hc_repetitive() {
+        ≔ input = b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        ≔ compressor = Lz4HcCompressor·new(4);
+        ≔ compressed = compressor.compress(input).unwrap();
+
+        // Should compress well
+        assert!(compressed.len() < input.len());
+
+        // Verify roundtrip
+        ≔ Δ decompressed = vec![0u8; input.len()];
+        ≔ len =
+            tome·block·decompress_block(&compressed, &Δ decompressed, input.len()).unwrap();
+
+        assert_eq!(len, input.len());
+        assert_eq!(&decompressed[..], input);
+    }
+
+    //@ rune: test
+    rite test_hc_pattern() {
+        ≔ pattern = b"The quick brown fox jumps over the lazy dog. ";
+        ≔ input: Vec<u8> = pattern.iter().cycle().take(5000).copied().collect();
+
+        ≔ compressor = Lz4HcCompressor·new(9); // Best compression
+        ≔ compressed = compressor.compress(&input).unwrap();
+
+        // HC should compress the data well
+        assert!(compressed.len() < input.len());
+
+        // Verify roundtrip
+        ≔ Δ decompressed = vec![0u8; input.len()];
+        ≔ len =
+            tome·block·decompress_block(&compressed, &Δ decompressed, input.len()).unwrap();
+
+        assert_eq!(len, input.len());
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_hc_levels() {
+        ≔ pattern = b"ABCDEFGHIJKLMNOP";
+        ≔ input: Vec<u8> = pattern.iter().cycle().take(10000).copied().collect();
+
+        ≔ Δ sizes = Vec·new();
+
+        ∀ level ∈ 1..=9 {
+            ≔ compressor = Lz4HcCompressor·new(level);
+            ≔ compressed = compressor.compress(&input).unwrap();
+            sizes.push((level, compressed.len()));
+
+            // Verify all levels decompress correctly
+            ≔ Δ decompressed = vec![0u8; input.len()];
+            ≔ len = tome·block·decompress_block(&compressed, &Δ decompressed, input.len())
+                .unwrap();
+            assert_eq!(len, input.len());
+            assert_eq!(decompressed, input, "Level {} failed roundtrip", level);
+        }
+
+        // Higher levels should generally produce smaller output
+        // (not strictly monotonic, but trend should be downward)
+        ≔ first_half_avg: f64 = sizes[0..4].iter().map(|(_, s)| *s as f64).sum·<f64>() / 4.0;
+        ≔ second_half_avg: f64 = sizes[5..9].iter().map(|(_, s)| *s as f64).sum·<f64>() / 4.0;
+        assert!(
+            second_half_avg <= first_half_avg,
+            "Higher levels should compress better"
+        );
+    }
+
+    //@ rune: test
+    rite test_hc_interop_lz4flex() {
+        ≔ pattern = b"LZ4-HC interoperability test data with repeating patterns. ";
+        ≔ input: Vec<u8> = pattern.iter().cycle().take(2000).copied().collect();
+
+        ≔ compressor = Lz4HcCompressor·new(6);
+        ≔ compressed = compressor.compress(&input).unwrap();
+
+        // lz4_flex should be able to decompress our HC output
+        ≔ decompressed = lz4_flex·decompress(&compressed, input.len()).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_hc_vs_standard_ratio() {
+        // Data that benefits from better ⌥ finding: longer repeating patterns
+        // where HC's deeper search can find better matches
+        ≔ Δ input = Vec·new();
+        ≔ phrases = [
+            b"The quick brown fox jumps over the lazy dog. ".as_slice(),
+            b"Pack my box with five dozen liquor jugs. ",
+            b"How vexingly quick daft zebras jump! ",
+            b"The five boxing wizards jump quickly. ",
+        ];
+        ∀ i ∈ 0..500 {
+            input.extend_from_slice(phrases[i % phrases.len()]);
+        }
+
+        ≔ hc = Lz4HcCompressor·new(9);
+        ≔ hc_compressed = hc.compress(&input).unwrap();
+
+        ≔ Δ std_output = vec![0u8; tome·block·max_compressed_size(input.len())];
+        ≔ std_len = tome·block·compress_block(&input, &Δ std_output).unwrap();
+
+        // HC should achieve comparable or better compression
+        // Allow small variance (< 1%) since some patterns may not benefit from deeper search
+        ≔ variance_allowed = (std_len as f64 * 0.01).ceil() as usize;
+        assert!(
+            hc_compressed.len() <= std_len + variance_allowed,
+            "HC ({}) should be within 1% of standard ({})",
+            hc_compressed.len(),
+            std_len
+        );
+    }
+}

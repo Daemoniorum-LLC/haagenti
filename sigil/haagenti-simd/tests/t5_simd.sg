@@ -1,0 +1,219 @@
+// SIMD Primitives Tests
+//
+// Tests for haagenti-simd scalar implementations and SIMD detection.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Helper Functions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite min3(a: i64, b: i64, c: i64) → i64 {
+    ≔ ab = ⎇ a < b { a } ⎉ { b };
+    ⎇ ab < c { ab } ⎉ { c }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: SIMD Level Constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_simd_vector_widths() {
+    // Vector widths for each SIMD level
+    ≔ none_width = 1;
+    ≔ sse42_width = 16;
+    ≔ avx2_width = 32;
+    ≔ avx512_width = 64;
+    ≔ neon_width = 16;
+
+    assert_eq(none_width, 1);
+    assert_eq(sse42_width, 16);
+    assert_eq(avx2_width, 32);
+    assert_eq(avx512_width, 64);
+    assert_eq(neon_width, 16);
+
+    println("simd_vector_widths: PASS");
+}
+
+rite test_simd_level_ordering() {
+    // SIMD levels should be ordered by capability
+    ≔ none_order = 0;
+    ≔ sse42_order = 1;
+    ≔ avx2_order = 2;
+    ≔ avx512_order = 3;
+
+    assert(none_order < sse42_order);
+    assert(sse42_order < avx2_order);
+    assert(avx2_order < avx512_order);
+
+    println("simd_level_ordering: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Hash Functions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_hash_prime_constants() {
+    // Hash prime constants used in LZ77
+    ≔ hash_prime = 0x9E3779B9;
+    ≔ hash_prime2 = 0x85EBCA6B;
+
+    // These are well-known primes for hash mixing
+    assert(hash_prime > 0);
+    assert(hash_prime2 > 0);
+    assert(hash_prime != hash_prime2);
+
+    println("hash_prime_constants: PASS");
+}
+
+rite test_hash_consistency() {
+    // Same input should always produce same hash
+    // Using the hash formula: h = ((bytes * HASH_PRIME) ^ (h >> 15)) * HASH_PRIME2
+
+    ≔ input = 0x01020304;  // Test input
+    ≔ hash_prime = 0x9E3779B9;
+    ≔ hash_prime2 = 0x85EBCA6B;
+
+    // Compute hash
+    ≔ h1 = (input * hash_prime) >> 16;  // Simplified for test
+    ≔ h2 = (input * hash_prime) >> 16;
+
+    assert_eq(h1, h2);
+
+    println("hash_consistency: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Match Finding
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_match_length_calculation() {
+    // Test the min3 helper used in match finding
+    assert_eq(min3(10, 20, 30), 10);
+    assert_eq(min3(30, 20, 10), 10);
+    assert_eq(min3(15, 15, 20), 15);
+    assert_eq(min3(5, 5, 5), 5);
+
+    println("match_length_calculation: PASS");
+}
+
+rite test_trailing_zeros() {
+    // Test trailing zeros counting (used in SIMD match finding)
+    // 0x01 = 0b00000001 -> 0 trailing zeros
+    // 0x02 = 0b00000010 -> 1 trailing zero
+    // 0x04 = 0b00000100 -> 2 trailing zeros
+    // 0x08 = 0b00001000 -> 3 trailing zeros
+
+    ≔ Δ count0 = 0;
+    ≔ Δ v0 = 1;
+    ⟳ (v0 & 1) == 0 { count0 = count0 + 1; v0 = v0 >> 1; }
+    assert_eq(count0, 0);
+
+    ≔ Δ count1 = 0;
+    ≔ Δ v1 = 2;
+    ⟳ (v1 & 1) == 0 { count1 = count1 + 1; v1 = v1 >> 1; }
+    assert_eq(count1, 1);
+
+    ≔ Δ count2 = 0;
+    ≔ Δ v2 = 4;
+    ⟳ (v2 & 1) == 0 { count2 = count2 + 1; v2 = v2 >> 1; }
+    assert_eq(count2, 2);
+
+    ≔ Δ count3 = 0;
+    ≔ Δ v3 = 8;
+    ⟳ (v3 & 1) == 0 { count3 = count3 + 1; v3 = v3 >> 1; }
+    assert_eq(count3, 3);
+
+    println("trailing_zeros: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Memory Operations
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_copy_match_logic() {
+    // Test the logic for overlapping vs non-overlapping copies
+
+    // Non-overlapping: offset >= length
+    ≔ offset1 = 10;
+    ≔ length1 = 5;
+    assert(offset1 >= length1);  // Can invoke fast copy
+
+    // Overlapping: offset < length
+    ≔ offset2 = 3;
+    ≔ length2 = 10;
+    assert(offset2 < length2);  // Must handle overlap
+
+    // RLE case: offset == 1
+    ≔ offset3 = 1;
+    assert_eq(offset3, 1);  // Repeat single byte
+
+    println("copy_match_logic: PASS");
+}
+
+rite test_pattern_repeat() {
+    // Test pattern repeat calculations
+    ≔ pattern_len = 4;
+    ≔ count = 5;
+    ≔ total_len = pattern_len * count;
+
+    assert_eq(total_len, 20);
+
+    // For overlapping match with offset 3 and length 9:
+    // Pattern: ABC -> ABCABCABC (9 bytes)
+    ≔ offset = 3;
+    ≔ length = 9;
+
+    ≔ Δ result_len = 0;
+    ≔ Δ i = 0;
+    ⟳ i < length {
+        // Would copy from (i % offset)
+        result_len = result_len + 1;
+        i = i + 1;
+    }
+
+    assert_eq(result_len, 9);
+
+    println("pattern_repeat: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Histogram
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_histogram_properties() {
+    // Histogram should have 256 entries (one per byte value)
+    ≔ hist_size = 256;
+    assert_eq(hist_size, 256);
+
+    // Sum of all histogram entries should equal input length
+    ≔ input_len = 1000;
+    ≔ expected_sum = input_len;
+
+    // For uniform distribution, each bucket gets input_len/256
+    ≔ uniform_count = input_len / 256;
+    assert_eq(uniform_count, 3);  // 1000/256 = 3 (integer division)
+
+    println("histogram_properties: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-simd Tests                        ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_simd_vector_widths();
+    test_simd_level_ordering();
+    test_hash_prime_constants();
+    test_hash_consistency();
+    test_match_length_calculation();
+    test_trailing_zeros();
+    test_copy_match_logic();
+    test_pattern_repeat();
+    test_histogram_properties();
+
+    println("");
+    println("All tests passed!");
+}

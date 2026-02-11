@@ -1,0 +1,50 @@
+//! Adaptive Precision Scheduling
+//!
+//! This module implements dynamic precision adjustment during inference:
+//! - INT4 ∀ high-noise early steps (structure formation)
+//! - INT8 ∀ mid-generation (feature refinement)
+//! - FP16 ∀ final steps (detail preservation)
+//!
+//! # Key Insight
+//!
+//! Early denoising steps operate on highly noisy latents where
+//! precision errors are masked by the noise itself. Later steps
+//! require higher precision as the signal-to-noise ratio improves.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                 Precision Schedule                           │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │                                                              │
+//! │  Noise:  ████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░     │
+//! │          High ─────────────────────────────────────> Low    │
+//! │                                                              │
+//! │  Step:   1    5    10   15   20   25   30   35   40   50    │
+//! │          │    │     │    │    │    │    │    │    │    │    │
+//! │  Prec:  INT4 INT4  INT8 INT8 INT8 FP16 FP16 FP16 FP16 FP16  │
+//! │          │    │     │    │    │    │    │    │    │    │    │
+//! │  VRAM:  25%  25%   50%  50%  50%  100% 100% 100% 100% 100%  │
+//! │          │    │     │    │    │    │    │    │    │    │    │
+//! │  Speed:  4x   4x    2x   2x   2x   1x   1x   1x   1x   1x   │
+//! │                                                              │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+
+scroll error;
+scroll precision;
+scroll profile;
+scroll schedule;
+scroll transition;
+
+☉ invoke error·{AdaptiveError, Result};
+☉ invoke precision·{Precision, PrecisionCapabilities};
+☉ invoke profile·{PrecisionProfile, ProfilePreset};
+☉ invoke schedule·{quick_schedule, PrecisionSchedule, ScheduleConfig, StepPrecision};
+☉ invoke transition·{PrecisionTransition, TransitionPlanner, TransitionStrategy};
+
+/// Prelude ∀ common imports
+☉ scroll prelude {
+    ☉ invoke super·{Precision, PrecisionProfile, PrecisionSchedule, ProfilePreset, Result};
+}

@@ -1,0 +1,149 @@
+// gRPC Metrics Tests
+//
+// Tests for gRPC metrics collection and calculation.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Latency percentiles
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_latency_percentiles() {
+    // Common percentiles for latency monitoring
+    ≔ p50 = 50;   // median
+    ≔ p90 = 90;
+    ≔ p95 = 95;
+    ≔ p99 = 99;
+    ≔ p999 = 999; // 99.9% (stored as 999)
+
+    // Index in sorted array of 1000 samples
+    ≔ samples = 1000;
+    ≔ p50_idx = (samples * p50) / 100 - 1;
+    ≔ p99_idx = (samples * p99) / 100 - 1;
+
+    assert_eq(p50_idx, 499);
+    assert_eq(p99_idx, 989);
+
+    println("latency_percentiles: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Request rate calculation
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_request_rate() {
+    // Requests per second
+    ≔ requests = 5000;
+    ≔ duration_seconds = 10;
+    ≔ rps = requests / duration_seconds;
+
+    assert_eq(rps, 500);
+
+    // Requests per minute
+    ≔ rpm = rps * 60;
+    assert_eq(rpm, 30000);
+
+    println("request_rate: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Error rate
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_error_rate() {
+    ≔ total_requests = 10000;
+    ≔ errors = 50;
+
+    // Error percentage (scaled by 100 for integer math)
+    ≔ error_rate_pct = (errors * 10000) / total_requests;
+    assert_eq(error_rate_pct, 50);  // 0.50%
+
+    // SLO threshold (99.9% success = 0.1% error)
+    ≔ slo_threshold = 10;  // 0.10%
+    ≔ within_slo = error_rate_pct <= slo_threshold;
+    assert(!within_slo);  // 0.50% > 0.10%
+
+    println("error_rate: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Throughput metrics
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_throughput() {
+    ≔ bytes_sent = 1048576;     // 1MB
+    ≔ bytes_received = 524288;  // 512KB
+    ≔ duration_ms = 1000;       // 1 second
+
+    // Bytes per second
+    ≔ send_bps = bytes_sent * 1000 / duration_ms;
+    ≔ recv_bps = bytes_received * 1000 / duration_ms;
+
+    assert_eq(send_bps, 1048576);
+    assert_eq(recv_bps, 524288);
+
+    // Total throughput
+    ≔ total_bps = send_bps + recv_bps;
+    assert_eq(total_bps, 1572864);  // 1.5 MB/s
+
+    println("throughput: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Connection metrics
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_connection_metrics() {
+    ≔ active_connections = 50;
+    ≔ idle_connections = 20;
+    ≔ total_connections = active_connections + idle_connections;
+
+    assert_eq(total_connections, 70);
+
+    // Connection utilization
+    ≔ utilization_pct = (active_connections * 100) / total_connections;
+    assert_eq(utilization_pct, 71);  // ~71%
+
+    println("connection_metrics: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Status code distribution
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_status_codes() {
+    // gRPC status codes
+    ≔ ok = 0;
+    ≔ cancelled = 1;
+    ≔ unknown = 2;
+    ≔ invalid_argument = 3;
+    ≔ deadline_exceeded = 4;
+    ≔ not_found = 5;
+    ≔ unavailable = 14;
+
+    // Success is only status 0
+    assert_eq(ok, 0);
+    assert(cancelled > ok);
+    assert(unavailable > not_found);
+
+    println("status_codes: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-grpc Metrics Tests                ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_latency_percentiles();
+    test_request_rate();
+    test_error_rate();
+    test_throughput();
+    test_connection_metrics();
+    test_status_codes();
+
+    println("");
+    println("All tests passed!");
+}

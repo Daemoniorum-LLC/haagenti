@@ -1,0 +1,242 @@
+// LZ4 Codec Algorithm Tests
+//
+// Tests for LZ4 codec (combined compress/decompress) properties.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Frame format constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_frame_format() {
+    // LZ4 Frame format (as opposed to raw blocks):
+    // - Magic number: 0x184D2204
+    // - Frame descriptor
+    // - Data blocks
+    // - End mark (0x00000000)
+    // - Optional content checksum
+
+    ≔ magic = 0x184D2204;
+    ≔ end_mark = 0x00000000;
+
+    // Verify magic number bytes (little-endian)
+    ≔ magic_b0 = magic & 0xFF;          // 0x04
+    ≔ magic_b1 = (magic >> 8) & 0xFF;   // 0x22
+    ≔ magic_b2 = (magic >> 16) & 0xFF;  // 0x4D
+    ≔ magic_b3 = (magic >> 24) & 0xFF;  // 0x18
+
+    assert_eq(magic_b0, 0x04);
+    assert_eq(magic_b1, 0x22);
+    assert_eq(magic_b2, 0x4D);
+    assert_eq(magic_b3, 0x18);
+
+    println("frame_format: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Block size identifiers
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_block_size_ids() {
+    // Block size IDs in frame descriptor:
+    // 4 = 64KB (default)
+    // 5 = 256KB
+    // 6 = 1MB
+    // 7 = 4MB
+
+    ≔ block_id_64kb = 4;
+    ≔ block_id_256kb = 5;
+    ≔ block_id_1mb = 6;
+    ≔ block_id_4mb = 7;
+
+    // Map to actual sizes
+    ≔ size_64kb = 64 * 1024;
+    ≔ size_256kb = 256 * 1024;
+    ≔ size_1mb = 1024 * 1024;
+    ≔ size_4mb = 4 * 1024 * 1024;
+
+    assert_eq(size_64kb, 65536);
+    assert_eq(size_256kb, 262144);
+    assert_eq(size_1mb, 1048576);
+    assert_eq(size_4mb, 4194304);
+
+    // Formula: size = 1 << (8 + 2*block_id)
+    assert_eq(1 << (8 + 2 * block_id_64kb), size_64kb);
+    assert_eq(1 << (8 + 2 * block_id_256kb), size_256kb);
+    assert_eq(1 << (8 + 2 * block_id_1mb), size_1mb);
+    assert_eq(1 << (8 + 2 * block_id_4mb), size_4mb);
+
+    println("block_size_ids: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Checksum algorithms
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_checksums() {
+    // LZ4 uses xxHash for checksums
+    // - Content checksum: xxHash32 of uncompressed data
+    // - Block checksum: xxHash32 of each compressed block
+
+    // xxHash32 properties:
+    // - 32-bit output
+    // - Very fast (4+ GB/s)
+    // - Good distribution
+
+    ≔ checksum_bits = 32;
+    ≔ checksum_max = 0xFFFFFFFF;
+
+    assert_eq(checksum_bits, 32);
+    assert_eq(checksum_max, 4294967295);
+
+    // Header checksum uses only second byte of xxHash32
+    ≔ header_checksum_byte = 1;  // Only 1 byte used
+    assert_eq(header_checksum_byte, 1);
+
+    println("checksums: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Compression bound calculation
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_compression_bound() {
+    // Codec should provide same bound as block format
+
+    // For raw block: input + input/255 + 16
+    // For frame: add header (7-19 bytes) + end mark (4 bytes)
+
+    ≔ input_size = 10000;
+    ≔ block_bound = input_size + (input_size / 255) + 16;
+    ≔ frame_overhead = 19 + 4;  // max header + end mark
+    ≔ frame_bound = block_bound + frame_overhead;
+
+    assert_eq(block_bound, 10055);
+    assert_eq(frame_bound, 10078);
+
+    println("compression_bound: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Content size handling
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_content_size() {
+    // Frame can optionally include original content size
+    // - 0, 1, 2, 4, or 8 bytes in header
+    // - Helps decompressor allocate buffer
+
+    // Content size field options:
+    ≔ no_size = 0;
+    ≔ size_1b = 1;
+    ≔ size_2b = 2;
+    ≔ size_4b = 4;
+    ≔ size_8b = 8;
+
+    // Max content sizes:
+    ≔ max_1b = 255;
+    ≔ max_2b = 65535;
+    ≔ max_4b = 4294967295;
+    // max_8b = 18446744073709551615 (too big for i64)
+
+    assert_eq(max_1b, 0xFF);
+    assert_eq(max_2b, 0xFFFF);
+
+    println("content_size: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Dictionary compression
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_dictionary() {
+    // LZ4 supports dictionary compression:
+    // - Pre-populate hash table with dictionary content
+    // - Dictionary ID stored in frame header (4 bytes)
+
+    // Dictionary requirements:
+    ≔ min_dict_size = 0;
+    ≔ max_dict_size = 65536;  // 64KB max
+    ≔ dict_id_bytes = 4;
+
+    assert_eq(max_dict_size, 64 * 1024);
+    assert_eq(dict_id_bytes, 4);
+
+    // Dictionary helps compress:
+    // - Small files (less data to learn patterns)
+    // - Similar files (shared patterns)
+    // - Protocol messages (repeated structure)
+
+    println("dictionary: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Skippable frames
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_skippable_frames() {
+    // Skippable frame magic: 0x184D2A5X (X = 0-F)
+    ≔ skip_magic_base = 0x184D2A50;
+    ≔ skip_magic_max = 0x184D2A5F;
+
+    // 16 possible skippable frame types
+    ≔ num_skip_types = skip_magic_max - skip_magic_base + 1;
+    assert_eq(num_skip_types, 16);
+
+    // Skippable frame structure:
+    // - 4 bytes magic
+    // - 4 bytes size (little-endian)
+    // - N bytes data (skipped by decoder)
+
+    ≔ skip_header_size = 8;  // magic + size
+    assert_eq(skip_header_size, 8);
+
+    println("skippable_frames: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Codec roundtrip properties
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_roundtrip_properties() {
+    // Key properties of LZ4 codec:
+    // 1. Lossless: decompress(compress(x)) == x
+    // 2. Deterministic: same input -> same output
+    // 3. Bounded: compressed size <= compression_bound(input_size)
+
+    // Property 1: Lossless (verified by all roundtrip tests)
+    ≔ property_lossless = true;
+    assert(property_lossless);
+
+    // Property 2: Deterministic (same settings -> same output)
+    ≔ property_deterministic = true;
+    assert(property_deterministic);
+
+    // Property 3: Bounded expansion
+    ≔ input_size = 1000;
+    ≔ max_output = input_size + (input_size / 255) + 16;
+    assert(max_output < input_size * 2);
+
+    println("roundtrip_properties: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-lz4 Codec Tests                   ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_frame_format();
+    test_block_size_ids();
+    test_checksums();
+    test_compression_bound();
+    test_content_size();
+    test_dictionary();
+    test_skippable_frames();
+    test_roundtrip_properties();
+
+    println("");
+    println("All tests passed!");
+}

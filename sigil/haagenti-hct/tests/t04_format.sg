@@ -121,7 +121,7 @@
 // BlockIndex - For block-based access
 // ════════════════════════════════════════════════════════════════════════════
 
-sigil BlockIndex {
+Σ BlockIndex {
     block_id: u32,
     offset: u64,
     size: u32,
@@ -167,7 +167,7 @@ sigil BlockIndex {
 // HctHeader - File header structure
 // ════════════════════════════════════════════════════════════════════════════
 
-sigil HctHeader {
+Σ HctHeader {
     magic: u32,           // 0x48435401 = "HCT\x01"
     version: u16,
     flags: u16,

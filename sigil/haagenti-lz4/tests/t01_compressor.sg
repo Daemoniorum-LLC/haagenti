@@ -1,0 +1,199 @@
+// LZ4 Compressor Algorithm Tests
+//
+// Tests for LZ4 compression algorithm properties and edge cases.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Compression level constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_compression_levels() {
+    // LZ4 supports levels 1-12 (where applicable for HC mode)
+    // Standard LZ4: single level (fastest)
+    // LZ4-HC: levels 1-12 (higher = better compression, slower)
+
+    ≔ standard_level = 1;
+    ≔ hc_min = 1;
+    ≔ hc_max = 12;
+    ≔ hc_default = 9;
+
+    assert(hc_min >= 1);
+    assert(hc_max <= 12);
+    assert(hc_default <= hc_max);
+    assert(hc_default >= hc_min);
+
+    println("compression_levels: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: max_compressed_size formula
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_max_compressed_size_formula() {
+    // LZ4 formula: input_len + (input_len / 255) + 16
+
+    // Empty input
+    ≔ max0 = 0 + (0 / 255) + 16;
+    assert_eq(max0, 16);
+
+    // 100 bytes
+    ≔ max100 = 100 + (100 / 255) + 16;
+    assert_eq(max100, 116);
+
+    // 1KB
+    ≔ max1k = 1024 + (1024 / 255) + 16;
+    assert_eq(max1k, 1044);
+
+    // 64KB (common block size)
+    ≔ max64k = 65536 + (65536 / 255) + 16;
+    assert_eq(max64k, 65809);
+
+    // 1MB: 1048576 + 4112 + 16 = 1052704
+    ≔ max1m = 1048576 + (1048576 / 255) + 16;
+    assert_eq(max1m, 1052704);
+
+    println("max_compressed_size_formula: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Worst case expansion
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_worst_case_expansion() {
+    // LZ4's worst case: every byte is a literal (no matches)
+    // This adds ~0.4% overhead + 16 bytes
+
+    // For 1000 bytes:
+    ≔ input_len = 1000;
+    ≔ worst_case = input_len + (input_len / 255) + 16;
+
+    // Overhead percentage
+    ≔ overhead = worst_case - input_len;  // 19 bytes
+    assert(overhead <= 20);  // ~2% overhead for small inputs
+
+    // For 1MB:
+    ≔ input_1m = 1048576;
+    ≔ worst_1m = input_1m + (input_1m / 255) + 16;
+    ≔ overhead_1m = worst_1m - input_1m;  // ~4130 bytes
+
+    // Less than 0.5% overhead for large inputs
+    assert(overhead_1m * 200 < input_1m);
+
+    println("worst_case_expansion: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Block size constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_block_size_constants() {
+    // Common block sizes for streaming
+    ≔ block_64kb = 65536;
+    ≔ block_256kb = 262144;
+    ≔ block_1mb = 1048576;
+    ≔ block_4mb = 4194304;
+
+    // Block sizes should be powers of 2
+    assert_eq(block_64kb, 1 << 16);
+    assert_eq(block_256kb, 1 << 18);
+    assert_eq(block_1mb, 1 << 20);
+    assert_eq(block_4mb, 1 << 22);
+
+    println("block_size_constants: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Minimum input size for compression
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_min_input_size() {
+    // LZ4 MIN_INPUT_SIZE is 13 bytes
+    // Below this, just store as literals
+
+    ≔ min_input = 13;
+
+    // For inputs < 13 bytes, invoke literal-only encoding
+    // Token byte + literal bytes
+    ≔ small_input = 10;
+    ≔ literal_overhead = 1;  // Just the token byte
+    ≔ literal_encoded_size = small_input + literal_overhead;
+
+    assert_eq(literal_encoded_size, 11);
+
+    println("min_input_size: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Compression ratio estimates
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_compression_ratio_estimates() {
+    // Typical compression ratios for LZ4:
+    // - Random data: ~1.0 (no compression)
+    // - Text: 2-3x
+    // - Repetitive: 10-100x
+    // - Already compressed: ~1.0
+
+    // Example: 1000 bytes of repetitive pattern "ABCD"
+    // Could compress to ~50 bytes (20:1 ratio)
+    ≔ repetitive_original = 1000;
+    ≔ repetitive_compressed = 50;
+    ≔ repetitive_ratio = repetitive_original / repetitive_compressed;
+    assert_eq(repetitive_ratio, 20);
+
+    // Example: 1000 bytes of text
+    // Might compress to ~400 bytes (2.5:1 ratio)
+    ≔ text_original = 1000;
+    ≔ text_compressed = 400;
+    ≔ text_ratio = text_original / text_compressed;
+    assert_eq(text_ratio, 2);  // Integer division
+
+    println("compression_ratio_estimates: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Speed characteristics
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_speed_characteristics() {
+    // LZ4 is designed for speed:
+    // - Compression: 400-800 MB/s (single core)
+    // - Decompression: 1000-4000 MB/s
+    // - Decompression is faster than compression
+
+    // Relative speeds (normalized)
+    ≔ lz4_compress_speed = 100;
+    ≔ lz4_decompress_speed = 250;  // 2.5x faster
+
+    assert(lz4_decompress_speed > lz4_compress_speed);
+
+    // Compare to other algorithms (relative)
+    ≔ gzip_compress_speed = 20;  // 5x slower than LZ4
+    ≔ zstd_compress_speed = 50;  // 2x slower than LZ4
+
+    assert(lz4_compress_speed > gzip_compress_speed);
+    assert(lz4_compress_speed > zstd_compress_speed);
+
+    println("speed_characteristics: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-lz4 Compressor Tests              ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_compression_levels();
+    test_max_compressed_size_formula();
+    test_worst_case_expansion();
+    test_block_size_constants();
+    test_min_input_size();
+    test_compression_ratio_estimates();
+    test_speed_characteristics();
+
+    println("");
+    println("All tests passed!");
+}

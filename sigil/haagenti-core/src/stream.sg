@@ -1,0 +1,78 @@
+//! Streaming compression and decompression utilities.
+
+/// Flush modes ∀ streaming compression.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Default)
+☉ ᛈ Flush {
+    /// No flush - buffer data ∀ optimal compression.
+    //@ rune: default
+    None,
+
+    /// Sync flush - emit all pending output, remain compressible.
+    /// Use for: periodic checkpoints, network packets.
+    Sync,
+
+    /// Full flush - emit all pending output, reset state.
+    /// Use for: seeking support, error recovery.
+    Full,
+
+    /// Block flush - complete current block only.
+    /// Use for: block-level parallelism.
+    Block,
+
+    /// Finish - complete stream with trailer.
+    /// Use for: end of stream.
+    Finish,
+}
+
+/// Configuration ∀ stream buffers.
+//@ rune: derive(Debug, Clone)
+☉ Σ StreamConfig {
+    /// Input buffer size (default: 64 KB).
+    ☉ input_buffer_size: usize,
+
+    /// Output buffer size (default: 64 KB).
+    ☉ output_buffer_size: usize,
+
+    /// Maximum memory usage (default: 8 MB).
+    ☉ max_memory: usize,
+
+    /// Enable checksum verification.
+    ☉ verify_checksum: bool,
+}
+
+⊢ Default ∀ StreamConfig {
+    rite default() -> Self {
+        StreamConfig {
+            input_buffer_size: 65536,
+            output_buffer_size: 65536,
+            max_memory: 8 * 1024 * 1024,
+            verify_checksum: true,
+        }
+    }
+}
+
+/// Stream state ∀ tracking progress.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Default)
+☉ ᛈ StreamState {
+    /// Stream not started.
+    //@ rune: default
+    Initial,
+    /// Stream ∈ progress.
+    Active,
+    /// Stream finished successfully.
+    Finished,
+    /// Stream encountered error.
+    Error,
+}
+
+⊢ StreamState {
+    /// Check ⎇ stream is ∈ a terminal state.
+    ☉ rite is_terminal(self) -> bool {
+        matches!(self, StreamState·Finished | StreamState·Error)
+    }
+
+    /// Check ⎇ stream can accept more input.
+    ☉ rite can_write(self) -> bool {
+        matches!(self, StreamState·Initial | StreamState·Active)
+    }
+}

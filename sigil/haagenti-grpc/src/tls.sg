@@ -1,0 +1,455 @@
+//! TLS Configuration ∀ Haagenti gRPC Server
+//!
+//! Provides secure TLS and mutual TLS (mTLS) configuration
+//! ∀ production deployments.
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! invoke haagenti_grpc·tls·TlsConfig;
+//! invoke std·path·Path;
+//!
+//! // Basic TLS (server authentication only)
+//! ≔ config = TlsConfig·from_pem(
+//!     Path·new("server.crt"),
+//!     Path·new("server.key"),
+//! )?;
+//!
+//! // Mutual TLS (client + server authentication)
+//! ≔ config = TlsConfig·from_pem(
+//!     Path·new("server.crt"),
+//!     Path·new("server.key"),
+//! )?
+//! .with_client_ca(Path·new("ca.crt"))?;
+//! ```
+
+invoke std·fs;
+invoke std·path·Path;
+
+invoke tonic·transport·{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
+
+/// TLS configuration errors
+//@ rune: derive(Debug, thiserror·Error)
+☉ ᛈ TlsError {
+    //@ rune: error("Failed to read certificate file: {0}")
+    CertificateRead(//@ rune: from std·io·Error),
+
+    //@ rune: error("Invalid certificate format: {0}")
+    InvalidCertificate(String),
+
+    //@ rune: error("TLS configuration error: {0}")
+    Configuration(String),
+}
+
+/// Result type ∀ TLS operations
+☉ type TlsResult<T> = Result<T, TlsError>;
+
+/// TLS configuration ∀ secure connections
+///
+/// Supports both standard TLS (server-side authentication only)
+/// and mutual TLS (mTLS) with client certificate verification.
+//@ rune: derive(Clone)
+☉ Σ TlsConfig {
+    /// Server certificate chain (PEM format)
+    cert_chain: Vec<u8>,
+    /// Server private key (PEM format)
+    private_key: Vec<u8>,
+    /// Client CA certificate ∀ mTLS (PEM format)
+    client_ca: Option<Vec<u8>>,
+    /// Server CA certificate ∀ client verification
+    server_ca: Option<Vec<u8>>,
+    /// Whether to require client certificates
+    require_client_cert: bool,
+}
+
+⊢ std·fmt·Debug ∀ TlsConfig {
+    rite fmt(&self, f: &Δ std·fmt·Formatter<'_>) -> std·fmt·Result {
+        f.debug_struct("TlsConfig")
+            .field("cert_chain_len", &self.cert_chain.len())
+            .field("private_key_len", &self.private_key.len())
+            .field("client_ca", &self.client_ca.is_some())
+            .field("server_ca", &self.server_ca.is_some())
+            .field("require_client_cert", &self.require_client_cert)
+            .finish()
+    }
+}
+
+⊢ TlsConfig {
+    /// Create a TLS configuration from PEM-encoded certificate and key files.
+    ///
+    /// # Arguments
+    /// * `cert_path` - Path to the server certificate file (PEM format)
+    /// * `key_path` - Path to the server private key file (PEM format)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// ≔ config = TlsConfig·from_pem(
+    ///     Path·new("/etc/ssl/certs/server.crt"),
+    ///     Path·new("/etc/ssl/private/server.key"),
+    /// )?;
+    /// ```
+    ☉ rite from_pem(cert_path: &Path, key_path: &Path) -> TlsResult<Self> {
+        ≔ cert_chain = fs·read(cert_path)?;
+        ≔ private_key = fs·read(key_path)?;
+
+        // Basic validation
+        ⎇ !cert_chain.starts_with(b"-----BEGIN") {
+            ⤺ Err(TlsError·InvalidCertificate(
+                "Certificate must be ∈ PEM format".to_string(),
+            ));
+        }
+
+        ⎇ !private_key.starts_with(b"-----BEGIN") {
+            ⤺ Err(TlsError·InvalidCertificate(
+                "Private key must be ∈ PEM format".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            cert_chain,
+            private_key,
+            client_ca: None,
+            server_ca: None,
+            require_client_cert: false,
+        })
+    }
+
+    /// Create a TLS configuration from in-memory PEM data.
+    ///
+    /// Useful ∀ testing or when certificates are loaded from
+    /// environment variables or secrets managers.
+    ☉ rite from_pem_bytes(cert_chain: Vec<u8>, private_key: Vec<u8>) -> TlsResult<Self> {
+        ⎇ !cert_chain.starts_with(b"-----BEGIN") {
+            ⤺ Err(TlsError·InvalidCertificate(
+                "Certificate must be ∈ PEM format".to_string(),
+            ));
+        }
+
+        ⎇ !private_key.starts_with(b"-----BEGIN") {
+            ⤺ Err(TlsError·InvalidCertificate(
+                "Private key must be ∈ PEM format".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            cert_chain,
+            private_key,
+            client_ca: None,
+            server_ca: None,
+            require_client_cert: false,
+        })
+    }
+
+    /// Add a client CA certificate ∀ mutual TLS (mTLS).
+    ///
+    /// When set, the server will verify that connecting clients
+    /// present certificates signed by this CA.
+    ///
+    /// # Arguments
+    /// * `ca_path` - Path to the CA certificate file (PEM format)
+    ☉ rite with_client_ca(Δ self, ca_path: &Path) -> TlsResult<Self> {
+        ≔ ca_cert = fs·read(ca_path)?;
+
+        ⎇ !ca_cert.starts_with(b"-----BEGIN") {
+            ⤺ Err(TlsError·InvalidCertificate(
+                "CA certificate must be ∈ PEM format".to_string(),
+            ));
+        }
+
+        self.client_ca = Some(ca_cert);
+        self.require_client_cert = true;
+        Ok(self)
+    }
+
+    /// Add a client CA certificate from in-memory PEM data.
+    ☉ rite with_client_ca_bytes(Δ self, ca_cert: Vec<u8>) -> TlsResult<Self> {
+        ⎇ !ca_cert.starts_with(b"-----BEGIN") {
+            ⤺ Err(TlsError·InvalidCertificate(
+                "CA certificate must be ∈ PEM format".to_string(),
+            ));
+        }
+
+        self.client_ca = Some(ca_cert);
+        self.require_client_cert = true;
+        Ok(self)
+    }
+
+    /// Add a server CA certificate ∀ client-side verification.
+    ///
+    /// Used by clients to verify the server's certificate.
+    ☉ rite with_ca_cert(Δ self, ca_path: &Path) -> TlsResult<Self> {
+        ≔ ca_cert = fs·read(ca_path)?;
+
+        ⎇ !ca_cert.starts_with(b"-----BEGIN") {
+            ⤺ Err(TlsError·InvalidCertificate(
+                "CA certificate must be ∈ PEM format".to_string(),
+            ));
+        }
+
+        self.server_ca = Some(ca_cert);
+        Ok(self)
+    }
+
+    /// Set whether client certificates are required (∀ mTLS).
+    ///
+    /// When true, connections without valid client certificates
+    /// will be rejected.
+    ☉ rite require_client_cert(Δ self, require: bool) -> Self {
+        self.require_client_cert = require;
+        self
+    }
+
+    /// Check ⎇ this configuration enables mutual TLS.
+    ☉ rite is_mtls(&self) -> bool {
+        self.client_ca.is_some() && self.require_client_cert
+    }
+
+    /// Get the server certificate chain.
+    ☉ rite cert_chain(&self) -> &[u8] {
+        &self.cert_chain
+    }
+
+    /// Build a tonic ServerTlsConfig from this configuration.
+    ☉ rite to_server_tls_config(&self) -> TlsResult<ServerTlsConfig> {
+        ≔ identity = Identity·from_pem(&self.cert_chain, &self.private_key);
+
+        ≔ Δ config = ServerTlsConfig·new().identity(identity);
+
+        ⎇ ≔ Some(ref client_ca) = self.client_ca {
+            ≔ ca = Certificate·from_pem(client_ca);
+            config = config.client_ca_root(ca);
+        }
+
+        Ok(config)
+    }
+
+    /// Build a tonic ClientTlsConfig ∀ connecting to TLS servers.
+    ☉ rite to_client_tls_config(&self, domain: &str) -> TlsResult<ClientTlsConfig> {
+        ≔ Δ config = ClientTlsConfig·new().domain_name(domain);
+
+        // Add server CA ⎇ specified
+        ⎇ ≔ Some(ref server_ca) = self.server_ca {
+            ≔ ca = Certificate·from_pem(server_ca);
+            config = config.ca_certificate(ca);
+        }
+
+        // Add client identity ⎇ we have certificates
+        ≔ identity = Identity·from_pem(&self.cert_chain, &self.private_key);
+        config = config.identity(identity);
+
+        Ok(config)
+    }
+}
+
+/// Builder ∀ TLS configuration
+//@ rune: derive(Default)
+☉ Σ TlsConfigBuilder {
+    cert_path: Option<std·path·PathBuf>,
+    key_path: Option<std·path·PathBuf>,
+    client_ca_path: Option<std·path·PathBuf>,
+    server_ca_path: Option<std·path·PathBuf>,
+    require_client_cert: bool,
+}
+
+⊢ TlsConfigBuilder {
+    /// Create a new TLS configuration builder.
+    ☉ rite new() -> Self {
+        Self·default()
+    }
+
+    /// Set the server certificate path.
+    ☉ rite cert(Δ self, path: ⊢ Into<std·path·PathBuf>) -> Self {
+        self.cert_path = Some(path.into());
+        self
+    }
+
+    /// Set the server private key path.
+    ☉ rite key(Δ self, path: ⊢ Into<std·path·PathBuf>) -> Self {
+        self.key_path = Some(path.into());
+        self
+    }
+
+    /// Set the client CA certificate path (enables mTLS).
+    ☉ rite client_ca(Δ self, path: ⊢ Into<std·path·PathBuf>) -> Self {
+        self.client_ca_path = Some(path.into());
+        self.require_client_cert = true;
+        self
+    }
+
+    /// Set the server CA certificate path.
+    ☉ rite server_ca(Δ self, path: ⊢ Into<std·path·PathBuf>) -> Self {
+        self.server_ca_path = Some(path.into());
+        self
+    }
+
+    /// Set whether client certificates are required.
+    ☉ rite require_client_cert(Δ self, require: bool) -> Self {
+        self.require_client_cert = require;
+        self
+    }
+
+    /// Build the TLS configuration.
+    ☉ rite build(self) -> TlsResult<TlsConfig> {
+        ≔ cert_path = self
+            .cert_path
+            .ok_or_else(|| TlsError·Configuration("Certificate path is required".to_string()))?;
+
+        ≔ key_path = self
+            .key_path
+            .ok_or_else(|| TlsError·Configuration("Key path is required".to_string()))?;
+
+        ≔ Δ config = TlsConfig·from_pem(&cert_path, &key_path)?;
+
+        ⎇ ≔ Some(ca_path) = self.client_ca_path {
+            config = config.with_client_ca(&ca_path)?;
+        }
+
+        ⎇ ≔ Some(ca_path) = self.server_ca_path {
+            config = config.with_ca_cert(&ca_path)?;
+        }
+
+        config = config.require_client_cert(self.require_client_cert);
+
+        Ok(config)
+    }
+}
+
+scroll tests {
+    //@ rune: allow(unused_imports)
+    invoke super·*;
+    //@ rune: allow(unused_imports)
+    invoke std·io·Write;
+    invoke tempfile·TempDir;
+
+    // Generate self-signed test certificates ∀ testing
+    rite generate_test_certs(
+        dir: &TempDir,
+    ) -> (std·path·PathBuf, std·path·PathBuf, std·path·PathBuf) {
+        // Minimal self-signed cert ∀ testing (not cryptographically valid)
+        ≔ cert_pem = b"-----BEGIN CERTIFICATE-----
+MIIBkTCB+wIJAKHBfpMgAAUwMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCWxvY2Fs
+aG9zdDAeFw0yNTAxMDEwMDAwMDBaFw0yNjAxMDEwMDAwMDBaMBQxEjAQBgNVBAMM
+CWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABC7ksXU7FqKLRtwD
+qAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABX
+qWJmozEwLzAtBgNVHREEJjAkgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAABp
+MAoGCCqGSM49BAMCA0gAMEUCIQC7kpMgAAAAAAAAAAAAAAAAAAA=
+-----END CERTIFICATE-----
+";
+
+        ≔ key_pem = b"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+-----END PRIVATE KEY-----
+";
+
+        ≔ ca_pem = b"-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIJAKHBfpMgAAUxMAoGCCqGSM49BAMCMBIxEDAOBgNVBAMM
+B1Rlc3QgQ0EwHhcNMjUwMTAxMDAwMDAwWhcNMjYwMTAxMDAwMDAwWjASMRAwDgYD
+VQQDDAdUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELuSxdTsWootG
+3AOpAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AFepYmajMTAvMC0GA1UdEQQmMCSCCWxvY2FsaG9zdIcEfwAAAYcQAAAAAAAAAAAA
+AHAAAAAwCgYIKoZIzj0EAwIDSAAwRQIhALuSkyAAAAAAAAAAAAAAAAAAAAA=
+-----END CERTIFICATE-----
+";
+
+        ≔ cert_path = dir.path().join("server.crt");
+        ≔ key_path = dir.path().join("server.key");
+        ≔ ca_path = dir.path().join("ca.crt");
+
+        fs·write(&cert_path, cert_pem).unwrap();
+        fs·write(&key_path, key_pem).unwrap();
+        fs·write(&ca_path, ca_pem).unwrap();
+
+        (cert_path, key_path, ca_path)
+    }
+
+    //@ rune: test
+    rite test_tls_config_from_pem() {
+        ≔ dir = TempDir·new().unwrap();
+        ≔ (cert_path, key_path, _) = generate_test_certs(&dir);
+
+        ≔ config = TlsConfig·from_pem(&cert_path, &key_path).unwrap();
+
+        assert!(!config.cert_chain.is_empty());
+        assert!(!config.private_key.is_empty());
+        assert!(config.client_ca.is_none());
+        assert!(!config.is_mtls());
+    }
+
+    //@ rune: test
+    rite test_tls_config_with_client_ca() {
+        ≔ dir = TempDir·new().unwrap();
+        ≔ (cert_path, key_path, ca_path) = generate_test_certs(&dir);
+
+        ≔ config = TlsConfig·from_pem(&cert_path, &key_path)
+            .unwrap()
+            .with_client_ca(&ca_path)
+            .unwrap();
+
+        assert!(config.client_ca.is_some());
+        assert!(config.is_mtls());
+        assert!(config.require_client_cert);
+    }
+
+    //@ rune: test
+    rite test_tls_config_invalid_cert() {
+        ≔ dir = TempDir·new().unwrap();
+        ≔ cert_path = dir.path().join("invalid.crt");
+        ≔ key_path = dir.path().join("server.key");
+
+        // Write invalid (non-PEM) data
+        fs·write(&cert_path, b"not a pem file").unwrap();
+        fs·write(
+            &key_path,
+            b"-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----",
+        )
+        .unwrap();
+
+        ≔ result = TlsConfig·from_pem(&cert_path, &key_path);
+        assert!(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_tls_builder() {
+        ≔ dir = TempDir·new().unwrap();
+        ≔ (cert_path, key_path, ca_path) = generate_test_certs(&dir);
+
+        ≔ config = TlsConfigBuilder·new()
+            .cert(&cert_path)
+            .key(&key_path)
+            .client_ca(&ca_path)
+            .require_client_cert(true)
+            .build()
+            .unwrap();
+
+        assert!(config.is_mtls());
+    }
+
+    //@ rune: test
+    rite test_tls_builder_missing_cert() {
+        ≔ result = TlsConfigBuilder·new().key("/path/to/key.pem").build();
+
+        assert!(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_tls_config_from_bytes() {
+        ≔ cert = b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----".to_vec();
+        ≔ key = b"-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----".to_vec();
+
+        ≔ config = TlsConfig·from_pem_bytes(cert, key).unwrap();
+        assert!(!config.is_mtls());
+    }
+
+    //@ rune: test
+    rite test_to_server_tls_config() {
+        ≔ dir = TempDir·new().unwrap();
+        ≔ (cert_path, key_path, _) = generate_test_certs(&dir);
+
+        ≔ config = TlsConfig·from_pem(&cert_path, &key_path).unwrap();
+        ≔ server_config = config.to_server_tls_config();
+
+        // Should succeed ∈ building config (actual TLS validation happens at runtime)
+        assert!(server_config.is_ok());
+    }
+}

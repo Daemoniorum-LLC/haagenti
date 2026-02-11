@@ -87,6 +87,94 @@ for test_file in "$SCRIPT_DIR"/haagenti-hct/tests/*.sg; do
     fi
 done
 
+echo ""
+echo -e "${BLUE}Running haagenti-lz4 tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-lz4/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-brotli tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-brotli/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-simd tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-simd/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-stream tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-stream/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-adaptive tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-adaptive/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-grpc tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-grpc/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-latent-cache tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-latent-cache/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-zstd tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-zstd/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-deflate tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-deflate/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-neural tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-neural/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
+echo ""
+echo -e "${BLUE}Running haagenti-sparse tests...${NC}"
+for test_file in "$SCRIPT_DIR"/haagenti-sparse/tests/*.sg; do
+    if [ -f "$test_file" ]; then
+        run_test "$test_file"
+    fi
+done
+
 # Summary
 echo ""
 echo -e "${BLUE}════════════════════════════════════════════════${NC}"

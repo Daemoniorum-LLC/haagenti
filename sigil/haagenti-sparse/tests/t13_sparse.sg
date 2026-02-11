@@ -1,0 +1,370 @@
+//! haagenti-sparse test suite
+//! Tests for sparse attention masks and predictors
+
+// ════════════════════════════════════════════════════════════════════════════
+// Constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite default_sparsity() → f32 { 0.5 }
+rite min_active_heads() → i64 { 4 }
+rite max_quality_loss() → f32 { 0.02 }
+rite default_num_heads() → i64 { 32 }
+rite default_num_layers() → i64 { 64 }
+
+// Prompt categories
+rite PROMPT_PORTRAIT() → i64 { 0 }
+rite PROMPT_LANDSCAPE() → i64 { 1 }
+rite PROMPT_ABSTRACT() → i64 { 2 }
+rite PROMPT_TECHNICAL() → i64 { 3 }
+rite PROMPT_GENERAL() → i64 { 4 }
+
+// Head categories
+rite HEAD_FACE() → i64 { 0 }
+rite HEAD_BACKGROUND() → i64 { 1 }
+rite HEAD_STYLE() → i64 { 2 }
+rite HEAD_DETAIL() → i64 { 3 }
+rite HEAD_GLOBAL() → i64 { 4 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Prompt Category Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite detect_prompt_category(prompt: &String) → i64 {
+    ⎇ prompt.contains("portrait") || prompt.contains("face") || prompt.contains("person") {
+        PROMPT_PORTRAIT()
+    } ⎉ ⎇ prompt.contains("landscape") || prompt.contains("mountain") || prompt.contains("nature") {
+        PROMPT_LANDSCAPE()
+    } ⎉ ⎇ prompt.contains("abstract") || prompt.contains("artistic") {
+        PROMPT_ABSTRACT()
+    } ⎉ ⎇ prompt.contains("technical") || prompt.contains("diagram") {
+        PROMPT_TECHNICAL()
+    } ⎉ {
+        PROMPT_GENERAL()
+    }
+}
+
+rite typical_sparsity(category: i64) → f32 {
+    ⎇ category == PROMPT_PORTRAIT() { 0.65 }
+    ⎉ ⎇ category == PROMPT_LANDSCAPE() { 0.55 }
+    ⎉ ⎇ category == PROMPT_ABSTRACT() { 0.40 }
+    ⎉ ⎇ category == PROMPT_TECHNICAL() { 0.35 }
+    ⎉ { 0.50 }
+}
+
+rite test_prompt_detection() {
+    ≔ portrait = detect_prompt_category(&"portrait of a woman".to_string());
+    assert_eq(portrait, PROMPT_PORTRAIT());
+
+    ≔ landscape = detect_prompt_category(&"mountain landscape at sunset".to_string());
+    assert_eq(landscape, PROMPT_LANDSCAPE());
+
+    ≔ abstract_prompt = detect_prompt_category(&"abstract colorful swirls".to_string());
+    assert_eq(abstract_prompt, PROMPT_ABSTRACT());
+
+    ≔ general = detect_prompt_category(&"a cat on a table".to_string());
+    assert_eq(general, PROMPT_GENERAL());
+
+    println("prompt_detection: PASS");
+}
+
+rite test_typical_sparsity() {
+    assert(typical_sparsity(PROMPT_PORTRAIT()) > 0.6);
+    assert(typical_sparsity(PROMPT_TECHNICAL()) < 0.4);
+    assert(typical_sparsity(PROMPT_GENERAL()) > 0.49 && typical_sparsity(PROMPT_GENERAL()) < 0.51);
+
+    println("typical_sparsity: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Head Importance Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+rite head_importance(head_cat: i64, prompt_cat: i64) → f32 {
+    ⎇ head_cat == HEAD_FACE() && prompt_cat == PROMPT_PORTRAIT() { 1.0 }
+    ⎉ ⎇ head_cat == HEAD_FACE() { 0.3 }
+    ⎉ ⎇ head_cat == HEAD_BACKGROUND() && prompt_cat == PROMPT_LANDSCAPE() { 1.0 }
+    ⎉ ⎇ head_cat == HEAD_BACKGROUND() { 0.4 }
+    ⎉ ⎇ head_cat == HEAD_STYLE() && prompt_cat == PROMPT_ABSTRACT() { 1.0 }
+    ⎉ ⎇ head_cat == HEAD_STYLE() { 0.5 }
+    ⎉ ⎇ head_cat == HEAD_DETAIL() && prompt_cat == PROMPT_TECHNICAL() { 1.0 }
+    ⎉ ⎇ head_cat == HEAD_DETAIL() { 0.6 }
+    ⎉ ⎇ head_cat == HEAD_GLOBAL() { 0.8 }
+    ⎉ { 0.5 }
+}
+
+rite test_head_importance() {
+    // Face heads very important for portraits
+    assert(head_importance(HEAD_FACE(), PROMPT_PORTRAIT()) > 0.9);
+
+    // Face heads less important for landscapes
+    assert(head_importance(HEAD_FACE(), PROMPT_LANDSCAPE()) < 0.5);
+
+    // Background heads important for landscapes
+    assert(head_importance(HEAD_BACKGROUND(), PROMPT_LANDSCAPE()) > 0.9);
+
+    // Global heads always moderately important
+    assert(head_importance(HEAD_GLOBAL(), PROMPT_PORTRAIT()) > 0.7);
+    assert(head_importance(HEAD_GLOBAL(), PROMPT_LANDSCAPE()) > 0.7);
+
+    println("head_importance: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AttentionMask Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ AttentionMask {
+    data: Vec<Vec<bool>>,
+    num_layers: i64,
+    num_heads: i64,
+    active_count: i64,
+}
+
+rite full_mask(num_layers: i64, num_heads: i64) → AttentionMask {
+    ≔ Δ data = Vec·new();
+
+    ≔ Δ l = 0;
+    ⟳ l < num_layers {
+        ≔ Δ layer = Vec·new();
+        ≔ Δ h = 0;
+        ⟳ h < num_heads {
+            layer.push(true);
+            h = h + 1;
+        }
+        data.push(layer);
+        l = l + 1;
+    }
+
+    AttentionMask {
+        data: data,
+        num_layers: num_layers,
+        num_heads: num_heads,
+        active_count: num_layers * num_heads,
+    }
+}
+
+rite empty_mask(num_layers: i64, num_heads: i64) → AttentionMask {
+    ≔ Δ data = Vec·new();
+
+    ≔ Δ l = 0;
+    ⟳ l < num_layers {
+        ≔ Δ layer = Vec·new();
+        ≔ Δ h = 0;
+        ⟳ h < num_heads {
+            layer.push(false);
+            h = h + 1;
+        }
+        data.push(layer);
+        l = l + 1;
+    }
+
+    AttentionMask {
+        data: data,
+        num_layers: num_layers,
+        num_heads: num_heads,
+        active_count: 0,
+    }
+}
+
+rite is_active(mask: &AttentionMask, layer: i64, head: i64) → bool {
+    ⎇ layer < 0 || layer >= mask.num_layers { ⤺ false; }
+    ⎇ head < 0 || head >= mask.num_heads { ⤺ false; }
+    mask.data[layer as usize][head as usize]
+}
+
+rite set_active(mask: &Δ AttentionMask, layer: i64, head: i64, active: bool) {
+    ⎇ layer < 0 || layer >= mask.num_layers { ⤺; }
+    ⎇ head < 0 || head >= mask.num_heads { ⤺; }
+
+    ≔ was_active = mask.data[layer as usize][head as usize];
+    mask.data[layer as usize][head as usize] = active;
+
+    ⎇ was_active && !active {
+        mask.active_count = mask.active_count - 1;
+    } ⎉ ⎇ !was_active && active {
+        mask.active_count = mask.active_count + 1;
+    }
+}
+
+rite mask_sparsity(mask: &AttentionMask) → f32 {
+    ≔ total = (mask.num_layers * mask.num_heads) as f32;
+    ⎇ total > 0.0 {
+        1.0 - mask.active_count as f32 / total
+    } ⎉ {
+        0.0
+    }
+}
+
+rite compute_saved(mask: &AttentionMask) → f32 {
+    mask_sparsity(mask) * 100.0
+}
+
+rite test_full_mask() {
+    ≔ mask = full_mask(8, 16);
+
+    assert_eq(mask.num_layers, 8);
+    assert_eq(mask.num_heads, 16);
+    assert_eq(mask.active_count, 128);
+    assert(is_active(&mask, 0, 0));
+    assert(is_active(&mask, 7, 15));
+    assert(mask_sparsity(&mask) < 0.01);
+
+    println("full_mask: PASS");
+}
+
+rite test_empty_mask() {
+    ≔ mask = empty_mask(8, 16);
+
+    assert_eq(mask.active_count, 0);
+    assert(!is_active(&mask, 0, 0));
+    assert(mask_sparsity(&mask) > 0.99);
+
+    println("empty_mask: PASS");
+}
+
+rite test_mask_set_active() {
+    ≔ Δ mask = full_mask(4, 4);
+
+    // All active initially
+    assert_eq(mask.active_count, 16);
+
+    // Disable some heads
+    set_active(&Δ mask, 0, 0, false);
+    set_active(&Δ mask, 0, 1, false);
+    set_active(&Δ mask, 1, 0, false);
+
+    assert_eq(mask.active_count, 13);
+    assert(!is_active(&mask, 0, 0));
+    assert(is_active(&mask, 0, 2));
+
+    // Re-enable one
+    set_active(&Δ mask, 0, 0, true);
+    assert_eq(mask.active_count, 14);
+
+    println("mask_set_active: PASS");
+}
+
+rite test_compute_saved() {
+    ≔ Δ mask = full_mask(4, 4);
+
+    // Disable half
+    ≔ Δ l = 0;
+    ⟳ l < 4 {
+        ≔ Δ h = 0;
+        ⟳ h < 2 {
+            set_active(&Δ mask, l, h, false);
+            h = h + 1;
+        }
+        l = l + 1;
+    }
+
+    ≔ saved = compute_saved(&mask);
+    // Half disabled = 50% saved
+    assert(saved > 49.0 && saved < 51.0);
+
+    println("compute_saved: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MaskBuilder Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ MaskBuilder {
+    num_layers: i64,
+    num_heads: i64,
+    target_sparsity: f32,
+    min_active: i64,
+}
+
+rite new_mask_builder() → MaskBuilder {
+    MaskBuilder {
+        num_layers: 64,
+        num_heads: 32,
+        target_sparsity: 0.5,
+        min_active: 4,
+    }
+}
+
+rite test_mask_builder_defaults() {
+    ≔ builder = new_mask_builder();
+
+    assert_eq(builder.num_layers, 64);
+    assert_eq(builder.num_heads, 32);
+    assert(builder.target_sparsity > 0.49 && builder.target_sparsity < 0.51);
+    assert_eq(builder.min_active, 4);
+
+    println("mask_builder_defaults: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Kernel Stats Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ KernelStats {
+    total_flops: i64,
+    saved_flops: i64,
+    active_heads: i64,
+    total_heads: i64,
+}
+
+rite new_kernel_stats(active: i64, total: i64) → KernelStats {
+    KernelStats {
+        total_flops: total * 1000000,  // Simplified: 1M FLOPs per head
+        saved_flops: (total - active) * 1000000,
+        active_heads: active,
+        total_heads: total,
+    }
+}
+
+rite stats_efficiency(stats: &KernelStats) → f32 {
+    ⎇ stats.total_flops > 0 {
+        stats.saved_flops as f32 / stats.total_flops as f32
+    } ⎉ {
+        0.0
+    }
+}
+
+rite test_kernel_stats() {
+    ≔ stats = new_kernel_stats(50, 100);
+
+    assert_eq(stats.active_heads, 50);
+    assert_eq(stats.total_heads, 100);
+
+    ≔ eff = stats_efficiency(&stats);
+    assert(eff > 0.49 && eff < 0.51);
+
+    println("kernel_stats: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-sparse Tests                      ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    // Prompt category tests
+    test_prompt_detection();
+    test_typical_sparsity();
+
+    // Head importance tests
+    test_head_importance();
+
+    // Mask tests
+    test_full_mask();
+    test_empty_mask();
+    test_mask_set_active();
+    test_compute_saved();
+
+    // Builder tests
+    test_mask_builder_defaults();
+
+    // Kernel stats tests
+    test_kernel_stats();
+
+    println("");
+    println("All tests passed!");
+}

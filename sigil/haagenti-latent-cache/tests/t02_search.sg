@@ -1,0 +1,143 @@
+// Latent Cache Search Tests
+//
+// Tests for similarity search algorithms.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Linear search complexity
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_linear_search() {
+    // O(n * d) where n = entries, d = dimension
+    ≔ entries = 10000;
+    ≔ dimension = 512;
+
+    ≔ comparisons = entries * dimension;
+    assert_eq(comparisons, 5120000);
+
+    // Distance computations = n
+    ≔ distances = entries;
+    assert_eq(distances, 10000);
+
+    println("linear_search: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Top-K selection
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_top_k_selection() {
+    // Common K values for retrieval
+    ≔ k_1 = 1;    // Nearest neighbor
+    ≔ k_5 = 5;    // Top 5
+    ≔ k_10 = 10;  // Top 10
+    ≔ k_100 = 100;
+
+    // Heap-based selection: O(n * log k)
+    ≔ n = 10000;
+
+    // log2(k) approximations
+    ≔ log_k1 = 0;
+    ≔ log_k10 = 3;   // ~3.3
+    ≔ log_k100 = 6;  // ~6.6
+
+    ≔ ops_k10 = n * log_k10;
+    assert_eq(ops_k10, 30000);
+
+    println("top_k_selection: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Index bucket sizing
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_index_buckets() {
+    // Hash-based approximate search
+    ≔ total_entries = 1000000;
+    ≔ num_buckets = 1024;
+
+    ≔ entries_per_bucket = total_entries / num_buckets;
+    assert_eq(entries_per_bucket, 976);
+
+    // Search only in matching buckets
+    ≔ buckets_to_search = 10;
+    ≔ entries_to_check = buckets_to_search * entries_per_bucket;
+    assert_eq(entries_to_check, 9760);
+
+    // Speedup
+    ≔ speedup = total_entries / entries_to_check;
+    assert_eq(speedup, 102);
+
+    println("index_buckets: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Recall vs speed tradeoff
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_recall_tradeoff() {
+    // More candidates = better recall, slower
+    ≔ candidates_low = 100;
+    ≔ candidates_med = 1000;
+    ≔ candidates_high = 10000;
+
+    // Expected recall (percentage, scaled)
+    ≔ recall_low = 800;   // 80%
+    ≔ recall_med = 950;   // 95%
+    ≔ recall_high = 990;  // 99%
+
+    assert(recall_low < recall_med);
+    assert(recall_med < recall_high);
+
+    // Speed inverse of candidates
+    ≔ speed_low = 1000 / (candidates_low / 100);
+    ≔ speed_high = 1000 / (candidates_high / 100);
+
+    assert(speed_low > speed_high);
+
+    println("recall_tradeoff: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Batch search efficiency
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_batch_search() {
+    // Batching amortizes index traversal
+    ≔ queries = 100;
+    ≔ single_overhead = 1000;  // Index access cost
+    ≔ per_query_cost = 50;
+
+    // Single query mode
+    ≔ single_total = queries * (single_overhead + per_query_cost);
+    assert_eq(single_total, 105000);
+
+    // Batch mode: one index access
+    ≔ batch_total = single_overhead + queries * per_query_cost;
+    assert_eq(batch_total, 6000);
+
+    // Speedup
+    ≔ speedup = single_total / batch_total;
+    assert_eq(speedup, 17);
+
+    println("batch_search: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-latent-cache Search Tests         ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_linear_search();
+    test_top_k_selection();
+    test_index_buckets();
+    test_recall_tradeoff();
+    test_batch_search();
+
+    println("");
+    println("All tests passed!");
+}

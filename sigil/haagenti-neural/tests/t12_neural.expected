@@ -1,0 +1,21 @@
+╔════════════════════════════════════════════════╗
+║     haagenti-neural Tests                      ║
+╚════════════════════════════════════════════════╝
+
+layer_codebook_sizes: PASS
+layer_bits: PASS
+layer_from_name: PASS
+config_defaults: PASS
+config_for_layer: PASS
+stats_new: PASS
+stats_utilization: PASS
+codebook_creation: PASS
+codebook_memory: PASS
+codebook_get_set: PASS
+squared_distance: PASS
+nct_header: PASS
+encoder_config_defaults: PASS
+compression_ratio: PASS
+size_estimation: PASS
+
+All tests passed!

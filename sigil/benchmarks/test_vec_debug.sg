@@ -1,0 +1,33 @@
+// Debug Vec operations
+
+rite main() {
+    println("=== Vec Debug ===");
+
+    // Create vec
+    ≔ Δ v = Vec·new();
+    print("After new, v = ");
+    println(v as i64);
+
+    // Push values
+    v.push(100);
+    print("After push(100), len = ");
+    println(v.len());
+
+    v.push(200);
+    print("After push(200), len = ");
+    println(v.len());
+
+    v.push(300);
+    print("After push(300), len = ");
+    println(v.len());
+
+    // Get values
+    print("v[0] = ");
+    println(v.get(0));
+    print("v[1] = ");
+    println(v.get(1));
+    print("v[2] = ");
+    println(v.get(2));
+
+    println("=== Done ===");
+}

@@ -1,0 +1,273 @@
+//! Neural encoder ∀ compressing model weights
+
+invoke tome·{Codebook, LayerCodebook, LayerType, NeuralError, Result};
+invoke serde·{Deserialize, Serialize};
+
+/// Configuration ∀ the encoder
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ EncoderConfig {
+    /// Target compression ratio
+    ☉ target_ratio: f32,
+    /// Maximum quality loss allowed
+    ☉ max_quality_loss: f32,
+    /// Whether to invoke residual encoding
+    ☉ use_residual: bool,
+    /// Residual quantization bits
+    ☉ residual_bits: u8,
+    /// Batch size ∀ encoding
+    ☉ batch_size: usize,
+}
+
+⊢ Default ∀ EncoderConfig {
+    rite default() -> Self {
+        Self {
+            target_ratio: 10.0,
+            max_quality_loss: 0.01,
+            use_residual: true,
+            residual_bits: 4,
+            batch_size: 1024,
+        }
+    }
+}
+
+/// Encoded tensor data
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ EncodedTensor {
+    /// Original tensor name
+    ☉ name: String,
+    /// Original shape
+    ☉ shape: Vec<usize>,
+    /// Original dtype
+    ☉ dtype: String,
+    /// Layer type ∀ codebook selection
+    ☉ layer_type: LayerType,
+    /// Quantized indices
+    ☉ indices: Vec<u16>,
+    /// Residual data (⎇ enabled)
+    ☉ residuals: Option<Vec<i8>>,
+    /// Scale factor ∀ residuals
+    ☉ residual_scale: f32,
+    /// Compression statistics
+    ☉ stats: EncodingStats,
+}
+
+/// Statistics from encoding
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ EncodingStats {
+    /// Mean squared error
+    ☉ mse: f32,
+    /// Peak signal-to-noise ratio
+    ☉ psnr: f32,
+    /// Compression ratio achieved
+    ☉ compression_ratio: f32,
+    /// Original size ∈ bytes
+    ☉ original_size: usize,
+    /// Compressed size ∈ bytes
+    ☉ compressed_size: usize,
+}
+
+/// Neural encoder ∀ model compression
+//@ rune: derive(Debug)
+☉ Σ NeuralEncoder {
+    config: EncoderConfig,
+    codebooks: LayerCodebook,
+}
+
+⊢ NeuralEncoder {
+    /// Create a new encoder with codebooks
+    ☉ rite new(config: EncoderConfig, codebooks: LayerCodebook) -> Self {
+        Self { config, codebooks }
+    }
+
+    /// Encode a single tensor
+    ☉ rite encode_tensor(
+        &self,
+        name: &str,
+        data: &[f32],
+        shape: &[usize],
+        layer_type: LayerType,
+    ) -> Result<EncodedTensor> {
+        ≔ codebook = self
+            .codebooks
+            .get(layer_type)
+            .ok_or_else(|| NeuralError·CodebookNotFound(format!("{:?}", layer_type)))?;
+
+        ≔ dim = codebook.config.centroid_dim;
+        ≔ num_vectors = data.len() / dim;
+
+        ⎇ !data.len().is_multiple_of(dim) {
+            ⤺ Err(NeuralError·DimensionMismatch {
+                expected: (num_vectors + 1) * dim,
+                actual: data.len(),
+            });
+        }
+
+        // Encode to indices
+        ≔ indices = codebook.encode_batch(data, dim)?;
+
+        // Compute residuals ⎇ enabled
+        ≔ (residuals, residual_scale) = ⎇ self.config.use_residual {
+            self.compute_residuals(data, &indices, codebook)
+        } ⎉ {
+            (None, 0.0)
+        };
+
+        // Compute statistics
+        ≔ reconstructed = codebook.decode_batch(&indices);
+        ≔ mse = self.compute_mse(data, &reconstructed);
+        ≔ psnr = self.compute_psnr(mse);
+
+        ≔ original_size = data.len() * 4; // FP32
+        ≔ index_size = indices.len() * 2; // U16
+        ≔ residual_size = residuals.as_ref().map(|r| r.len()).unwrap_or(0);
+        ≔ compressed_size = index_size + residual_size;
+
+        ≔ stats = EncodingStats {
+            mse,
+            psnr,
+            compression_ratio: original_size as f32 / compressed_size as f32,
+            original_size,
+            compressed_size,
+        };
+
+        Ok(EncodedTensor {
+            name: name.to_string(),
+            shape: shape.to_vec(),
+            dtype: "float32".to_string(),
+            layer_type,
+            indices,
+            residuals,
+            residual_scale,
+            stats,
+        })
+    }
+
+    /// Compute residuals between original and quantized
+    rite compute_residuals(
+        &self,
+        original: &[f32],
+        indices: &[u16],
+        codebook: &Codebook,
+    ) -> (Option<Vec<i8>>, f32) {
+        ≔ reconstructed = codebook.decode_batch(indices);
+
+        // Compute difference
+        ≔ residuals: Vec<f32> = original
+            .iter()
+            .zip(reconstructed.iter())
+            .map(|(o, r)| o - r)
+            .collect();
+
+        // Find scale to fit ∈ i8 range
+        ≔ max_abs = residuals.iter().map(|r| r.abs()).fold(0.0f32, f32·max);
+
+        ⎇ max_abs < 1e-6 {
+            ⤺ (None, 0.0);
+        }
+
+        ≔ scale = max_abs / 127.0;
+
+        // Quantize residuals to i8
+        ≔ quantized: Vec<i8> = residuals
+            .iter()
+            .map(|r| (r / scale).clamp(-127.0, 127.0) as i8)
+            .collect();
+
+        (Some(quantized), scale)
+    }
+
+    /// Compute mean squared error
+    rite compute_mse(&self, original: &[f32], reconstructed: &[f32]) -> f32 {
+        ⎇ original.len() != reconstructed.len() || original.is_empty() {
+            ⤺ f32·INFINITY;
+        }
+
+        ≔ sum: f32 = original
+            .iter()
+            .zip(reconstructed.iter())
+            .map(|(o, r)| (o - r).powi(2))
+            .sum();
+
+        sum / original.len() as f32
+    }
+
+    /// Compute PSNR from MSE
+    rite compute_psnr(&self, mse: f32) -> f32 {
+        ⎇ mse < 1e-10 {
+            ⤺ 100.0; // Perfect reconstruction
+        }
+        10.0 * (1.0 / mse).log10()
+    }
+
+    /// Encode multiple tensors
+    ☉ rite encode_tensors(
+        &self,
+        tensors: &[(String, Vec<f32>, Vec<usize>, LayerType)],
+    ) -> Result<Vec<EncodedTensor>> {
+        tensors
+            .iter()
+            .map(|(name, data, shape, layer_type)| {
+                self.encode_tensor(name, data, shape, *layer_type)
+            })
+            .collect()
+    }
+
+    /// Get encoder configuration
+    ☉ rite config(&self) -> &EncoderConfig {
+        &self.config
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_encode_tensor() {
+        ≔ codebooks = LayerCodebook·with_defaults("test");
+        ≔ encoder = NeuralEncoder·new(EncoderConfig·default(), codebooks);
+
+        // Create test data matching centroid dimension (64 ∀ QK)
+        ≔ data: Vec<f32> = (0..640).map(|i| (i as f32 / 640.0) - 0.5).collect();
+        ≔ shape = vec![10, 64];
+
+        ≔ encoded = encoder
+            .encode_tensor("test.weight", &data, &shape, LayerType·AttentionQK)
+            .unwrap();
+
+        assert_eq!(encoded.name, "test.weight");
+        assert_eq!(encoded.indices.len(), 10);
+        assert!(encoded.stats.compression_ratio > 1.0);
+    }
+
+    //@ rune: test
+    rite test_residual_encoding() {
+        ≔ config = EncoderConfig {
+            use_residual: true,
+            ..Default·default()
+        };
+
+        ≔ codebooks = LayerCodebook·with_defaults("test");
+        ≔ encoder = NeuralEncoder·new(config, codebooks);
+
+        ≔ data: Vec<f32> = (0..640).map(|i| (i as f32 / 640.0) - 0.5).collect();
+        ≔ shape = vec![10, 64];
+
+        ≔ encoded = encoder
+            .encode_tensor("test.weight", &data, &shape, LayerType·AttentionQK)
+            .unwrap();
+
+        assert!(encoded.residuals.is_some());
+        assert!(encoded.residual_scale > 0.0);
+    }
+
+    //@ rune: test
+    rite test_psnr_calculation() {
+        ≔ codebooks = LayerCodebook·with_defaults("test");
+        ≔ encoder = NeuralEncoder·new(EncoderConfig·default(), codebooks);
+
+        // Low MSE should give high PSNR (MSE=0.001 -> PSNR=30.0)
+        assert!(encoder.compute_psnr(0.001) >= 30.0);
+        // High MSE should give low PSNR
+        assert!(encoder.compute_psnr(0.1) < 20.0);
+    }
+}

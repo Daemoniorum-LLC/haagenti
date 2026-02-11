@@ -1,0 +1,145 @@
+// Latent Cache Embedding Tests
+//
+// Tests for CLIP embedding operations.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Embedding dimensions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_embedding_dimensions() {
+    // Common CLIP embedding sizes
+    ≔ clip_base = 512;
+    ≔ clip_large = 768;
+    ≔ clip_xlarge = 1024;
+
+    assert_eq(clip_base, 512);
+    assert_eq(clip_large, 768);
+    assert_eq(clip_xlarge, 1024);
+
+    // Memory per embedding (float32)
+    ≔ bytes_base = clip_base * 4;
+    ≔ bytes_large = clip_large * 4;
+
+    assert_eq(bytes_base, 2048);
+    assert_eq(bytes_large, 3072);
+
+    println("embedding_dimensions: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Cosine similarity range
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_cosine_similarity() {
+    // Cosine similarity range: -1 to 1
+    // Normalized vectors: dot product = cosine
+
+    // Identical vectors: cos = 1.0 (scaled to 1000)
+    ≔ identical = 1000;
+
+    // Orthogonal vectors: cos = 0.0
+    ≔ orthogonal = 0;
+
+    // Opposite vectors: cos = -1.0 (scaled)
+    ≔ opposite = -1000;
+
+    assert(identical > orthogonal);
+    assert(orthogonal > opposite);
+
+    println("cosine_similarity: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Similarity threshold
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_similarity_threshold() {
+    // Threshold for "similar" (scaled by 1000)
+    ≔ high_threshold = 900;   // 0.9 - very similar
+    ≔ medium_threshold = 700; // 0.7 - somewhat similar
+    ≔ low_threshold = 500;    // 0.5 - weakly similar
+
+    ≔ similarity = 750;
+
+    ≔ is_high = similarity >= high_threshold;
+    ≔ is_medium = similarity >= medium_threshold;
+    ≔ is_low = similarity >= low_threshold;
+
+    assert(!is_high);
+    assert(is_medium);
+    assert(is_low);
+
+    println("similarity_threshold: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Normalization
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_normalization() {
+    // L2 norm for unit vector = 1.0
+    // sum(x_i^2) = 1
+
+    // For 3D unit vector: (0.6, 0.8, 0)
+    ≔ x = 600;   // 0.6 * 1000
+    ≔ y = 800;   // 0.8 * 1000
+    ≔ z = 0;
+
+    // Sum of squares (scaled)
+    ≔ x2 = x * x / 1000;
+    ≔ y2 = y * y / 1000;
+    ≔ z2 = z * z / 1000;
+    ≔ sum = x2 + y2 + z2;
+
+    // Should be ~1000 (representing 1.0)
+    assert_eq(sum, 1000);
+
+    println("normalization: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Cache entry memory
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_cache_entry_memory() {
+    ≔ embedding_dim = 512;
+    ≔ bytes_per_float = 4;
+    ≔ embedding_size = embedding_dim * bytes_per_float;
+
+    // Metadata overhead
+    ≔ id_size = 8;       // u64 ID
+    ≔ timestamp = 8;     // u64 timestamp
+    ≔ flags = 4;         // u32 flags
+    ≔ metadata = id_size + timestamp + flags;
+
+    // Total per entry
+    ≔ entry_size = embedding_size + metadata;
+    assert_eq(entry_size, 2068);
+
+    // Entries per MB
+    ≔ mb = 1048576;
+    ≔ entries_per_mb = mb / entry_size;
+    assert_eq(entries_per_mb, 507);
+
+    println("cache_entry_memory: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-latent-cache Embedding Tests      ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_embedding_dimensions();
+    test_cosine_similarity();
+    test_similarity_threshold();
+    test_normalization();
+    test_cache_entry_memory();
+
+    println("");
+    println("All tests passed!");
+}

@@ -1,0 +1,47 @@
+// Benchmark: Pure loop performance
+// No Vec dependencies - tests raw loop speed
+
+rite main() {
+    println("Loop Performance Benchmark - Sigil LLVM");
+    println("═══════════════════════════════════════════");
+
+    // Benchmark 1: Simple counter
+    print("10M iterations (counter): ");
+    ≔ start1 = now();
+    ≔ Δ count = 0;
+    ∀ _ ∈ 0..10000000 {
+        count = count + 1;
+    }
+    ≔ elapsed1 = now() - start1;
+    print(elapsed1);
+    print(" ms, count=");
+    println(count);
+
+    // Benchmark 2: Accumulation with computation
+    print("1M iterations (compute): ");
+    ≔ start2 = now();
+    ≔ Δ sum = 0;
+    ∀ i ∈ 0..1000000 {
+        sum = sum + (i % 17) * (i % 23);
+    }
+    ≔ elapsed2 = now() - start2;
+    print(elapsed2);
+    print(" ms, sum=");
+    println(sum);
+
+    // Benchmark 3: Nested loops
+    print("1000x1000 nested loops: ");
+    ≔ start3 = now();
+    ≔ Δ total = 0;
+    ∀ i ∈ 0..1000 {
+        ∀ j ∈ 0..1000 {
+            total = total + 1;
+        }
+    }
+    ≔ elapsed3 = now() - start3;
+    print(elapsed3);
+    print(" ms, total=");
+    println(total);
+
+    println("═══════════════════════════════════════════");
+}

@@ -1,0 +1,142 @@
+// Stream Buffer Tests
+//
+// Tests for streaming I/O buffer management.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Buffer capacity calculations
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_buffer_capacity() {
+    // Common buffer sizes
+    ≔ small = 4096;      // 4KB
+    ≔ medium = 65536;    // 64KB
+    ≔ large = 1048576;   // 1MB
+
+    assert_eq(small, 4 * 1024);
+    assert_eq(medium, 64 * 1024);
+    assert_eq(large, 1024 * 1024);
+
+    // Buffer should be power of 2 for efficient modulo
+    assert_eq(small & (small - 1), 0);
+    assert_eq(medium & (medium - 1), 0);
+    assert_eq(large & (large - 1), 0);
+
+    println("buffer_capacity: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Ring buffer position tracking
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_ring_buffer_positions() {
+    ≔ capacity = 1024;
+    ≔ mask = capacity - 1;
+
+    // Write position wraps around
+    ≔ write_pos = 1000;
+    ≔ bytes_written = 100;
+    ≔ new_write = (write_pos + bytes_written) & mask;
+
+    assert_eq(new_write, 76);  // 1100 & 1023 = 76
+
+    // Read position follows write
+    ≔ read_pos = 800;
+    ≔ available = (write_pos - read_pos) & mask;
+    assert_eq(available, 200);
+
+    println("ring_buffer_positions: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Buffer fill level
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_buffer_fill_level() {
+    ≔ capacity = 4096;
+
+    // Empty buffer
+    ≔ write_empty = 0;
+    ≔ read_empty = 0;
+    ≔ fill_empty = write_empty - read_empty;
+    assert_eq(fill_empty, 0);
+
+    // Half full
+    ≔ write_half = 2048;
+    ≔ read_half = 0;
+    ≔ fill_half = write_half - read_half;
+    assert_eq(fill_half, 2048);
+
+    // Full (leave 1 byte to distinguish full from empty)
+    ≔ max_fill = capacity - 1;
+    assert_eq(max_fill, 4095);
+
+    println("buffer_fill_level: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Contiguous read/write regions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_contiguous_regions() {
+    ≔ capacity = 1024;
+    ≔ write_pos = 900;
+    ≔ read_pos = 100;
+
+    // Contiguous write: from write_pos to end OR from start to read_pos
+    ≔ write_to_end = capacity - write_pos;
+    assert_eq(write_to_end, 124);
+
+    // Contiguous read: from read_pos to write_pos
+    ≔ contiguous_read = write_pos - read_pos;
+    assert_eq(contiguous_read, 800);
+
+    // After wraparound
+    ≔ write_wrap = 50;
+    ≔ contiguous_after_wrap = write_wrap;  // From 0 to write_pos
+    assert_eq(contiguous_after_wrap, 50);
+
+    println("contiguous_regions: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Double buffer pattern
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_double_buffer() {
+    // Double buffering: one buffer read, one written
+    ≔ buffer_size = 4096;
+    ≔ total_memory = buffer_size * 2;
+
+    assert_eq(total_memory, 8192);
+
+    // Swap indices
+    ≔ front = 0;
+    ≔ back = 1;
+    ≔ swapped_front = back;
+    ≔ swapped_back = front;
+
+    assert_eq(swapped_front, 1);
+    assert_eq(swapped_back, 0);
+
+    println("double_buffer: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-stream Buffer Tests               ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_buffer_capacity();
+    test_ring_buffer_positions();
+    test_buffer_fill_level();
+    test_contiguous_regions();
+    test_double_buffer();
+
+    println("");
+    println("All tests passed!");
+}

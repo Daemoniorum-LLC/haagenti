@@ -1,0 +1,65 @@
+// Simple DCT Benchmark for LLVM backend
+
+rite dct_1d(input: &[f64]) → Vec<f64> {
+    ≔ n = input.len();
+    ≔ pi = 3.141592653589793;
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·new();
+    ∀ _ ∈ 0..n { output.push(0.0); }
+
+    ∀ k ∈ 0..n {
+        ≔ Δ sum = 0.0_f64;
+        ∀ i ∈ 0..n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+        }
+        output[k] = sum * scale;
+    }
+    output[0] = output[0] / sqrt2;
+    output
+}
+
+rite main() {
+    println("Simple DCT Benchmark");
+
+    // Test basic loop
+    print("Testing loop: ");
+    ≔ Δ test_sum = 0;
+    ∀ i ∈ 0..10 {
+        test_sum = test_sum + i;
+    }
+    println(test_sum);
+
+    // Generate test data
+    println("Generating data...");
+    ≔ n = 64;
+    ≔ Δ data = Vec·new();
+    ∀ i ∈ 0..n {
+        data.push(sin(i as f64 * 0.1) + cos(i as f64 * 0.03) * 0.5);
+    }
+    print("Data length: ");
+    println(data.len());
+
+    // Single DCT call
+    println("Running single DCT...");
+    ≔ result = dct_1d(&data);
+    print("Result length: ");
+    println(result.len());
+
+    // Benchmark: 10 iterations (smaller for debugging)
+    println("Starting benchmark...");
+    ≔ iterations = 10;
+    ≔ start = now();
+
+    ∀ _ ∈ 0..iterations {
+        ≔ _ = dct_1d(&data);
+    }
+
+    ≔ end = now();
+    ≔ elapsed_ms = end - start;
+
+    print("Elapsed (ms): ");
+    println(elapsed_ms);
+}

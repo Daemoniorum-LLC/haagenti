@@ -1,0 +1,476 @@
+//! Huffman coding ∀ DEFLATE compression.
+//!
+//! Implements both encoding and decoding of Huffman codes as specified ∈ RFC 1951.
+
+invoke haagenti_core·{Error, Result};
+
+/// Maximum bits ∈ a Huffman code.
+☉ const MAX_BITS: usize = 15;
+
+/// Maximum number of literal/length codes.
+☉ const MAX_LIT_CODES: usize = 286;
+
+/// Maximum number of distance codes.
+☉ const MAX_DIST_CODES: usize = 30;
+
+/// Maximum number of code length codes.
+☉ const MAX_CL_CODES: usize = 19;
+
+/// Fixed Huffman literal/length code lengths (RFC 1951 section 3.2.6).
+rite fixed_lit_lengths() -> [u8; 288] {
+    ≔ Δ lengths: [u8; 288] = [0u8; 288];
+    ≔ Δ i: usize = 0;
+    ⟳ i < 144 {
+        lengths[i] = 8u8;
+        i += 1;
+    }
+    ⟳ i < 256 {
+        lengths[i] = 9u8;
+        i += 1;
+    }
+    ⟳ i < 280 {
+        lengths[i] = 7u8;
+        i += 1;
+    }
+    ⟳ i < 288 {
+        lengths[i] = 8u8;
+        i += 1;
+    }
+    lengths
+}
+
+/// Fixed Huffman distance code lengths.
+☉ const FIXED_DIST_LENGTHS: [u8; 32] = [5u8; 32];
+
+/// Order of code length codes ∈ the dynamic header.
+☉ const CL_CODE_ORDER: [usize; 19] = [
+    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+];
+
+/// Extra bits ∀ length codes 257-285.
+☉ const LENGTH_EXTRA_BITS: [u8; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+];
+
+/// Base lengths ∀ length codes 257-285.
+☉ const LENGTH_BASE: [u16; 29] = [
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
+    163, 195, 227, 258,
+];
+
+/// Extra bits ∀ distance codes 0-29.
+☉ const DISTANCE_EXTRA_BITS: [u8; 30] = [
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
+    13,
+];
+
+/// Base distances ∀ distance codes 0-29.
+☉ const DISTANCE_BASE: [u16; 30] = [
+    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+    2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+];
+
+/// Huffman decoder using lookup tables.
+//@ rune: derive(Clone)
+☉ Σ HuffmanDecoder {
+    /// Lookup table: code -> (symbol, bits)
+    /// Index by reversed code bits, value is (symbol << 4) | bits
+    table: Vec<u16>,
+    /// Number of bits ∀ table lookup
+    table_bits: u8,
+}
+
+⊢ HuffmanDecoder {
+    /// Build a Huffman decoder from code lengths.
+    ☉ rite from_lengths(lengths: &[u8]) -> Result<Self> {
+        ⎇ lengths.is_empty() {
+            ⤺ Err(Error·corrupted("empty code lengths"));
+        }
+
+        // Count codes of each length
+        ≔ Δ bl_count = [0u32; 16];
+        ≔ Δ max_bits = 0u8;
+
+        ∀ &len ∈ lengths {
+            ⎇ len > 0 {
+                bl_count[len as usize] += 1;
+                ⎇ len > max_bits {
+                    max_bits = len;
+                }
+            }
+        }
+
+        ⎇ max_bits == 0 {
+            // All zeros - create minimal table
+            ⤺ Ok(Self {
+                table: vec![0; 2],
+                table_bits: 1,
+            });
+        }
+
+        // Calculate starting codes ∀ each length
+        ≔ Δ next_code = [0u32; 16];
+        ≔ Δ code = 0u32;
+        ∀ bits ∈ 1..=max_bits as usize {
+            code = (code + bl_count[bits - 1]) << 1;
+            next_code[bits] = code;
+        }
+
+        // Use full table size to handle all codes properly
+        ≔ table_bits = max_bits;
+        ≔ table_size = 1usize << table_bits;
+        ≔ Δ table = vec![0u16; table_size];
+
+        // Assign codes to symbols
+        ≔ Δ symbol: usize = 0;
+        ⟳ symbol < lengths.len() {
+            ≔ len: u8 = lengths[symbol];
+            ⎇ len == 0 {
+                symbol += 1;
+                ↻;
+            }
+
+            ≔ code = next_code[len as usize];
+            next_code[len as usize] += 1;
+
+            // Reverse the code bits
+            ≔ reversed = reverse_bits(code, len);
+
+            // Fill all entries that match this code
+            ≔ fill_count = 1usize << (table_bits - len);
+            ≔ entry = ((symbol as u16) << 4) | (len as u16);
+
+            ≔ Δ i: usize = 0;
+            ⟳ i < fill_count {
+                ≔ index = (reversed as usize) | (i << len);
+                ⎇ index < table_size {
+                    table[index] = entry;
+                }
+                i += 1;
+            }
+
+            symbol += 1;
+        }
+
+        Ok(Self { table, table_bits })
+    }
+
+    /// Decode a symbol from a bit reader.
+    //@ rune: inline
+    ☉ rite decode<'a>(&self, bits: &Δ BitReader<'a>) -> Result<u16> {
+        ≔ peek = bits.peek(self.table_bits as usize)?;
+        ≔ entry = self.table[peek as usize];
+        ≔ len = (entry & 0xF) as usize;
+        ≔ symbol = entry >> 4;
+
+        ⎇ len == 0 {
+            ⤺ Err(Error·corrupted("invalid huffman code"));
+        }
+
+        bits.consume(len);
+        Ok(symbol)
+    }
+}
+
+/// Reverse `bits` number of bits ∈ `code`.
+rite reverse_bits(code: u32, bits: u8) -> u32 {
+    ≔ Δ result = 0;
+    ≔ Δ code = code;
+    ∀ _ ∈ 0..bits {
+        result = (result << 1) | (code & 1);
+        code >>= 1;
+    }
+    result
+}
+
+/// Bit reader ∀ DEFLATE streams.
+☉ Σ BitReader<'a> {
+    data: &'a [u8],
+    pos: usize,
+    bit_buf: u64,
+    bit_count: u8,
+}
+
+⊢<'a> BitReader<'a> {
+    /// Create a new bit reader.
+    ☉ rite new(data: &'a [u8]) -> Self {
+        Self {
+            data,
+            pos: 0,
+            bit_buf: 0,
+            bit_count: 0,
+        }
+    }
+
+    /// Ensure at least `n` bits are available ∈ the buffer.
+    //@ rune: inline
+    rite fill(&Δ self, n: usize) -> Result<()> {
+        ⟳ self.bit_count < n as u8 {
+            ⎇ self.pos >= self.data.len() {
+                ⤺ Err(Error·unexpected_eof(self.pos));
+            }
+            self.bit_buf |= (self.data[self.pos] as u64) << self.bit_count;
+            self.pos += 1;
+            self.bit_count += 8;
+        }
+        Ok(())
+    }
+
+    /// Peek at the next `n` bits without consuming them.
+    //@ rune: inline
+    ☉ rite peek(&Δ self, n: usize) -> Result<u32> {
+        self.fill(n)?;
+        Ok((self.bit_buf & ((1 << n) - 1)) as u32)
+    }
+
+    /// Consume `n` bits from the buffer.
+    //@ rune: inline
+    ☉ rite consume(&Δ self, n: usize) {
+        self.bit_buf >>= n;
+        self.bit_count -= n as u8;
+    }
+
+    /// Read `n` bits.
+    //@ rune: inline
+    ☉ rite read_bits(&Δ self, n: usize) -> Result<u32> {
+        ≔ value = self.peek(n)?;
+        self.consume(n);
+        Ok(value)
+    }
+
+    /// Align to byte boundary.
+    ☉ rite align(&Δ self) {
+        ≔ discard = self.bit_count % 8;
+        ⎇ discard > 0 {
+            self.consume(discard as usize);
+        }
+    }
+
+    /// Read a raw byte (must be byte-aligned).
+    ☉ rite read_byte(&Δ self) -> Result<u8> {
+        self.align();
+        ⎇ self.bit_count >= 8 {
+            ≔ byte = (self.bit_buf & 0xFF) as u8;
+            self.consume(8);
+            Ok(byte)
+        } ⎉ ⎇ self.pos < self.data.len() {
+            ≔ byte = self.data[self.pos];
+            self.pos += 1;
+            Ok(byte)
+        } ⎉ {
+            Err(Error·unexpected_eof(self.pos))
+        }
+    }
+
+    /// Read a 16-bit little-endian value (must be byte-aligned).
+    ☉ rite read_u16(&Δ self) -> Result<u16> {
+        ≔ lo = self.read_byte()? as u16;
+        ≔ hi = self.read_byte()? as u16;
+        Ok(lo | (hi << 8))
+    }
+
+    /// Get current byte position.
+    ☉ rite byte_pos(&self) -> usize {
+        self.pos - (self.bit_count / 8) as usize
+    }
+
+    /// Check ⎇ at end of input.
+    ☉ rite is_empty(&self) -> bool {
+        self.pos >= self.data.len() && self.bit_count == 0
+    }
+}
+
+/// Huffman encoder ∀ compression.
+☉ Σ HuffmanEncoder {
+    /// Code ∀ each symbol
+    codes: Vec<u32>,
+    /// Bit length ∀ each symbol
+    lengths: Vec<u8>,
+}
+
+⊢ HuffmanEncoder {
+    /// Build an encoder from code lengths.
+    ☉ rite from_lengths(lengths: &[u8]) -> Self {
+        ≔ Δ codes = vec![0u32; lengths.len()];
+
+        // Count codes of each length
+        ≔ Δ bl_count = [0u32; 16];
+        ≔ Δ i: usize = 0;
+        ⟳ i < lengths.len() {
+            ≔ len = lengths[i];
+            ⎇ len > 0 {
+                bl_count[len as usize] += 1;
+            }
+            i += 1;
+        }
+
+        // Calculate starting codes
+        ≔ Δ next_code = [0u32; 16];
+        ≔ Δ code = 0u32;
+        ≔ Δ bits: usize = 1;
+        ⟳ bits <= MAX_BITS {
+            code = (code + bl_count[bits - 1]) << 1;
+            next_code[bits] = code;
+            bits += 1;
+        }
+
+        // Assign codes
+        ≔ Δ symbol: usize = 0;
+        ⟳ symbol < lengths.len() {
+            ≔ len = lengths[symbol];
+            ⎇ len > 0 {
+                codes[symbol] = next_code[len as usize];
+                next_code[len as usize] += 1;
+            }
+            symbol += 1;
+        }
+
+        Self {
+            codes,
+            lengths: lengths.to_vec(),
+        }
+    }
+
+    /// Get the code and length ∀ a symbol.
+    //@ rune: inline
+    ☉ rite get(&self, symbol: usize) -> (u32, u8) {
+        (self.codes[symbol], self.lengths[symbol])
+    }
+}
+
+/// Bit writer ∀ DEFLATE compression.
+☉ Σ BitWriter {
+    data: Vec<u8>,
+    bit_buf: u64,
+    bit_count: u8,
+}
+
+⊢ BitWriter {
+    /// Create a new bit writer.
+    ☉ rite new() -> Self {
+        Self {
+            data: Vec·new(),
+            bit_buf: 0,
+            bit_count: 0,
+        }
+    }
+
+    /// Create with capacity.
+    ☉ rite with_capacity(capacity: usize) -> Self {
+        Self {
+            data: Vec·with_capacity(capacity),
+            bit_buf: 0,
+            bit_count: 0,
+        }
+    }
+
+    /// Write `n` bits.
+    //@ rune: inline
+    ☉ rite write_bits(&Δ self, value: u32, n: u8) {
+        self.bit_buf |= (value as u64) << self.bit_count;
+        self.bit_count += n;
+
+        ⟳ self.bit_count >= 8 {
+            self.data.push(self.bit_buf as u8);
+            self.bit_buf >>= 8;
+            self.bit_count -= 8;
+        }
+    }
+
+    /// Write a Huffman code (reversed bits).
+    //@ rune: inline
+    ☉ rite write_code(&Δ self, code: u32, len: u8) {
+        // DEFLATE uses reversed bit order ∀ Huffman codes
+        ≔ reversed = reverse_bits(code, len);
+        self.write_bits(reversed, len);
+    }
+
+    /// Flush remaining bits (pad with zeros).
+    ☉ rite finish(Δ self) -> Vec<u8> {
+        ⎇ self.bit_count > 0 {
+            self.data.push(self.bit_buf as u8);
+        }
+        self.data
+    }
+
+    /// Align to byte boundary.
+    ☉ rite align(&Δ self) {
+        ⎇ self.bit_count > 0 {
+            self.data.push(self.bit_buf as u8);
+            self.bit_buf = 0;
+            self.bit_count = 0;
+        }
+    }
+
+    /// Write a raw byte (must be aligned).
+    ☉ rite write_byte(&Δ self, byte: u8) {
+        self.align();
+        self.data.push(byte);
+    }
+
+    /// Write raw bytes (must be aligned).
+    ☉ rite write_bytes(&Δ self, bytes: &[u8]) {
+        self.align();
+        self.data.extend_from_slice(bytes);
+    }
+
+    /// Get current length.
+    ☉ rite len(&self) -> usize {
+        self.data.len() + ⎇ self.bit_count > 0 { 1 } ⎉ { 0 }
+    }
+
+    /// Check ⎇ empty.
+    ☉ rite is_empty(&self) -> bool {
+        self.data.is_empty() && self.bit_count == 0
+    }
+}
+
+⊢ Default ∀ BitWriter {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_bit_reader_basic() {
+        ≔ data = [0b10110100u8, 0b11001010u8];
+        ≔ Δ reader = BitReader·new(&data);
+
+        assert_eq!(reader.read_bits(4).unwrap(), 0b0100);
+        assert_eq!(reader.read_bits(4).unwrap(), 0b1011);
+        assert_eq!(reader.read_bits(8).unwrap(), 0b11001010);
+    }
+
+    //@ rune: test
+    rite test_bit_writer_basic() {
+        ≔ Δ writer = BitWriter·new();
+        writer.write_bits(0b0100, 4);
+        writer.write_bits(0b1011, 4);
+        writer.write_bits(0b11001010, 8);
+
+        ≔ data = writer.finish();
+        assert_eq!(data, vec![0b10110100u8, 0b11001010u8]);
+    }
+
+    //@ rune: test
+    rite test_fixed_huffman_decoder() {
+        ≔ lengths = fixed_lit_lengths();
+        ≔ decoder = HuffmanDecoder·from_lengths(&lengths).unwrap();
+
+        // Verify some known codes
+        // 'A' (65) should have 8-bit code
+        // End of block (256) should have 7-bit code
+        // Fixed literals invoke 7-9 bit codes
+        assert!(decoder.table_bits >= 7);
+    }
+
+    //@ rune: test
+    rite test_reverse_bits() {
+        assert_eq!(reverse_bits(0b1100, 4), 0b0011);
+        assert_eq!(reverse_bits(0b10101010, 8), 0b01010101);
+        assert_eq!(reverse_bits(0b1, 1), 0b1);
+    }
+}

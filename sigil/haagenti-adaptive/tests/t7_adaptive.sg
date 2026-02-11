@@ -1,0 +1,354 @@
+//! haagenti-adaptive test suite
+//! Tests for adaptive precision scheduling
+
+// ════════════════════════════════════════════════════════════════════════════
+// Precision Constants (instead of enum)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Precision levels as integers
+// INT4 = 0, INT8 = 1, BF16 = 2, FP16 = 3, FP32 = 4
+
+rite precision_bits(p: i64) → i64 {
+    ⎇ p == 0 { 4 }       // INT4
+    ⎉ ⎇ p == 1 { 8 }     // INT8
+    ⎉ ⎇ p == 2 { 16 }    // BF16
+    ⎉ ⎇ p == 3 { 16 }    // FP16
+    ⎉ { 32 }              // FP32
+}
+
+rite precision_vram_ratio(p: i64) → f64 {
+    precision_bits(p) as f64 / 32.0
+}
+
+rite precision_speedup(p: i64) → f64 {
+    ⎇ p == 0 { 4.0 }       // INT4
+    ⎉ ⎇ p == 1 { 2.5 }     // INT8
+    ⎉ ⎇ p == 2 { 1.8 }     // BF16
+    ⎉ ⎇ p == 3 { 2.0 }     // FP16
+    ⎉ { 1.0 }               // FP32
+}
+
+rite precision_quality(p: i64) → f64 {
+    ⎇ p == 0 { 0.92 }      // INT4
+    ⎉ ⎇ p == 1 { 0.97 }    // INT8
+    ⎉ ⎇ p == 2 { 0.995 }   // BF16
+    ⎉ ⎇ p == 3 { 0.998 }   // FP16
+    ⎉ { 1.0 }               // FP32
+}
+
+rite precision_name(p: i64) → String {
+    ⎇ p == 0 { "INT4".to_string() }
+    ⎉ ⎇ p == 1 { "INT8".to_string() }
+    ⎉ ⎇ p == 2 { "BF16".to_string() }
+    ⎉ ⎇ p == 3 { "FP16".to_string() }
+    ⎉ { "FP32".to_string() }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Helper Functions
+// ════════════════════════════════════════════════════════════════════════════
+
+rite abs_f64(x: f64) → f64 {
+    ⎇ x < 0.0 { -x } ⎉ { x }
+}
+
+rite smooth_step(t: f64) → f64 {
+    ≔ clamped = ⎇ t < 0.0 { 0.0 } ⎉ ⎇ t > 1.0 { 1.0 } ⎉ { t };
+    clamped * clamped * (3.0 - 2.0 * clamped)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests: Precision
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_precision_ordering() {
+    // INT4(0) < INT8(1) < FP16(3) < FP32(4)
+    assert(0 < 1);
+    assert(1 < 3);
+    assert(3 < 4);
+    println("precision_ordering: PASS");
+}
+
+rite test_precision_bits() {
+    assert_eq(precision_bits(0), 4);   // INT4
+    assert_eq(precision_bits(1), 8);   // INT8
+    assert_eq(precision_bits(3), 16);  // FP16
+    assert_eq(precision_bits(4), 32);  // FP32
+    println("precision_bits: PASS");
+}
+
+rite test_vram_ratio() {
+    // INT4: 4/32 = 0.125
+    assert(abs_f64(precision_vram_ratio(0) - 0.125) < 0.001);
+    // INT8: 8/32 = 0.25
+    assert(abs_f64(precision_vram_ratio(1) - 0.25) < 0.001);
+    // FP16: 16/32 = 0.5
+    assert(abs_f64(precision_vram_ratio(3) - 0.5) < 0.001);
+    // FP32: 32/32 = 1.0
+    assert(abs_f64(precision_vram_ratio(4) - 1.0) < 0.001);
+    println("vram_ratio: PASS");
+}
+
+rite test_speedup_factors() {
+    // INT4 should be fastest
+    assert(precision_speedup(0) > precision_speedup(1));
+    assert(precision_speedup(1) > precision_speedup(3));
+    assert(precision_speedup(3) > precision_speedup(4));
+    println("speedup_factors: PASS");
+}
+
+rite test_quality_factors() {
+    // Higher precision = better quality
+    assert(precision_quality(4) > precision_quality(3));  // FP32 > FP16
+    assert(precision_quality(3) > precision_quality(1));  // FP16 > INT8
+    assert(precision_quality(1) > precision_quality(0));  // INT8 > INT4
+    println("quality_factors: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests: Profile Presets
+// ════════════════════════════════════════════════════════════════════════════
+
+Σ PrecisionZone {
+    start: f64,
+    end: f64,
+    precision: i64,
+}
+
+rite get_precision_at(zones: &Vec<PrecisionZone>, step_fraction: f64) → i64 {
+    ≔ Δ i = 0;
+    ⟳ i < zones.len() {
+        ≔ zone = &zones[i];
+        ⎇ step_fraction >= zone.start && step_fraction < zone.end {
+            ⤺ zone.precision;
+        }
+        i = i + 1;
+    }
+    3  // Default to FP16
+}
+
+rite build_balanced_profile() → Vec<PrecisionZone> {
+    ≔ Δ zones = Vec·new();
+    zones.push(PrecisionZone { start: 0.0, end: 0.25, precision: 0 });  // INT4
+    zones.push(PrecisionZone { start: 0.25, end: 0.5, precision: 1 }); // INT8
+    zones.push(PrecisionZone { start: 0.5, end: 1.0, precision: 3 });  // FP16
+    zones
+}
+
+rite build_performance_profile() → Vec<PrecisionZone> {
+    ≔ Δ zones = Vec·new();
+    zones.push(PrecisionZone { start: 0.0, end: 0.4, precision: 0 });  // INT4
+    zones.push(PrecisionZone { start: 0.4, end: 0.7, precision: 1 }); // INT8
+    zones.push(PrecisionZone { start: 0.7, end: 1.0, precision: 3 }); // FP16
+    zones
+}
+
+rite build_quality_profile() → Vec<PrecisionZone> {
+    ≔ Δ zones = Vec·new();
+    zones.push(PrecisionZone { start: 0.0, end: 0.15, precision: 1 });  // INT8
+    zones.push(PrecisionZone { start: 0.15, end: 1.0, precision: 3 }); // FP16
+    zones
+}
+
+rite test_balanced_profile() {
+    ≔ zones = build_balanced_profile();
+    assert_eq(zones.len(), 3);
+
+    // Early step should be INT4 (0)
+    assert_eq(get_precision_at(&zones, 0.1), 0);
+    // Mid step should be INT8 (1)
+    assert_eq(get_precision_at(&zones, 0.3), 1);
+    // Late step should be FP16 (3)
+    assert_eq(get_precision_at(&zones, 0.8), 3);
+
+    println("balanced_profile: PASS");
+}
+
+rite test_performance_profile() {
+    ≔ zones = build_performance_profile();
+
+    // More steps at INT4 than balanced
+    assert_eq(get_precision_at(&zones, 0.35), 0);  // Still INT4 at 35%
+
+    println("performance_profile: PASS");
+}
+
+rite test_quality_profile() {
+    ≔ zones = build_quality_profile();
+    assert_eq(zones.len(), 2);
+
+    // Most steps should be FP16 (3)
+    assert_eq(get_precision_at(&zones, 0.5), 3);
+
+    println("quality_profile: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests: Schedule Generation
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_schedule_generation() {
+    ≔ zones = build_balanced_profile();
+    ≔ total_steps = 20;
+
+    // Generate precision for each step
+    ≔ Δ step_precisions = Vec·new();
+    ≔ Δ step = 0;
+    ⟳ step < total_steps {
+        ≔ fraction = step as f64 / total_steps as f64;
+        ≔ p = get_precision_at(&zones, fraction);
+        step_precisions.push(p);
+        step = step + 1;
+    }
+
+    assert_eq(step_precisions.len(), 20);
+
+    // Early steps should be lower precision (INT4=0 or INT8=1)
+    assert(step_precisions[0] <= 1);
+    // Late steps should be higher precision (FP16=3 or higher)
+    assert(step_precisions[19] >= 3);
+
+    println("schedule_generation: PASS");
+}
+
+rite test_transition_detection() {
+    ≔ zones = build_balanced_profile();
+    ≔ total_steps = 20;
+
+    ≔ Δ transitions = 0;
+    ≔ Δ prev_precision = -1;
+
+    ≔ Δ step = 0;
+    ⟳ step < total_steps {
+        ≔ fraction = step as f64 / total_steps as f64;
+        ≔ p = get_precision_at(&zones, fraction);
+
+        ⎇ prev_precision != -1 && p != prev_precision {
+            transitions = transitions + 1;
+        }
+        prev_precision = p;
+        step = step + 1;
+    }
+
+    // Balanced profile should have 2 transitions (INT4->INT8, INT8->FP16)
+    assert_eq(transitions, 2);
+
+    println("transition_detection: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests: Smooth Step Function
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_smooth_step() {
+    // Should be 0 at t=0
+    assert(abs_f64(smooth_step(0.0) - 0.0) < 0.001);
+    // Should be 1 at t=1
+    assert(abs_f64(smooth_step(1.0) - 1.0) < 0.001);
+    // Should be 0.5 at t=0.5
+    assert(abs_f64(smooth_step(0.5) - 0.5) < 0.01);
+    // Should clamp below 0
+    assert(abs_f64(smooth_step(-0.5) - 0.0) < 0.001);
+    // Should clamp above 1
+    assert(abs_f64(smooth_step(1.5) - 1.0) < 0.001);
+
+    println("smooth_step: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests: VRAM Estimation
+// ════════════════════════════════════════════════════════════════════════════
+
+rite estimate_vram(model_params: i64, precision: i64) → i64 {
+    ≔ base_bytes = model_params * 4;  // FP32 baseline
+    (base_bytes as f64 * precision_vram_ratio(precision)) as i64
+}
+
+rite test_vram_estimation() {
+    ≔ params = 1000000;  // 1M params
+
+    ≔ fp32_vram = estimate_vram(params, 4);  // FP32
+    ≔ fp16_vram = estimate_vram(params, 3);  // FP16
+    ≔ int4_vram = estimate_vram(params, 0);  // INT4
+
+    // FP32 should invoke 4 bytes per param
+    assert_eq(fp32_vram, 4000000);
+    // FP16 should invoke half
+    assert_eq(fp16_vram, 2000000);
+    // INT4 should invoke 1/8th
+    assert_eq(int4_vram, 500000);
+
+    println("vram_estimation: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests: Average Quality Calculation
+// ════════════════════════════════════════════════════════════════════════════
+
+rite calculate_avg_quality(zones: &Vec<PrecisionZone>) → f64 {
+    ≔ Δ total_weight = 0.0;
+    ≔ Δ weighted_quality = 0.0;
+
+    ≔ Δ i = 0;
+    ⟳ i < zones.len() {
+        ≔ zone = &zones[i];
+        ≔ weight = zone.end - zone.start;
+        total_weight = total_weight + weight;
+        weighted_quality = weighted_quality + weight * precision_quality(zone.precision);
+        i = i + 1;
+    }
+
+    ⎇ total_weight > 0.0 {
+        weighted_quality / total_weight
+    } ⎉ {
+        1.0
+    }
+}
+
+rite test_avg_quality() {
+    ≔ performance_zones = build_performance_profile();
+    ≔ quality_zones = build_quality_profile();
+
+    ≔ perf_quality = calculate_avg_quality(&performance_zones);
+    ≔ qual_quality = calculate_avg_quality(&quality_zones);
+
+    // Quality profile should have better average quality
+    assert(qual_quality > perf_quality);
+
+    println("avg_quality: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-adaptive Tests                    ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    // Precision tests
+    test_precision_ordering();
+    test_precision_bits();
+    test_vram_ratio();
+    test_speedup_factors();
+    test_quality_factors();
+
+    // Profile tests
+    test_balanced_profile();
+    test_performance_profile();
+    test_quality_profile();
+
+    // Schedule tests
+    test_schedule_generation();
+    test_transition_detection();
+
+    // Utility tests
+    test_smooth_step();
+    test_vram_estimation();
+    test_avg_quality();
+
+    println("");
+    println("All tests passed!");
+}

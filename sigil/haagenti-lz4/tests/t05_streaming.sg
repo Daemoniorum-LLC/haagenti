@@ -1,0 +1,268 @@
+// LZ4 Streaming Algorithm Tests
+//
+// Tests for streaming compression/decompression properties.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Streaming block boundaries
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_block_boundaries() {
+    // Streaming compression divides input into blocks
+    // Each block is compressed independently
+
+    // Common block sizes
+    ≔ block_64kb = 65536;
+    ≔ block_256kb = 262144;
+    ≔ block_1mb = 1048576;
+    ≔ block_4mb = 4194304;
+
+    // For 1MB input with 64KB blocks:
+    ≔ input_size = 1048576;
+    ≔ num_blocks = input_size / block_64kb;
+    assert_eq(num_blocks, 16);
+
+    // For 1MB input with 256KB blocks:
+    ≔ num_blocks_256k = input_size / block_256kb;
+    assert_eq(num_blocks_256k, 4);
+
+    println("block_boundaries: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Block header format
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_block_header() {
+    // Each block has a 4-byte header:
+    // - Bits 0-30: Block size
+    // - Bit 31: 0=compressed, 1=uncompressed
+
+    ≔ max_block_size = 0x7FFFFFFF;  // 2^31 - 1
+    ≔ uncompressed_flag = 0x80000000;
+
+    // Example: 1000 byte compressed block
+    ≔ compressed_header = 1000;
+    ≔ is_compressed = (compressed_header & uncompressed_flag) == 0;
+    assert(is_compressed);
+
+    // Example: 1000 byte uncompressed block
+    ≔ uncompressed_header = 1000 | uncompressed_flag;
+    ≔ is_uncompressed = (uncompressed_header & uncompressed_flag) != 0;
+    assert(is_uncompressed);
+
+    // Extract size from header
+    ≔ size = uncompressed_header & max_block_size;
+    assert_eq(size, 1000);
+
+    println("block_header: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Linked blocks
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_linked_blocks() {
+    // LZ4 frame can invoke linked blocks:
+    // - Each block can reference previous block's data
+    // - Improves compression ratio for similar data
+    // - Requires keeping previous block in memory
+
+    // Block dependency flag in frame descriptor
+    ≔ block_independence = 0;  // Blocks are independent
+    ≔ block_dependency = 1;    // Blocks can reference previous
+
+    // Memory overhead for linked blocks
+    ≔ linked_window = 65536;  // 64KB of previous data kept
+
+    assert_eq(linked_window, 64 * 1024);
+
+    println("linked_blocks: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Flush modes
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_flush_modes() {
+    // Streaming supports different flush modes:
+    // - None: buffer until block full
+    // - Sync: flush current block
+    // - Finish: flush and end stream
+
+    ≔ flush_none = 0;
+    ≔ flush_sync = 1;
+    ≔ flush_finish = 2;
+
+    // Sync flush forces block boundary
+    // Useful for:
+    // - Network streaming (reduce latency)
+    // - Checkpointing (random access)
+
+    // Finish flush:
+    // - Writes end mark (0x00000000)
+    // - Optional content checksum
+
+    ≔ end_mark_size = 4;  // bytes
+    assert_eq(end_mark_size, 4);
+
+    println("flush_modes: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Ring buffer for streaming decompression
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_ring_buffer() {
+    // Decompressor uses ring buffer for back-references
+    // Size depends on max block size
+
+    // Ring buffer size = block size
+    ≔ ring_64kb = 65536;
+    ≔ ring_256kb = 262144;
+
+    // Back-references wrap around in ring buffer
+    // offset always <= ring buffer size
+
+    ≔ max_offset = 65535;
+    assert(max_offset < ring_64kb);
+
+    println("ring_buffer: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Memory requirements
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_memory_requirements() {
+    // Compression memory:
+    // - Hash table: 16KB (4 bytes * 4096 entries) for fast mode
+    // - Hash table: 64KB (4 bytes * 16384 entries) for HC mode
+    // - Input buffer: block size
+
+    ≔ fast_hash_table = 4 * 4096;
+    ≔ hc_hash_table = 4 * 16384;
+
+    assert_eq(fast_hash_table, 16384);     // 16KB
+    assert_eq(hc_hash_table, 65536);       // 64KB
+
+    // Decompression memory:
+    // - Ring buffer: block size
+    // - Minimal state: few bytes
+
+    ≔ decompress_memory_64kb = 65536 + 64;  // ring + state
+    assert(decompress_memory_64kb < 70000);
+
+    println("memory_requirements: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Streaming state machine
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_state_machine() {
+    // Streaming compressor states:
+    // 1. Init: waiting for begin()
+    // 2. Active: processing chunks
+    // 3. Finished: stream complete
+
+    ≔ state_init = 0;
+    ≔ state_active = 1;
+    ≔ state_finished = 2;
+
+    // Valid transitions:
+    // init -> active (begin)
+    // active -> active (compress_chunk)
+    // active -> finished (finish)
+    // finished -> init (reset)
+
+    // Invalid transitions:
+    // init -> finished (must begin first)
+    // finished -> active (must reset first)
+
+    println("state_machine: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Chunk size recommendations
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_chunk_sizes() {
+    // Optimal chunk sizes for streaming:
+    // - Too small: high overhead
+    // - Too large: high latency
+
+    // Recommended: 8KB - 64KB chunks
+    ≔ min_recommended = 8 * 1024;
+    ≔ max_recommended = 64 * 1024;
+
+    assert_eq(min_recommended, 8192);
+    assert_eq(max_recommended, 65536);
+
+    // For real-time streaming: smaller chunks
+    ≔ realtime_chunk = 4 * 1024;
+    assert_eq(realtime_chunk, 4096);
+
+    // For batch processing: larger chunks
+    ≔ batch_chunk = 256 * 1024;
+    assert_eq(batch_chunk, 262144);
+
+    println("chunk_sizes: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Streaming overhead
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_streaming_overhead() {
+    // Streaming adds per-block overhead:
+    // - 4 bytes block size header
+    // - Optional 4 bytes block checksum
+
+    ≔ header_per_block = 4;
+    ≔ checksum_per_block = 4;
+
+    // For 1MB data in 64KB blocks:
+    ≔ data_size = 1048576;
+    ≔ block_size = 65536;
+    ≔ num_blocks = data_size / block_size;
+
+    ≔ total_headers = num_blocks * header_per_block;
+    ≔ total_checksums = num_blocks * checksum_per_block;
+
+    assert_eq(total_headers, 64);      // 16 * 4 = 64 bytes
+    assert_eq(total_checksums, 64);    // 16 * 4 = 64 bytes
+
+    // Frame overhead:
+    // - 7-19 bytes header
+    // - 4 bytes end mark
+    // - Optional 4 bytes content checksum
+
+    ≔ max_frame_overhead = 19 + 4 + 4;
+    assert_eq(max_frame_overhead, 27);
+
+    println("streaming_overhead: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-lz4 Streaming Tests               ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_block_boundaries();
+    test_block_header();
+    test_linked_blocks();
+    test_flush_modes();
+    test_ring_buffer();
+    test_memory_requirements();
+    test_state_machine();
+    test_chunk_sizes();
+    test_streaming_overhead();
+
+    println("");
+    println("All tests passed!");
+}

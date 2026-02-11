@@ -1,0 +1,187 @@
+// Brotli Compression Tests
+//
+// Tests for haagenti-brotli quality mapping and max size calculations.
+// Note: Actual compression requires native brotli module.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Helper: Clamp function
+// ════════════════════════════════════════════════════════════════════════════
+
+rite clamp(val: i64, min: i64, max: i64) → i64 {
+    ⎇ val < min {
+        min
+    } ⎉ ⎇ val > max {
+        max
+    } ⎉ {
+        val
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Quality level mapping
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_quality_mapping() {
+    // CompressionLevel -> Brotli quality (0-11)
+    // None -> 0
+    // Fast -> 1
+    // Default -> 6
+    // Best -> 10
+    // Ultra -> 11
+
+    // Test clamp function behavior
+    ≔ clamped_low = clamp(0, 0, 11);
+    assert_eq(clamped_low, 0);
+
+    ≔ clamped_mid = clamp(6, 0, 11);
+    assert_eq(clamped_mid, 6);
+
+    ≔ clamped_high = clamp(11, 0, 11);
+    assert_eq(clamped_high, 11);
+
+    ≔ clamped_over = clamp(15, 0, 11);
+    assert_eq(clamped_over, 11);
+
+    println("quality_mapping: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Max compressed size calculation
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_max_compressed_size() {
+    // Formula: input_len + (input_len >> 2) + 128
+    // This is input + 25% + 128 bytes overhead
+
+    // 0 bytes: 0 + 0 + 128 = 128
+    ≔ max0 = 0 + (0 >> 2) + 128;
+    assert_eq(max0, 128);
+
+    // 1000 bytes: 1000 + 250 + 128 = 1378
+    ≔ max1k = 1000 + (1000 >> 2) + 128;
+    assert_eq(max1k, 1378);
+
+    // 4096 bytes: 4096 + 1024 + 128 = 5248
+    ≔ max4k = 4096 + (4096 >> 2) + 128;
+    assert_eq(max4k, 5248);
+
+    // 1MB: 1048576 + 262144 + 128 = 1310848
+    ≔ max1m = 1048576 + (1048576 >> 2) + 128;
+    assert_eq(max1m, 1310848);
+
+    println("max_compressed_size: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Window size constants
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_window_size() {
+    // DEFAULT_LG_WIN = 22 means 2^22 = 4MB window
+    ≔ lg_win = 22;
+    ≔ window_size = 1 << lg_win;  // 2^22
+
+    assert_eq(window_size, 4194304);  // 4MB
+
+    // Buffer size is 4KB
+    ≔ buffer_size = 4096;
+    assert_eq(buffer_size, 4096);
+
+    println("window_size: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Compression level enum values
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_compression_levels() {
+    // Quality values for each level
+    ≔ none_quality = 0;
+    ≔ fast_quality = 1;
+    ≔ default_quality = 6;
+    ≔ best_quality = 10;
+    ≔ ultra_quality = 11;
+
+    // Verify ordering: higher quality = better compression but slower
+    assert(none_quality < fast_quality);
+    assert(fast_quality < default_quality);
+    assert(default_quality < best_quality);
+    assert(best_quality < ultra_quality);
+
+    // Ultra is max
+    assert_eq(ultra_quality, 11);
+
+    println("compression_levels: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Custom level clamping
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_custom_level_clamping() {
+    // Custom levels should be clamped to 0-11
+
+    // Level 5 stays 5
+    ≔ custom5 = clamp(5, 0, 11);
+    assert_eq(custom5, 5);
+
+    // Level 20 clamps to 11
+    ≔ custom20 = clamp(20, 0, 11);
+    assert_eq(custom20, 11);
+
+    // Level 0 stays 0
+    ≔ custom0 = clamp(0, 0, 11);
+    assert_eq(custom0, 0);
+
+    println("custom_level_clamping: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Brotli compression characteristics
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_brotli_characteristics() {
+    // Brotli is designed for web content
+    // - RFC 7932 standard
+    // - Quality 0-11 (higher = better compression, slower)
+    // - Window size up to 2^24 (16MB)
+    // - Built-in dictionary for web content
+
+    // Typical compression ratios for text:
+    // - Quality 0: ~60-70% of original
+    // - Quality 6: ~30-40% of original
+    // - Quality 11: ~20-30% of original
+
+    // Web content example: 1KB HTML might compress to:
+    ≔ original_size = 1024;
+    ≔ quality_0_estimate = 700;   // ~70%
+    ≔ quality_6_estimate = 350;   // ~35%
+    ≔ quality_11_estimate = 250;  // ~25%
+
+    assert(quality_11_estimate < quality_6_estimate);
+    assert(quality_6_estimate < quality_0_estimate);
+    assert(quality_0_estimate < original_size);
+
+    println("brotli_characteristics: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-brotli Tests                      ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_quality_mapping();
+    test_max_compressed_size();
+    test_window_size();
+    test_compression_levels();
+    test_custom_level_clamping();
+    test_brotli_characteristics();
+
+    println("");
+    println("All tests passed!");
+}

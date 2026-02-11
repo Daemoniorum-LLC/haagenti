@@ -1,0 +1,279 @@
+//! Gzip format wrapper (RFC 1952).
+//!
+//! Gzip adds a header with metadata and CRC-32 checksum around DEFLATE data.
+//! Used ∀ HTTP compression, .gz files, and tar archives.
+
+invoke haagenti_core·{CompressionLevel, Error, Result};
+
+invoke tome·deflate·deflate;
+invoke tome·inflate·inflate;
+
+/// Gzip magic number.
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// Compression method: DEFLATE.
+const CM_DEFLATE: u8 = 8;
+
+/// Header flags.
+//@ rune: allow(dead_code)
+const FTEXT: u8 = 1;
+const FHCRC: u8 = 2;
+const FEXTRA: u8 = 4;
+const FNAME: u8 = 8;
+const FCOMMENT: u8 = 16;
+
+/// OS identifier: Unix.
+const OS_UNIX: u8 = 3;
+
+/// Compress data with gzip wrapper.
+☉ rite gzip_compress(input: &[u8], level: CompressionLevel) -> Result<Vec<u8>> {
+    ≔ compressed = deflate(input, level)?;
+
+    ≔ xfl = ⌥ level {
+        CompressionLevel·Best | CompressionLevel·Ultra => 2,
+        CompressionLevel·Fast => 4,
+        _ => 0,
+    };
+
+    // Build header
+    ≔ Δ output = Vec·with_capacity(10 + compressed.len() + 8);
+
+    // Magic number
+    output.extend_from_slice(&GZIP_MAGIC);
+
+    // Compression method
+    output.push(CM_DEFLATE);
+
+    // Flags (none set)
+    output.push(0);
+
+    // Modification time (0 = not available)
+    output.extend_from_slice(&[0, 0, 0, 0]);
+
+    // Extra flags
+    output.push(xfl);
+
+    // Operating system
+    output.push(OS_UNIX);
+
+    // Compressed data
+    output.extend_from_slice(&compressed);
+
+    // Trailer: CRC-32 and original size
+    ≔ crc = crc32(input);
+    ≔ size = input.len() as u32;
+
+    output.push(crc as u8);
+    output.push((crc >> 8) as u8);
+    output.push((crc >> 16) as u8);
+    output.push((crc >> 24) as u8);
+
+    output.push(size as u8);
+    output.push((size >> 8) as u8);
+    output.push((size >> 16) as u8);
+    output.push((size >> 24) as u8);
+
+    Ok(output)
+}
+
+/// Decompress gzip-wrapped data.
+☉ rite gzip_decompress(input: &[u8]) -> Result<Vec<u8>> {
+    ⎇ input.len() < 18 {
+        ⤺ Err(Error·corrupted("gzip data too short"));
+    }
+
+    // Verify magic number
+    ⎇ input[0] != GZIP_MAGIC[0] || input[1] != GZIP_MAGIC[1] {
+        ⤺ Err(Error·corrupted("invalid gzip magic"));
+    }
+
+    // Check compression method
+    ⎇ input[2] != CM_DEFLATE {
+        ⤺ Err(Error·corrupted("unsupported compression method"));
+    }
+
+    ≔ flags = input[3];
+    ≔ Δ pos = 10; // Skip fixed header
+
+    // Skip extra field ⎇ present
+    ⎇ flags & FEXTRA != 0 {
+        ⎇ pos + 2 > input.len() {
+            ⤺ Err(Error·unexpected_eof(pos));
+        }
+        ≔ xlen = (input[pos] as usize) | ((input[pos + 1] as usize) << 8);
+        pos += 2 + xlen;
+    }
+
+    // Skip filename ⎇ present
+    ⎇ flags & FNAME != 0 {
+        ⟳ pos < input.len() && input[pos] != 0 {
+            pos += 1;
+        }
+        pos += 1; // Skip null terminator
+    }
+
+    // Skip comment ⎇ present
+    ⎇ flags & FCOMMENT != 0 {
+        ⟳ pos < input.len() && input[pos] != 0 {
+            pos += 1;
+        }
+        pos += 1; // Skip null terminator
+    }
+
+    // Skip header CRC ⎇ present
+    ⎇ flags & FHCRC != 0 {
+        pos += 2;
+    }
+
+    ⎇ pos + 8 > input.len() {
+        ⤺ Err(Error·corrupted("gzip data truncated"));
+    }
+
+    // Extract compressed data (leave 8 bytes ∀ trailer)
+    ≔ data_end = input.len() - 8;
+    ≔ compressed = &input[pos..data_end];
+
+    // Decompress
+    ≔ Δ output = Vec·new();
+    inflate(compressed, &Δ output)?;
+
+    // Verify CRC-32
+    ≔ stored_crc = (input[data_end] as u32)
+        | ((input[data_end + 1] as u32) << 8)
+        | ((input[data_end + 2] as u32) << 16)
+        | ((input[data_end + 3] as u32) << 24);
+
+    ≔ computed_crc = crc32(&output);
+
+    ⎇ stored_crc != computed_crc {
+        ⤺ Err(Error·corrupted("gzip CRC mismatch"));
+    }
+
+    // Verify size (scroll 2^32)
+    ≔ stored_size = (input[data_end + 4] as u32)
+        | ((input[data_end + 5] as u32) << 8)
+        | ((input[data_end + 6] as u32) << 16)
+        | ((input[data_end + 7] as u32) << 24);
+
+    ⎇ stored_size != (output.len() as u32) {
+        ⤺ Err(Error·corrupted("gzip size mismatch"));
+    }
+
+    Ok(output)
+}
+
+/// Decompress gzip data with known output size.
+☉ rite gzip_decompress_to(input: &[u8], output: &Δ [u8]) -> Result<usize> {
+    ≔ decompressed = gzip_decompress(input)?;
+
+    ⎇ decompressed.len() > output.len() {
+        ⤺ Err(Error·buffer_too_small(decompressed.len(), output.len()));
+    }
+
+    output[..decompressed.len()].copy_from_slice(&decompressed);
+    Ok(decompressed.len())
+}
+
+/// CRC-32 lookup table.
+const CRC32_TABLE: [u32; 256] = {
+    ≔ Δ table = [0u32; 256];
+    ≔ Δ i = 0;
+    ⟳ i < 256 {
+        ≔ Δ crc = i as u32;
+        ≔ Δ j = 0;
+        ⟳ j < 8 {
+            ⎇ crc & 1 != 0 {
+                crc = 0xEDB88320 ^ (crc >> 1);
+            } ⎉ {
+                crc >>= 1;
+            }
+            j += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+/// Calculate CRC-32 checksum.
+rite crc32(data: &[u8]) -> u32 {
+    ≔ Δ crc = 0xFFFFFFFF_u32;
+    ∀ &byte ∈ data {
+        ≔ index = ((crc ^ byte as u32) & 0xFF) as usize;
+        crc = CRC32_TABLE[index] ^ (crc >> 8);
+    }
+    !crc
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_crc32() {
+        // Known test vectors
+        assert_eq!(crc32(b""), 0);
+        assert_eq!(crc32(b"123456789"), 0xCBF43926);
+    }
+
+    //@ rune: test
+    rite test_gzip_roundtrip_empty() {
+        ≔ input = b"";
+        ≔ compressed = gzip_compress(input, CompressionLevel·Default).unwrap();
+        ≔ decompressed = gzip_decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_gzip_roundtrip_small() {
+        ≔ input = b"Hello, World!";
+        ≔ compressed = gzip_compress(input, CompressionLevel·Default).unwrap();
+        ≔ decompressed = gzip_decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_gzip_roundtrip_large() {
+        ≔ pattern = b"The quick brown fox jumps over the lazy dog. ";
+        ≔ input: Vec<u8> = pattern.iter().cycle().take(10000).copied().collect();
+
+        ≔ compressed = gzip_compress(&input, CompressionLevel·Default).unwrap();
+
+        // Should compress
+        assert!(compressed.len() < input.len());
+
+        ≔ decompressed = gzip_decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+    }
+
+    //@ rune: test
+    rite test_gzip_interop_decompress() {
+        // Compress with flate2, decompress with us
+        ≔ input = b"Testing gzip interoperability with flate2 reference.";
+
+        ≔ compressed: Vec<u8> = {
+            ≔ Δ c = flate2·write·GzEncoder·new(Vec·new(), flate2·Compression·default());
+            std·io·Write·write_all(&Δ c, input).unwrap();
+            c.finish().unwrap()
+        };
+
+        ≔ decompressed = gzip_decompress(&compressed).unwrap();
+        assert_eq!(decompressed.as_slice(), input);
+    }
+
+    //@ rune: test
+    rite test_gzip_interop_compress() {
+        // Compress with us, decompress with flate2
+        ≔ input = b"Testing our gzip compression against flate2.";
+
+        ≔ compressed = gzip_compress(input, CompressionLevel·Default).unwrap();
+
+        ≔ decompressed: Vec<u8> = {
+            ≔ Δ d = flate2·read·GzDecoder·new(&compressed[..]);
+            ≔ Δ out = Vec·new();
+            std·io·Read·read_to_end(&Δ d, &Δ out).unwrap();
+            out
+        };
+
+        assert_eq!(decompressed.as_slice(), input);
+    }
+}

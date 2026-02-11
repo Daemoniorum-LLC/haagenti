@@ -1,0 +1,252 @@
+// SIMD Memory Operations Tests
+//
+// Tests for SIMD-accelerated memory operations.
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Copy alignment requirements
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_copy_alignment() {
+    // SIMD operations prefer aligned memory
+
+    // SSE/NEON: 16-byte alignment
+    ≔ sse_align = 16;
+    ≔ neon_align = 16;
+
+    // AVX2: 32-byte alignment
+    ≔ avx2_align = 32;
+
+    // AVX-512: 64-byte alignment
+    ≔ avx512_align = 64;
+
+    // Test alignment check
+    ≔ addr = 0x1000;  // 4096, aligned to all
+    assert_eq(addr % sse_align, 0);
+    assert_eq(addr % avx2_align, 0);
+    assert_eq(addr % avx512_align, 0);
+
+    ≔ unaligned = 0x1001;
+    assert(unaligned % sse_align != 0);
+
+    println("copy_alignment: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Overlapping copy detection
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_overlap_detection() {
+    // Detect if source and destination overlap
+
+    // Non-overlapping: src_end <= dst_start OR dst_end <= src_start
+    ≔ src_start = 100;
+    ≔ src_len = 50;
+    ≔ src_end = src_start + src_len;
+
+    // Case 1: dst after src (no overlap)
+    ≔ dst_after = 200;
+    ≔ no_overlap_1 = src_end <= dst_after;
+    assert(no_overlap_1);
+
+    // Case 2: dst before src (no overlap)
+    ≔ dst_before = 0;
+    ≔ dst_before_end = 50;
+    ≔ no_overlap_2 = dst_before_end <= src_start;
+    assert(no_overlap_2);
+
+    // Case 3: dst overlaps src
+    ≔ dst_overlap = 120;  // Within src range
+    ≔ overlaps = dst_overlap >= src_start && dst_overlap < src_end;
+    assert(overlaps);
+
+    println("overlap_detection: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Run-length encoding copy
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_rle_copy() {
+    // RLE copy: offset = 1, copy same byte N times
+
+    ≔ offset = 1;
+    ≔ length = 100;
+
+    // This is equivalent to memset
+    // Very efficient with SIMD (broadcast + store)
+
+    // AVX2 can write 32 bytes at once
+    ≔ avx2_width = 32;
+    ≔ iterations_avx2 = length / avx2_width;
+    assert_eq(iterations_avx2, 3);  // 3 full vectors + remainder
+
+    // SSE can write 16 bytes at once
+    ≔ sse_width = 16;
+    ≔ iterations_sse = length / sse_width;
+    assert_eq(iterations_sse, 6);
+
+    println("rle_copy: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Pattern copy
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_pattern_copy() {
+    // Pattern copy: offset < length, repeat pattern
+
+    // Example: offset=4, length=20
+    // Copies 4-byte pattern 5 times
+
+    ≔ offset = 4;
+    ≔ length = 20;
+    ≔ full_patterns = length / offset;
+    ≔ remainder = length % offset;
+
+    assert_eq(full_patterns, 5);
+    assert_eq(remainder, 0);
+
+    // Non-divisible case: offset=3, length=10
+    ≔ offset_3 = 3;
+    ≔ length_10 = 10;
+    ≔ patterns_3 = length_10 / offset_3;
+    ≔ remainder_3 = length_10 % offset_3;
+
+    assert_eq(patterns_3, 3);
+    assert_eq(remainder_3, 1);
+
+    println("pattern_copy: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Forward vs backward copy
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_copy_direction() {
+    // When regions overlap, copy direction matters
+
+    // Forward copy: dst > src, copy from end backward
+    // Backward copy: dst < src, copy from start forward
+
+    ≔ src = 100;
+    ≔ dst_after = 110;
+    ≔ copy_backward_needed = dst_after > src;
+    assert(copy_backward_needed);
+
+    ≔ dst_before = 90;
+    ≔ copy_forward_needed = dst_before < src;
+    assert(copy_forward_needed);
+
+    println("copy_direction: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Memset optimization
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_memset_optimization() {
+    // Memset with SIMD uses broadcast + store
+
+    // Steps:
+    // 1. Broadcast byte to all lanes
+    // 2. Store full vectors
+    // 3. Handle remainder
+
+    ≔ length = 1000;
+    ≔ vector_width = 32;  // AVX2
+
+    ≔ full_vectors = length / vector_width;
+    ≔ remainder = length % vector_width;
+
+    assert_eq(full_vectors, 31);
+    assert_eq(remainder, 8);
+
+    // Total stores
+    ≔ vector_stores = full_vectors;
+    ≔ remainder_stores = 1;  // One partial store
+    ≔ total_stores = vector_stores + remainder_stores;
+
+    assert_eq(total_stores, 32);
+
+    println("memset_optimization: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Memcpy optimization
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_memcpy_optimization() {
+    // Non-overlapping memcpy with SIMD
+
+    // AVX2 aligned copy:
+    // 1. Load 32 bytes
+    // 2. Store 32 bytes
+    // Repeat until done
+
+    ≔ length = 1024;
+    ≔ vector_width = 32;
+
+    ≔ iterations = length / vector_width;
+    assert_eq(iterations, 32);
+
+    // Total memory operations
+    ≔ loads = iterations;
+    ≔ stores = iterations;
+    ≔ total_ops = loads + stores;
+
+    assert_eq(total_ops, 64);
+
+    // Unaligned copy may need extra operations
+    ≔ unaligned_penalty = 2;  // ~2 extra cycles per vector
+
+    println("memcpy_optimization: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: Cache line considerations
+// ════════════════════════════════════════════════════════════════════════════
+
+rite test_cache_line() {
+    // Modern CPUs have 64-byte cache lines
+
+    ≔ cache_line_size = 64;
+
+    // AVX-512 can load/store full cache line
+    ≔ avx512_width = 64;
+    assert_eq(avx512_width, cache_line_size);
+
+    // AVX2 needs 2 operations per cache line
+    ≔ avx2_width = 32;
+    ≔ avx2_per_line = cache_line_size / avx2_width;
+    assert_eq(avx2_per_line, 2);
+
+    // SSE needs 4 operations per cache line
+    ≔ sse_width = 16;
+    ≔ sse_per_line = cache_line_size / sse_width;
+    assert_eq(sse_per_line, 4);
+
+    println("cache_line: PASS");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Main
+// ════════════════════════════════════════════════════════════════════════════
+
+rite main() {
+    println("╔════════════════════════════════════════════════╗");
+    println("║     haagenti-simd Memory Ops Tests             ║");
+    println("╚════════════════════════════════════════════════╝");
+    println("");
+
+    test_copy_alignment();
+    test_overlap_detection();
+    test_rle_copy();
+    test_pattern_copy();
+    test_copy_direction();
+    test_memset_optimization();
+    test_memcpy_optimization();
+    test_cache_line();
+
+    println("");
+    println("All tests passed!");
+}
