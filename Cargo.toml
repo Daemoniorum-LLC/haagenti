@@ -168,7 +168,7 @@ pin-project-lite = "0.2"
 # ═══════════════════════════════════════════════════════════════════════════════
 # NETWORKING & HTTP
 # ═══════════════════════════════════════════════════════════════════════════════
-reqwest = { version = "0.11", features = ["stream", "gzip", "brotli", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["stream", "gzip", "brotli", "rustls-tls"] }
 hyper = { version = "1.5", features = ["http1", "http2", "server", "client"] }
 hyper-util = "0.1"
 http-body-util = "0.1"
