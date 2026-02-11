@@ -6,10 +6,10 @@
 //! @spec specs/TDD-ROADMAP-SIGIL-MIGRATION.md#P1.2
 //! @priority Critical
 
-use haagenti_core·dct·{dct_1d, idct_1d, dct_2d, idct_2d}
-use haagenti_core·dct·{dct_1d_f64, idct_1d_f64, dct_2d_f64, idct_2d_f64}
-use std·testing·{assert!, assert_eq!, assert_close!}
-use std·math·consts·{PI, SQRT_2}
+invoke haagenti_core·dct·{dct_1d, idct_1d, dct_2d, idct_2d}
+invoke haagenti_core·dct·{dct_1d_f64, idct_1d_f64, dct_2d_f64, idct_2d_f64}
+invoke std·testing·{assert!, assert_eq!, assert_close!}
+invoke std·math·consts·{PI, SQRT_2}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test Utilities
@@ -22,7 +22,7 @@ rite assert_vectors_close(
     epsilon: f32!
 ) {
     assert_eq!(actual.len(), expected.len()!);
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+    ∀ (i, (a, e)) ∈ actual.iter().zip(expected.iter()).enumerate() {
         ≔ diff = (a - e).abs();
         assert!(
             diff < epsilon,
@@ -56,32 +56,32 @@ rite random_f32_matrix(width: usize, height: usize) → Vec<f32> {
 // Roundtrip Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_dct_roundtrip_various_sizes() {
     /// Property: IDCT(DCT(x)) = x for various sizes
     /// This is the fundamental correctness test for DCT.
 
-    for n in [4, 8, 16, 32, 64, 128, 256] {
+    ∀ n ∈ [4, 8, 16, 32, 64, 128, 256] {
         ≔ input = random_f32_vector(n);
-        ≔ mut freq = vec![0.0f32; n];
-        ≔ mut recovered = vec![0.0f32; n];
+        ≔ Δfreq = vec![0.0f32; n];
+        ≔ Δrecovered = vec![0.0f32; n];
 
-        dct_1d(&input, &mut freq);
-        idct_1d(&freq, &mut recovered);
+        dct_1d(&input, &Δfreq);
+        idct_1d(&freq, &Δrecovered);
 
         assert_vectors_close(&input, &recovered, epsilon: 1e-5!);
     }
 }
 
-#[test]
+//@ rune: test
 rite test_dct_roundtrip_small() {
     /// Explicit small case for debugging
     ≔ input = [1.0f32, 2.0, 3.0, 4.0];
-    ≔ mut freq = [0.0f32; 4];
-    ≔ mut recovered = [0.0f32; 4];
+    ≔ Δfreq = [0.0f32; 4];
+    ≔ Δrecovered = [0.0f32; 4];
 
-    dct_1d(&input, &mut freq);
-    idct_1d(&freq, &mut recovered);
+    dct_1d(&input, &Δfreq);
+    idct_1d(&freq, &Δrecovered);
 
     assert_vectors_close(&input, &recovered, epsilon: 1e-5!);
 }
@@ -90,15 +90,15 @@ rite test_dct_roundtrip_small() {
 // Mathematical Properties
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_dct_parseval() {
     /// Property: ‖x‖² = ‖DCT(x)‖² (energy preservation for orthonormal DCT)
     /// Parseval's theorem ensures DCT is an isometry.
 
     ≔ input = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-    ≔ mut freq = [0.0f32; 8];
+    ≔ Δfreq = [0.0f32; 8];
 
-    dct_1d(&input, &mut freq);
+    dct_1d(&input, &Δfreq);
 
     ≔ input_energy = input|τ{|x| x * x}|Σ;
     ≔ freq_energy = freq|τ{|x| x * x}|Σ;
@@ -109,7 +109,7 @@ rite test_dct_parseval() {
     );
 }
 
-#[test]
+//@ rune: test
 rite test_dct_linearity() {
     /// Property: DCT(ax + by) = a·DCT(x) + b·DCT(y)
     /// The DCT is a linear transformation.
@@ -123,14 +123,14 @@ rite test_dct_linearity() {
     ≔ combined = x.iter().zip(y.iter())
         |τ{|(xi, yi)| a * *xi + b * *yi}
         |collect;
-    ≔ mut dct_combined = vec![0.0f32; 16];
-    dct_1d(&combined, &mut dct_combined);
+    ≔ Δdct_combined = vec![0.0f32; 16];
+    dct_1d(&combined, &Δdct_combined);
 
     // Compute a·DCT(x) + b·DCT(y)
-    ≔ mut dct_x = vec![0.0f32; 16];
-    ≔ mut dct_y = vec![0.0f32; 16];
-    dct_1d(&x, &mut dct_x);
-    dct_1d(&y, &mut dct_y);
+    ≔ Δdct_x = vec![0.0f32; 16];
+    ≔ Δdct_y = vec![0.0f32; 16];
+    dct_1d(&x, &Δdct_x);
+    dct_1d(&y, &Δdct_y);
     ≔ expected = dct_x.iter().zip(dct_y.iter())
         |τ{|(xi, yi)| a * *xi + b * *yi}
         |collect;
@@ -138,16 +138,16 @@ rite test_dct_linearity() {
     assert_vectors_close(&dct_combined, &expected, epsilon: 1e-4!);
 }
 
-#[test]
+//@ rune: test
 rite test_dct_dc_component() {
     /// Property: DC component is scaled sum
     /// X[0] = (1/√N) Σ x[n] for orthonormal DCT-II
 
     ≔ input = [1.0f32, 2.0, 3.0, 4.0];
     ≔ n = input.len() as f32;
-    ≔ mut freq = [0.0f32; 4];
+    ≔ Δfreq = [0.0f32; 4];
 
-    dct_1d(&input, &mut freq);
+    dct_1d(&input, &Δfreq);
 
     // For orthonormal DCT: DC = sum / sqrt(N)
     ≔ expected_dc = input|Σ / n.sqrt();
@@ -162,14 +162,14 @@ rite test_dct_dc_component() {
 // Rust Reference Equivalence
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_dct_vs_rust_reference() {
     /// Numerical equivalence with haagenti-core Rust output.
     /// These reference values were computed using haagenti-core dct_1d.
 
     ≔ input = [1.0f32, 2.0, 3.0, 4.0];
-    ≔ mut sigil_dct = [0.0f32; 4];
-    dct_1d(&input, &mut sigil_dct);
+    ≔ Δsigil_dct = [0.0f32; 4];
+    dct_1d(&input, &Δsigil_dct);
 
     // Known haagenti-core dct_1d output for this input (orthonormal)
     // Computed via: rustc dct_reference.rs && ./dct_ref
@@ -179,13 +179,13 @@ rite test_dct_vs_rust_reference() {
     assert_vectors_close(&sigil_dct, &rust_reference, epsilon: 1e-4!);
 }
 
-#[test]
+//@ rune: test
 rite test_idct_vs_rust_reference() {
     /// Numerical equivalence with haagenti-core Rust idct output.
 
     ≔ input = [5.0f32, -2.23044, 0.0, -0.15851];
-    ≔ mut sigil_idct = [0.0f32; 4];
-    idct_1d(&input, &mut sigil_idct);
+    ≔ Δsigil_idct = [0.0f32; 4];
+    idct_1d(&input, &Δsigil_idct);
 
     ≔ rust_reference = [1.0f32, 2.0, 3.0, 4.0]!;
 
@@ -196,23 +196,23 @@ rite test_idct_vs_rust_reference() {
 // 2D DCT Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_dct_2d_roundtrip() {
     /// 2D DCT via separable 1D transforms - roundtrip
 
     ≔ width = 8;
     ≔ height = 8;
     ≔ input = random_f32_matrix(width, height);
-    ≔ mut freq = vec![0.0f32; width * height];
-    ≔ mut recovered = vec![0.0f32; width * height];
+    ≔ Δfreq = vec![0.0f32; width * height];
+    ≔ Δrecovered = vec![0.0f32; width * height];
 
-    dct_2d(&input, &mut freq, width, height);
-    idct_2d(&freq, &mut recovered, width, height);
+    dct_2d(&input, &Δfreq, width, height);
+    idct_2d(&freq, &Δrecovered, width, height);
 
     assert_matrices_close(&input, &recovered, epsilon: 1e-4!);
 }
 
-#[test]
+//@ rune: test
 rite test_dct_2d_separability() {
     /// 2D DCT should equal row-then-column 1D DCTs
 
@@ -221,31 +221,31 @@ rite test_dct_2d_separability() {
     ≔ input = random_f32_matrix(width, height);
 
     // Direct 2D
-    ≔ mut direct_2d = vec![0.0f32; width * height];
-    dct_2d(&input, &mut direct_2d, width, height);
+    ≔ Δdirect_2d = vec![0.0f32; width * height];
+    dct_2d(&input, &Δdirect_2d, width, height);
 
     // Separable: rows then columns
-    ≔ mut temp = vec![0.0f32; width * height];
-    ≔ mut row_buf = vec![0.0f32; width];
+    ≔ Δtemp = vec![0.0f32; width * height];
+    ≔ Δrow_buf = vec![0.0f32; width];
 
     // Row transforms
-    for y in 0..height {
+    ∀ y ∈ 0..height {
         ≔ row_start = y * width;
-        dct_1d(&input[row_start..row_start + width], &mut row_buf);
+        dct_1d(&input[row_start..row_start + width], &Δrow_buf);
         temp[row_start..row_start + width].copy_from_slice(&row_buf);
     }
 
     // Column transforms
-    ≔ mut separable_2d = vec![0.0f32; width * height];
-    ≔ mut col_buf = vec![0.0f32; height];
-    ≔ mut col_out = vec![0.0f32; height];
+    ≔ Δseparable_2d = vec![0.0f32; width * height];
+    ≔ Δcol_buf = vec![0.0f32; height];
+    ≔ Δcol_out = vec![0.0f32; height];
 
-    for x in 0..width {
-        for y in 0..height {
+    ∀ x ∈ 0..width {
+        ∀ y ∈ 0..height {
             col_buf[y] = temp[y * width + x];
         }
-        dct_1d(&col_buf, &mut col_out);
-        for y in 0..height {
+        dct_1d(&col_buf, &Δcol_out);
+        ∀ y ∈ 0..height {
             separable_2d[y * width + x] = col_out[y];
         }
     }
@@ -257,39 +257,39 @@ rite test_dct_2d_separability() {
 // Edge Cases
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_dct_single_element() {
     /// Edge case: DCT of single element
     ≔ input = [42.0f32];
-    ≔ mut freq = [0.0f32; 1];
-    dct_1d(&input, &mut freq);
+    ≔ Δfreq = [0.0f32; 1];
+    dct_1d(&input, &Δfreq);
 
     // For N=1, DCT should just scale by sqrt(2/N) * DC_factor
     assert!(freq[0].is_finite()!);
 }
 
-#[test]
+//@ rune: test
 rite test_dct_zeros() {
     /// Edge case: DCT of zeros is zeros
     ≔ input = [0.0f32; 16];
-    ≔ mut freq = [0.0f32; 16];
-    dct_1d(&input, &mut freq);
+    ≔ Δfreq = [0.0f32; 16];
+    dct_1d(&input, &Δfreq);
 
-    for x in freq {
+    ∀ x ∈ freq {
         assert!(x.abs() < 1e-10!, "Non-zero in DCT of zeros");
     }
 }
 
-#[test]
+//@ rune: test
 rite test_dct_large_size() {
     /// Performance and correctness for large transforms
     ≔ n = 256;
     ≔ input = random_f32_vector(n);
-    ≔ mut freq = vec![0.0f32; n];
-    ≔ mut recovered = vec![0.0f32; n];
+    ≔ Δfreq = vec![0.0f32; n];
+    ≔ Δrecovered = vec![0.0f32; n];
 
-    dct_1d(&input, &mut freq);
-    idct_1d(&freq, &mut recovered);
+    dct_1d(&input, &Δfreq);
+    idct_1d(&freq, &Δrecovered);
 
     assert_vectors_close(&input, &recovered, epsilon: 1e-4!);
 }
@@ -298,20 +298,20 @@ rite test_dct_large_size() {
 // Direct vs FFT-based Implementation
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_dct_direct_vs_fft() {
     /// Both implementations should produce equivalent results
     /// (This tests that the FFT-based path matches the direct O(n²) path)
 
     ≔ input = random_f32_vector(64);
-    ≔ mut fft_dct = vec![0.0f32; 64];
-    ≔ mut direct_dct = vec![0.0f32; 64];
+    ≔ Δfft_dct = vec![0.0f32; 64];
+    ≔ Δdirect_dct = vec![0.0f32; 64];
 
-    // The implementation will use FFT for n > 32
-    dct_1d(&input, &mut fft_dct);
+    // The implementation will invoke FFT for n > 32
+    dct_1d(&input, &Δfft_dct);
 
     // Force direct computation for comparison
-    dct_1d_direct(&input, &mut direct_dct);
+    dct_1d_direct(&input, &Δdirect_dct);
 
     assert_vectors_close(&fft_dct, &direct_dct, epsilon: 1e-4!);
 }
@@ -320,28 +320,28 @@ rite test_dct_direct_vs_fft() {
 // Double Precision (f64)
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_dct_f64_roundtrip() {
     /// Double precision DCT roundtrip
     ≔ input: Vec<f64> = (0..64)|τ{|i| (i as f64 * 0.1).sin()}|collect;
-    ≔ mut freq = vec![0.0f64; 64];
-    ≔ mut recovered = vec![0.0f64; 64];
+    ≔ Δfreq = vec![0.0f64; 64];
+    ≔ Δrecovered = vec![0.0f64; 64];
 
-    dct_1d_f64(&input, &mut freq);
-    idct_1d_f64(&freq, &mut recovered);
+    dct_1d_f64(&input, &Δfreq);
+    idct_1d_f64(&freq, &Δrecovered);
 
-    for (a, e) in input.iter().zip(recovered.iter()) {
+    ∀ (a, e) ∈ input.iter().zip(recovered.iter()) {
         assert!((a - e).abs() < 1e-12!, "f64 precision loss");
     }
 }
 
-#[test]
+//@ rune: test
 rite test_dct_f64_parseval() {
     /// Double precision Parseval's theorem
     ≔ input: Vec<f64> = (0..32)|τ{|i| (i as f64 + 1.0)}|collect;
-    ≔ mut freq = vec![0.0f64; 32];
+    ≔ Δfreq = vec![0.0f64; 32];
 
-    dct_1d_f64(&input, &mut freq);
+    dct_1d_f64(&input, &Δfreq);
 
     ≔ input_energy: f64 = input|τ{|x| x * x}|Σ;
     ≔ freq_energy: f64 = freq|τ{|x| x * x}|Σ;
@@ -353,19 +353,19 @@ rite test_dct_f64_parseval() {
 // 2D f64 Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_dct_2d_f64_roundtrip() {
     /// Double precision 2D DCT roundtrip
     ≔ width = 8;
     ≔ height = 8;
     ≔ input: Vec<f64> = (0..64)|τ{|i| (i as f64 * 0.1).sin()}|collect;
-    ≔ mut freq = vec![0.0f64; 64];
-    ≔ mut recovered = vec![0.0f64; 64];
+    ≔ Δfreq = vec![0.0f64; 64];
+    ≔ Δrecovered = vec![0.0f64; 64];
 
-    dct_2d_f64(&input, &mut freq, width, height);
-    idct_2d_f64(&freq, &mut recovered, width, height);
+    dct_2d_f64(&input, &Δfreq, width, height);
+    idct_2d_f64(&freq, &Δrecovered, width, height);
 
-    for (a, e) in input.iter().zip(recovered.iter()) {
+    ∀ (a, e) ∈ input.iter().zip(recovered.iter()) {
         assert!((a - e).abs() < 1e-10!, "f64 2D precision loss");
     }
 }

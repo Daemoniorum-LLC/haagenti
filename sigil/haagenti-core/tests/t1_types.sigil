@@ -6,16 +6,16 @@
 //! @spec specs/TDD-ROADMAP-SIGIL-MIGRATION.md#P1.3
 //! @priority High
 
-use haagenti_core·types·{CompressionStats, CompressionMethod}
-use haagenti_core·error·CompressionError
-use haagenti_core·traits·{Compressor, Decompressor}
-use std·testing·{assert!, assert_eq!}
+invoke haagenti_core·types·{CompressionStats, CompressionMethod}
+invoke haagenti_core·error·CompressionError
+invoke haagenti_core·traits·{Compressor, Decompressor}
+invoke std·testing·{assert!, assert_eq!}
 
 // ════════════════════════════════════════════════════════════════════════════
 // CompressionStats Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_compression_stats_default() {
     /// Default stats should have zero values
     ≔ stats = CompressionStats·default();
@@ -25,7 +25,7 @@ rite test_compression_stats_default() {
     assert!(stats.compression_ratio().is_nan()!);
 }
 
-#[test]
+//@ rune: test
 rite test_compression_stats_ratio() {
     /// Compression ratio is original / compressed
     ≔ stats = CompressionStats {
@@ -39,7 +39,7 @@ rite test_compression_stats_ratio() {
     assert!((ratio - 4.0).abs() < 1e-6!, "Expected ratio 4.0, got {ratio}");
 }
 
-#[test]
+//@ rune: test
 rite test_compression_stats_ratio_zero_compressed() {
     /// Edge case: zero compressed size should return infinity
     ≔ stats = CompressionStats {
@@ -52,7 +52,7 @@ rite test_compression_stats_ratio_zero_compressed() {
     assert!(stats.compression_ratio().is_infinite()!);
 }
 
-#[test]
+//@ rune: test
 rite test_compression_stats_throughput() {
     /// Throughput in MB/s
     ≔ stats = CompressionStats {
@@ -71,7 +71,7 @@ rite test_compression_stats_throughput() {
 // CompressionMethod Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_compression_method_display() {
     /// Methods should have human-readable Display implementations
 
@@ -80,7 +80,7 @@ rite test_compression_method_display() {
     assert_eq!(CompressionMethod·LowRankDistributed.to_string(), "LowRankDistributed"!);
 }
 
-#[test]
+//@ rune: test
 rite test_compression_method_is_lossy() {
     /// All HoloTensor methods are lossy
     assert!(CompressionMethod·Spectral.is_lossy()!);
@@ -92,7 +92,7 @@ rite test_compression_method_is_lossy() {
 // CompressionError Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_compression_error_invalid_dimension() {
     /// InvalidDimension error should contain expected and actual values
     ≔ err = CompressionError·InvalidDimension {
@@ -106,7 +106,7 @@ rite test_compression_error_invalid_dimension() {
     assert!(msg.contains("dimension")!);
 }
 
-#[test]
+//@ rune: test
 rite test_compression_error_insufficient_rank() {
     /// InsufficientRank error for low-rank decomposition failures
     ≔ err = CompressionError·InsufficientRank {
@@ -120,7 +120,7 @@ rite test_compression_error_insufficient_rank() {
     assert!(msg.contains("rank")!);
 }
 
-#[test]
+//@ rune: test
 rite test_compression_error_invalid_format() {
     /// InvalidFormat error for deserialization failures
     ≔ err = CompressionError·InvalidFormat {
@@ -131,7 +131,7 @@ rite test_compression_error_invalid_format() {
     assert!(msg.contains("Magic bytes")!);
 }
 
-#[test]
+//@ rune: test
 rite test_compression_error_from_io() {
     /// Errors should be convertible from std::io::Error
     ≔ io_err = std·io·Error·new(
@@ -140,7 +140,7 @@ rite test_compression_error_from_io() {
     );
 
     ≔ err: CompressionError = io_err.into();
-    match err {
+    ⌥ err {
         CompressionError·Io(inner) => {
             assert!(inner.to_string().contains("not found")~);
         },
@@ -152,7 +152,7 @@ rite test_compression_error_from_io() {
 // Trait Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_compressor_trait_object_safety() {
     /// Compressor trait should be object-safe for dynamic dispatch
     ≔ compressors: Vec<&dyn Compressor> = vec![];
@@ -161,7 +161,7 @@ rite test_compressor_trait_object_safety() {
     assert!(compressors.is_empty()!);
 }
 
-#[test]
+//@ rune: test
 rite test_decompressor_trait_object_safety() {
     /// Decompressor trait should be object-safe for dynamic dispatch
     ≔ decompressors: Vec<&dyn Decompressor> = vec![];

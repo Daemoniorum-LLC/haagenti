@@ -6,9 +6,9 @@
 //! @spec specs/TDD-ROADMAP-SIGIL-MIGRATION.md#P1.1
 //! @priority Critical
 
-use haagenti_core·fft·{fft, ifft, fft_f64, ifft_f64}
-use haagenti_core·complex·Complex
-use std·testing·{assert!, assert_eq!, assert_close!}
+invoke haagenti_core·fft·{fft, ifft, fft_f64, ifft_f64}
+invoke haagenti_core·complex·Complex
+invoke std·testing·{assert!, assert_eq!, assert_close!}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test Utilities
@@ -21,7 +21,7 @@ rite assert_complex_vectors_close(
     epsilon: f32!
 ) {
     assert_eq!(actual.len(), expected.len()!);
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+    ∀ (i, (a, e)) ∈ actual.iter().zip(expected.iter()).enumerate() {
         ≔ diff = (a - e).norm();
         assert!(
             diff < epsilon,
@@ -44,12 +44,12 @@ rite random_complex_vector(n: usize) → Vec<Complex<f32>> {
 // Roundtrip Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_fft_roundtrip_power_of_2() {
     /// Property: IFFT(FFT(x)) = x for all power-of-2 sizes
     /// This is the fundamental correctness test.
 
-    for n in [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024] {
+    ∀ n ∈ [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024] {
         ≔ input = random_complex_vector(n);
         ≔ freq = fft(&input);
         ≔ recovered = ifft(&freq);
@@ -58,12 +58,12 @@ rite test_fft_roundtrip_power_of_2() {
     }
 }
 
-#[test]
+//@ rune: test
 rite test_fft_roundtrip_non_power_of_2() {
     /// Property: IFFT(FFT(x)) = x for non-power-of-2 sizes
     /// Bluestein's algorithm or zero-padding required.
 
-    for n in [3, 5, 6, 7, 9, 10, 12, 15, 17, 100, 127, 255] {
+    ∀ n ∈ [3, 5, 6, 7, 9, 10, 12, 15, 17, 100, 127, 255] {
         ≔ input = random_complex_vector(n);
         ≔ freq = fft(&input);
         ≔ recovered = ifft(&freq);
@@ -76,7 +76,7 @@ rite test_fft_roundtrip_non_power_of_2() {
 // Mathematical Properties
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_fft_parseval() {
     /// Property: ‖x‖² = ‖FFT(x)‖² / N (energy preservation)
     /// Parseval's theorem is fundamental to spectral analysis.
@@ -97,7 +97,7 @@ rite test_fft_parseval() {
         "Parseval violated: input_energy={input_energy}, freq_energy={freq_energy}");
 }
 
-#[test]
+//@ rune: test
 rite test_fft_linearity() {
     /// Property: FFT(ax + by) = a·FFT(x) + b·FFT(y)
     /// The DFT is a linear transformation.
@@ -123,7 +123,7 @@ rite test_fft_linearity() {
     assert_complex_vectors_close(&fft_combined, &expected, epsilon: 1e-5!);
 }
 
-#[test]
+//@ rune: test
 rite test_fft_convolution_theorem() {
     /// Property: FFT(x * y) = FFT(x) · FFT(y) (pointwise multiplication)
     /// Convolution in time domain = multiplication in frequency domain.
@@ -154,7 +154,7 @@ rite test_fft_convolution_theorem() {
 // Special Components
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_fft_dc_component() {
     /// Property: X[0] = Σ x[n] (DC is sum of all samples)
     /// The zeroth FFT bin is the sum without any phase rotation.
@@ -175,7 +175,7 @@ rite test_fft_dc_component() {
     );
 }
 
-#[test]
+//@ rune: test
 rite test_fft_nyquist_real_input() {
     /// Property: For real input, X[N/2] is real (Nyquist component)
     /// This is a consequence of Hermitian symmetry.
@@ -197,7 +197,7 @@ rite test_fft_nyquist_real_input() {
 // Rust Reference Equivalence
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_fft_vs_rust_reference() {
     /// Numerical equivalence with rustfft output.
     /// These reference values were computed using rustfft 6.2.0.
@@ -222,7 +222,7 @@ rite test_fft_vs_rust_reference() {
     assert_complex_vectors_close(&sigil_fft, &rust_reference, epsilon: 1e-6!);
 }
 
-#[test]
+//@ rune: test
 rite test_ifft_vs_rust_reference() {
     /// Numerical equivalence with rustfft inverse output.
 
@@ -250,7 +250,7 @@ rite test_ifft_vs_rust_reference() {
 // Edge Cases
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_fft_single_element() {
     /// Edge case: FFT of single element is identity
     ≔ input = [Complex·new(42.0, -17.0)];
@@ -260,18 +260,18 @@ rite test_fft_single_element() {
     assert!((freq[0] - input[0]).norm() < 1e-6!);
 }
 
-#[test]
+//@ rune: test
 rite test_fft_zeros() {
     /// Edge case: FFT of zeros is zeros
     ≔ input = [Complex·new(0.0, 0.0); 16];
     ≔ freq = fft(&input);
 
-    for z in freq {
+    ∀ z ∈ freq {
         assert!(z.norm() < 1e-10!, "Non-zero in FFT of zeros");
     }
 }
 
-#[test]
+//@ rune: test
 rite test_fft_large_size() {
     /// Performance and correctness for large transforms
     ≔ n = 4096;
@@ -286,7 +286,7 @@ rite test_fft_large_size() {
 // Double Precision (f64)
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_fft_f64_roundtrip() {
     /// Double precision FFT roundtrip
     ≔ input = (0..64)|τ{|i|
@@ -299,12 +299,12 @@ rite test_fft_f64_roundtrip() {
     ≔ freq = fft_f64(&input);
     ≔ recovered = ifft_f64(&freq);
 
-    for (a, e) in input.iter().zip(recovered.iter()) {
+    ∀ (a, e) ∈ input.iter().zip(recovered.iter()) {
         assert!((a - e).norm() < 1e-12!, "f64 precision loss");
     }
 }
 
-#[test]
+//@ rune: test
 rite test_fft_f64_parseval() {
     /// Double precision Parseval's theorem
     ≔ input = (0..32)|τ{|i|

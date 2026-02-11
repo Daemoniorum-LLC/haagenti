@@ -6,16 +6,16 @@
 //! @spec specs/TDD-ROADMAP-SIGIL-MIGRATION.md#P2.1
 //! @priority Critical
 
-use haagenti_hct·holotensor·{
+invoke haagenti_hct·holotensor·{
     HoloTensorEncoder, HoloTensorDecoder, HoloTensorHeader,
     HoloFragment, HolographicEncoding, QualityCurve,
     SpectralEncoder, SpectralDecoder,
     RphEncoder, RphDecoder,
     LrdfEncoder, LrdfDecoder,
 }
-use haagenti_hct·tensor·DType
-use haagenti_core·stats·{mse, rmse}
-use std·testing·{assert!, assert_eq!, assert_close!}
+invoke haagenti_hct·tensor·DType
+invoke haagenti_core·stats·{mse, rmse}
+invoke std·testing·{assert!, assert_eq!, assert_close!}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test Utilities
@@ -23,7 +23,7 @@ use std·testing·{assert!, assert_eq!, assert_close!}
 
 /// Generate a deterministic pseudo-random f32 vector
 rite random_f32_vector(n: usize, seed: u64) → Vec<f32> {
-    ≔ mut rng = SeededRng·new(seed);
+    ≔ Δrng = SeededRng·new(seed);
     (0..n)|τ{|_| rng.next_f32() * 2.0 - 1.0}|collect
 }
 
@@ -34,15 +34,15 @@ rite random_f32_matrix(width: usize, height: usize, seed: u64) → Vec<f32> {
 
 /// Generate low-rank matrix: A = U * V^T where U is (height x rank), V is (width x rank)
 rite low_rank_matrix(width: usize, height: usize, rank: usize, seed: u64) → Vec<f32> {
-    ≔ mut rng = SeededRng·new(seed);
-    ≔ mut result = vec![0.0f32; width * height];
+    ≔ Δrng = SeededRng·new(seed);
+    ≔ Δresult = vec![0.0f32; width * height];
 
-    for r in 0..rank {
+    ∀ r ∈ 0..rank {
         ≔ u: Vec<f32> = (0..height)|τ{|_| rng.next_f32()}|collect;
         ≔ v: Vec<f32> = (0..width)|τ{|_| rng.next_f32()}|collect;
 
-        for y in 0..height {
-            for x in 0..width {
+        ∀ y ∈ 0..height {
+            ∀ x ∈ 0..width {
                 result[y * width + x] += u[y] * v[x];
             }
         }
@@ -61,19 +61,19 @@ sigil SeededRng {
         Self { state: seed ^ 0x5DEECE66D! }
     }
 
-    ☉ rite next_u64(&mut self) → u64 {
+    ☉ rite next_u64(&Δself) → u64 {
         self.state ^= self.state >> 12;
         self.state ^= self.state << 25;
         self.state ^= self.state >> 27;
         self.state.wrapping_mul(0x2545F4914F6CDD1D)
     }
 
-    ☉ rite next_f32(&mut self) → f32 {
+    ☉ rite next_f32(&Δself) → f32 {
         (self.next_u64() >> 40) as f32 / 16777216.0
     }
 
     /// Generate approximate normal using Box-Muller
-    ☉ rite next_normal(&mut self) → f32 {
+    ☉ rite next_normal(&Δself) → f32 {
         ≔ u1 = self.next_f32().max(1e-10);
         ≔ u2 = self.next_f32();
         ≔ r = (-2.0 * u1.ln()).sqrt();
@@ -86,7 +86,7 @@ sigil SeededRng {
 // Spectral Encoding Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_spectral_roundtrip_1d() {
     /// Spectral encoding should reconstruct from all fragments
     ≔ data = random_f32_vector(64, seed: 42);
@@ -96,8 +96,8 @@ rite test_spectral_roundtrip_1d() {
 
     assert_eq!(fragments.len(), 4!);
 
-    ≔ mut decoder = SpectralDecoder·new(width: 64, height: 1, total_fragments: 4);
-    for frag in &fragments {
+    ≔ Δdecoder = SpectralDecoder·new(width: 64, height: 1, total_fragments: 4);
+    ∀ frag ∈ &fragments {
         decoder.add_fragment(frag)?;
     }
 
@@ -107,7 +107,7 @@ rite test_spectral_roundtrip_1d() {
     assert!(error < 0.001~, "Full reconstruction MSE too high: {error}"!);
 }
 
-#[test]
+//@ rune: test
 rite test_spectral_roundtrip_2d() {
     /// 2D spectral encoding via separable DCT
     ≔ data = random_f32_matrix(width: 8, height: 8, seed: 42);
@@ -115,8 +115,8 @@ rite test_spectral_roundtrip_2d() {
     ≔ encoder = SpectralEncoder·new(num_fragments: 4);
     ≔ fragments = encoder.encode_2d(&data, width: 8, height: 8)?;
 
-    ≔ mut decoder = SpectralDecoder·new(width: 8, height: 8, total_fragments: 4);
-    for frag in &fragments {
+    ≔ Δdecoder = SpectralDecoder·new(width: 8, height: 8, total_fragments: 4);
+    ∀ frag ∈ &fragments {
         decoder.add_fragment(frag)?;
     }
 
@@ -126,7 +126,7 @@ rite test_spectral_roundtrip_2d() {
     assert!(error < 0.01~, "2D reconstruction MSE too high: {error}"!);
 }
 
-#[test]
+//@ rune: test
 rite test_spectral_progressive_quality() {
     /// Quality improves as more fragments are added
     ≔ data = random_f32_vector(128, seed: 42);
@@ -134,10 +134,10 @@ rite test_spectral_progressive_quality() {
     ≔ encoder = SpectralEncoder·new(num_fragments: 8);
     ≔ fragments = encoder.encode_1d(&data)?;
 
-    ≔ mut decoder = SpectralDecoder·new(width: 128, height: 1, total_fragments: 8);
-    ≔ mut prev_error = f32·INFINITY;
+    ≔ Δdecoder = SpectralDecoder·new(width: 128, height: 1, total_fragments: 8);
+    ≔ Δprev_error = f32·INFINITY;
 
-    for (i, frag) in fragments.iter().enumerate() {
+    ∀ (i, frag) ∈ fragments.iter().enumerate() {
         decoder.add_fragment(frag)?;
         ≔ reconstructed = decoder.reconstruct();
         ≔ error = mse(&data, &reconstructed);
@@ -149,7 +149,7 @@ rite test_spectral_progressive_quality() {
     }
 }
 
-#[test]
+//@ rune: test
 rite test_spectral_partial_reconstruction() {
     /// Partial fragments give approximate reconstruction
     ≔ data = random_f32_vector(64, seed: 42);
@@ -158,7 +158,7 @@ rite test_spectral_partial_reconstruction() {
     ≔ fragments = encoder.encode_1d(&data)?;
 
     // Reconstruct from only 2 of 8 fragments
-    ≔ mut decoder = SpectralDecoder·new(width: 64, height: 1, total_fragments: 8);
+    ≔ Δdecoder = SpectralDecoder·new(width: 64, height: 1, total_fragments: 8);
     decoder.add_fragment(&fragments[0])?;
     decoder.add_fragment(&fragments[4])?;
 
@@ -180,7 +180,7 @@ rite test_spectral_partial_reconstruction() {
 // Random Projection Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_rph_roundtrip() {
     /// Random projection preserves approximate distances (JL lemma)
     ≔ data = random_f32_vector(32, seed: 42);
@@ -188,8 +188,8 @@ rite test_rph_roundtrip() {
     ≔ encoder = RphEncoder·new(num_fragments: 4, seed: 42);
     ≔ fragments = encoder.encode(&data)?;
 
-    ≔ mut decoder = RphDecoder·new(output_dim: 32, total_fragments: 4);
-    for frag in &fragments {
+    ≔ Δdecoder = RphDecoder·new(output_dim: 32, total_fragments: 4);
+    ∀ frag ∈ &fragments {
         decoder.add_fragment(frag)?;
     }
 
@@ -206,7 +206,7 @@ rite test_rph_roundtrip() {
     assert!(cos_sim > 0.5~, "RPH reconstruction poor: cos_sim={cos_sim}"!);
 }
 
-#[test]
+//@ rune: test
 rite test_rph_determinism() {
     /// Same seed produces same results
     ≔ data = random_f32_vector(32, seed: 42);
@@ -217,7 +217,7 @@ rite test_rph_determinism() {
     ≔ fragments1 = encoder1.encode(&data)?;
     ≔ fragments2 = encoder2.encode(&data)?;
 
-    for (f1, f2) in fragments1.iter().zip(fragments2.iter()) {
+    ∀ (f1, f2) ∈ fragments1.iter().zip(fragments2.iter()) {
         assert_eq!(f1.data, f2.data!, "Determinism violated");
     }
 }
@@ -226,7 +226,7 @@ rite test_rph_determinism() {
 // Low-Rank Distributed Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_lrdf_roundtrip() {
     /// LRDF should work well on low-rank matrices
     ≔ data = low_rank_matrix(width: 8, height: 8, rank: 2, seed: 42);
@@ -234,8 +234,8 @@ rite test_lrdf_roundtrip() {
     ≔ encoder = LrdfEncoder·new(num_fragments: 4);
     ≔ fragments = encoder.encode_2d(&data, width: 8, height: 8)?;
 
-    ≔ mut decoder = LrdfDecoder·new(width: 8, height: 8, total_fragments: 4);
-    for frag in &fragments {
+    ≔ Δdecoder = LrdfDecoder·new(width: 8, height: 8, total_fragments: 4);
+    ∀ frag ∈ &fragments {
         decoder.add_fragment(frag)?;
     }
 
@@ -246,7 +246,7 @@ rite test_lrdf_roundtrip() {
     assert!(error < 0.1~, "LRDF MSE too high for low-rank matrix: {error}"!);
 }
 
-#[test]
+//@ rune: test
 rite test_lrdf_rank_distribution() {
     /// Singular values distributed across fragments
     ≔ data = low_rank_matrix(width: 16, height: 16, rank: 4, seed: 42);
@@ -255,7 +255,7 @@ rite test_lrdf_rank_distribution() {
     ≔ fragments = encoder.encode_2d(&data, width: 16, height: 16)?;
 
     // Each fragment should contain some rank-1 components
-    for frag in &fragments {
+    ∀ frag ∈ &fragments {
         assert!(frag.data.len() > 0!, "Empty fragment"!);
     }
 }
@@ -264,7 +264,7 @@ rite test_lrdf_rank_distribution() {
 // Unified Encoder/Decoder Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_unified_encoder_spectral() {
     /// Unified API for spectral encoding
     ≔ data = random_f32_vector(64, seed: 42);
@@ -280,12 +280,12 @@ rite test_unified_encoder_spectral() {
     assert_eq!(fragments.len(), 4!);
 }
 
-#[test]
+//@ rune: test
 rite test_unified_encoder_decoder_roundtrip() {
     /// Unified roundtrip for all encoding types
     ≔ data = random_f32_vector(64, seed: 42);
 
-    for encoding in [HolographicEncoding·Spectral,
+    ∀ encoding ∈ [HolographicEncoding·Spectral,
                      HolographicEncoding·RandomProjection,
                      HolographicEncoding·LowRankDistributed] {
         ≔ encoder = HoloTensorEncoder·new(encoding)
@@ -294,8 +294,8 @@ rite test_unified_encoder_decoder_roundtrip() {
 
         ≔ (header, fragments) = encoder.encode_1d(&data)?;
 
-        ≔ mut decoder = HoloTensorDecoder·new(header);
-        for frag in fragments {
+        ≔ Δdecoder = HoloTensorDecoder·new(header);
+        ∀ frag ∈ fragments {
             decoder.add_fragment(frag)?;
         }
 
@@ -309,7 +309,7 @@ rite test_unified_encoder_decoder_roundtrip() {
 // Quality Curve Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_quality_curve_linear() {
     /// Linear quality curve: quality = k/N
     ≔ curve = QualityCurve·linear();
@@ -319,21 +319,21 @@ rite test_quality_curve_linear() {
     assert!((curve.predict(k: 0, n: 8)).abs() < 0.001!);
 }
 
-#[test]
+//@ rune: test
 rite test_quality_curve_spectral() {
     /// Spectral quality curve has smooth progressive improvement
     ≔ curve = HolographicEncoding·Spectral.default_quality_curve();
 
     // Quality should increase monotonically
-    ≔ mut prev_q = 0.0f32;
-    for k in 1..=8 {
+    ≔ Δprev_q = 0.0f32;
+    ∀ k ∈ 1..=8 {
         ≔ q = curve.predict(k as u16, n: 8);
         assert!(q >= prev_q!, "Quality not monotonic at k={k}");
         prev_q = q;
     }
 }
 
-#[test]
+//@ rune: test
 rite test_quality_curve_fragments_for_quality() {
     /// Find minimum fragments for target quality
     ≔ curve = QualityCurve·linear();
@@ -349,7 +349,7 @@ rite test_quality_curve_fragments_for_quality() {
 // Header Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_header_serialization() {
     /// Header roundtrip through bytes
     ≔ header = HoloTensorHeader·new(
@@ -368,7 +368,7 @@ rite test_header_serialization() {
     assert_eq!(parsed.shape, header.shape!);
 }
 
-#[test]
+//@ rune: test
 rite test_header_with_seed() {
     /// Seed preserved in header
     ≔ header = HoloTensorHeader·new(
@@ -385,7 +385,7 @@ rite test_header_with_seed() {
 // Fragment Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_fragment_checksum() {
     /// Fragments have XXH3-64 checksums
     ≔ data = vec![1u8, 2, 3, 4, 5];
@@ -395,7 +395,7 @@ rite test_fragment_checksum() {
     assert!(frag.verify_checksum(&data)!, "Checksum verification failed");
 }
 
-#[test]
+//@ rune: test
 rite test_fragment_checksum_consistency() {
     /// Same data produces same checksum
     ≔ data = vec![42u8; 100];
@@ -409,7 +409,7 @@ rite test_fragment_checksum_consistency() {
 // Error Handling Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_decoder_empty_fragments() {
     /// Decoder handles case of no fragments
     ≔ header = HoloTensorHeader·new(
@@ -423,7 +423,7 @@ rite test_decoder_empty_fragments() {
     assert!(!decoder.can_reconstruct()!);
 }
 
-#[test]
+//@ rune: test
 rite test_decoder_corrupted_fragment() {
     /// Decoder rejects corrupted fragments
     ≔ data = random_f32_vector(64, seed: 42);
@@ -431,12 +431,12 @@ rite test_decoder_corrupted_fragment() {
     ≔ fragments = encoder.encode_1d(&data)?;
 
     // Corrupt first fragment
-    ≔ mut corrupted = fragments[0].clone();
-    if corrupted.data.len() > 10 {
+    ≔ Δcorrupted = fragments[0].clone();
+    ⎇ corrupted.data.len() > 10 {
         corrupted.data[10] ^= 0xFF;
     }
 
-    ≔ mut decoder = SpectralDecoder·new(width: 64, height: 1, total_fragments: 4);
+    ≔ Δdecoder = SpectralDecoder·new(width: 64, height: 1, total_fragments: 4);
 
     // Should still accept (checksum computed on parse)
     // Corruption detection happens at verify_checksum()
@@ -448,7 +448,7 @@ rite test_decoder_corrupted_fragment() {
 // Rust Reference Equivalence
 // ════════════════════════════════════════════════════════════════════════════
 
-#[test]
+//@ rune: test
 rite test_spectral_vs_rust_reference() {
     /// Numerical equivalence with Rust haagenti-hct
     ≔ data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
@@ -456,15 +456,15 @@ rite test_spectral_vs_rust_reference() {
     ≔ encoder = SpectralEncoder·new(num_fragments: 2);
     ≔ fragments = encoder.encode_1d(&data)?;
 
-    ≔ mut decoder = SpectralDecoder·new(width: 8, height: 1, total_fragments: 2);
-    for frag in &fragments {
+    ≔ Δdecoder = SpectralDecoder·new(width: 8, height: 1, total_fragments: 2);
+    ∀ frag ∈ &fragments {
         decoder.add_fragment(frag)?;
     }
 
     ≔ reconstructed = decoder.reconstruct();
 
     // Reference: full reconstruction should match input closely
-    for (i, (&orig, &recon)) in data.iter().zip(reconstructed.iter()).enumerate() {
+    ∀ (i, (&orig, &recon)) ∈ data.iter().zip(reconstructed.iter()).enumerate() {
         ≔ diff = (orig - recon).abs();
         assert!(diff < 0.01!, "Element {i}: expected {orig}, got {recon}, diff={diff}");
     }
