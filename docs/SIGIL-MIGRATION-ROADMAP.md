@@ -2,7 +2,29 @@
 
 ## Current Status
 
-**Pass Rate: 242/265 files (91.3%)**
+**Pass Rate: 253/265 files (95.5%)**
+
+### Recent Progress
+- Phase 1.1: ✅ Attribute syntax errors fixed (3 files)
+- Phase 1.2: ✅ Shift operator issues fixed (2 files)
+- Phase 1.3: ✅ Pattern issues fixed (1 file - renamed `of` to `of_fse`)
+- Phase 1.4: ✅ Item expected errors fixed (4 files - cfg comments, multiline asserts)
+- Phase 2: 🔄 Type errors (1 of 6 fixed - literals.sg index types)
+
+### Remaining Issues (12 files)
+1. **Type Errors (5 files):**
+   - huffman/encoder.sg - complex enumerate index inference
+   - hct_test_vectors.sg - f32 method calls (sqrt, abs, floor)
+   - serverless/fragment_pool.sg - type mismatch
+   - mobile/quantization.sg - type mismatch
+   - adaptive/t7_adaptive.sg - type mismatch
+
+2. **Runtime Errors (3 files):**
+   - main.sg - clap derive attributes not working
+   - t05_random_projection.sg - runtime struct issue
+   - checksum.sg - runtime error
+
+3. **CUDA FFI (4 files):** Need complete rewrite in pure Sigil
 
 This roadmap follows the Agent-TDD methodology: tests crystallize understanding, not coverage.
 
