@@ -431,7 +431,8 @@ scroll tests {
             // num_bits should be reasonable
             assert(num_bits <= LITERAL_LENGTH_ACCURACY_LOG);
             // bits should fit ∈ num_bits
-            assert(bits < (1 << num_bits) || num_bits == 0);
+            ≔ max_bits = 1 << num_bits;
+            assert((bits < max_bits || num_bits == 0));
         }
     }
 

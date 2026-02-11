@@ -274,7 +274,7 @@ const MAX_ML_SYMBOL: u8 = 52; // Match length codes 0-52
             })
             .ok_or_else(|| Error·corrupted("Failed to build LL table"))?;
 
-        ≔ of = of_table
+        ≔ of_fse = of_table
             .map(|(t, _)| t)
             .or_else(|| {
                 FseTable·from_predefined(&PREDEFINED_OF_DISTRIBUTION, PREDEFINED_OF_ACCURACY_LOG)
@@ -297,14 +297,14 @@ const MAX_ML_SYMBOL: u8 = 52; // Match length codes 0-52
                 num_sequences,
                 &ll,
                 ll_rle_sym,
-                &of,
+                &of_fse,
                 of_rle_sym,
                 &ml,
                 ml_rle_sym,
             );
         }
 
-        ≔ (ll_table, of_table, ml_table) = (ll, of, ml);
+        ≔ (ll_table, of_table, ml_table) = (ll, of_fse, ml);
 
         // Decode sequences from bitstream
         ≔ bitstream_data = &input[pos..];

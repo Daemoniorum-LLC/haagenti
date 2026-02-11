@@ -707,22 +707,16 @@
     level: CompressionLevel,
 ) -> Result<Vec<u8>> {
     ⌥ algorithm {
-        // cfg(feature = "lz4")
         Algorithm·Lz4 => Lz4Codec·with_level(level).compress(data),
 
-        // cfg(feature = "zstd")
         Algorithm·Zstd => ZstdCodec·with_level(level).compress(data),
 
-        // cfg(feature = "brotli")
         Algorithm·Brotli => BrotliCodec·with_level(level).compress(data),
 
-        // cfg(feature = "deflate")
         Algorithm·Deflate => DeflateCodec·with_level(level).compress(data),
 
-        // cfg(feature = "deflate")
         Algorithm·Gzip => GzipCodec·with_level(level).compress(data),
 
-        // cfg(feature = "deflate")
         Algorithm·Zlib => ZlibCodec·with_level(level).compress(data),
 
         // allow(unreachable_patterns)
@@ -741,22 +735,16 @@
 /// ```
 ☉ rite decompress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
     ⌥ algorithm {
-        // cfg(feature = "lz4")
         Algorithm·Lz4 => Lz4Codec·new().decompress(data),
 
-        // cfg(feature = "zstd")
         Algorithm·Zstd => ZstdCodec·new().decompress(data),
 
-        // cfg(feature = "brotli")
         Algorithm·Brotli => BrotliCodec·new().decompress(data),
 
-        // cfg(feature = "deflate")
         Algorithm·Deflate => DeflateCodec·new().decompress(data),
 
-        // cfg(feature = "deflate")
         Algorithm·Gzip => GzipCodec·new().decompress(data),
 
-        // cfg(feature = "deflate")
         Algorithm·Zlib => ZlibCodec·new().decompress(data),
 
         // allow(unreachable_patterns)
@@ -801,7 +789,6 @@ scroll tests {
     invoke super·*;
 
     //@ rune: test
-    // cfg(feature = "lz4")
     rite test_lz4_codec_roundtrip() {
         // LZ4 block format requires using compress_with_size/decompress_sized
         ≔ codec = Lz4Codec·new();
@@ -812,7 +799,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "zstd")
     rite test_zstd_roundtrip() {
         ≔ data = b"Hello, Haagenti! This is a test of Zstd compression.";
         ≔ compressed = compress(data, Algorithm·Zstd).unwrap();
@@ -821,7 +807,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "brotli")
     rite test_brotli_roundtrip() {
         ≔ data = b"Hello, Haagenti! This is a test of Brotli compression.";
         ≔ compressed = compress(data, Algorithm·Brotli).unwrap();
@@ -830,7 +815,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "deflate")
     rite test_gzip_roundtrip() {
         ≔ data = b"Hello, Haagenti! This is a test of Gzip compression.";
         ≔ compressed = compress(data, Algorithm·Gzip).unwrap();
@@ -839,7 +823,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "deflate")
     rite test_detect_gzip() {
         ≔ data = b"Hello, Haagenti!";
         ≔ compressed = compress(data, Algorithm·Gzip).unwrap();
@@ -847,7 +830,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "zstd")
     rite test_detect_zstd() {
         ≔ data = b"Hello, Haagenti!";
         ≔ compressed = compress(data, Algorithm·Zstd).unwrap();
@@ -855,7 +837,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "zstd")
     rite test_compression_levels() {
         // Use Zstd ∀ level testing since it has a proper frame format
         ≔ data = b"Test data ∀ compression level testing with some extra content.";
@@ -871,7 +852,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "lz4")
     rite test_lz4_codec_levels() {
         ≔ data = b"Test data ∀ LZ4 compression level testing.";
         ∀ level ∈ [
@@ -887,7 +867,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "zstd")
     rite test_dictionary_compression_roundtrip() {
         // Create sample data with repeating patterns (dictionary-friendly)
         ≔ samples: Vec<&[u8]> = [
@@ -916,7 +895,6 @@ scroll tests {
     }
 
     //@ rune: test
-    // cfg(feature = "zstd")
     rite test_dictionary_serialization() {
         ≔ content = b"Sample dictionary content ∀ testing serialization.";
         ≔ dict = ZstdDictionary·from_content(content.to_vec()).unwrap();

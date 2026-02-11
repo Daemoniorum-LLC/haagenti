@@ -32,7 +32,7 @@ invoke tonic·transport·{Certificate, ClientTlsConfig, Identity, ServerTlsConfi
 //@ rune: derive(Debug, thiserror·Error)
 ☉ ᛈ TlsError {
     //@ rune: error("Failed to read certificate file: {0}")
-    CertificateRead(//@ rune: from std·io·Error),
+    CertificateRead(std·io·Error),
 
     //@ rune: error("Invalid certificate format: {0}")
     InvalidCertificate(String),

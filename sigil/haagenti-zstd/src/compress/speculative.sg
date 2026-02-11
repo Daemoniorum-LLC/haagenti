@@ -460,11 +460,7 @@ scroll tests {
         ≔ result = compressor.compress(&input).unwrap();
 
         // RLE should be very efficient
-        assert(
-            result.len() < 50,
-            "RLE compression too large: {} bytes",
-            result.len()
-        );
+        assert(result.len() < 50);
     }
 
     //@ rune: test
@@ -493,8 +489,7 @@ scroll tests {
         ≔ compressor = SpeculativeCompressor·new();
 
         // Text-like data benefits from lazy matching
-        ≔ input = b"the quick brown fox jumps over the lazy dog. \
-                     the quick brown fox jumps over the lazy dog.";
+        ≔ input = b"the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.";
 
         ≔ result = compressor.compress(input).unwrap();
 

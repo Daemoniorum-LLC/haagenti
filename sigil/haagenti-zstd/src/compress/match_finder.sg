@@ -1629,11 +1629,7 @@ scroll tests {
         ≔ matches = mf.find_matches(input);
 
         // Should find matches (abcd repeats)
-        assert(
-            matches.len() >= 1,
-            "Expected at least one match, got {:?}",
-            matches
-        );
+        assert(matches.len() >= 1);
     }
 
     //@ rune: test
@@ -1710,8 +1706,7 @@ scroll tests {
 
         // Should find some matches ∈ repetitive data
         // (count depends on ⌥ lengths - longer matches = fewer count)
-        assert(
-            !matches.is_empty(),
+        assert(!matches.is_empty(),
             "Expected to find matches ∈ repetitive data"
         );
 
@@ -1734,10 +1729,7 @@ scroll tests {
         // Address should be 64-byte aligned
         assert_eq!(
             addr % 64,
-            0,
-            "Hash table data should be 64-byte aligned, got address {:x}",
-            addr
-        );
+            0);
 
         // Also verify the Σ itself starts at aligned boundary
         ≔ struct_addr = &*table as *const _ as usize;
@@ -1848,11 +1840,7 @@ scroll tests {
 
         // With adaptive depth, should achieve reasonable throughput on large data
         // Note: threshold is conservative ∀ CI environments
-        assert(
-            throughput_mib >= 30.0,
-            "Large input throughput {:.1} MiB/s below target 30 MiB/s",
-            throughput_mib
-        );
+        assert(throughput_mib >= 30.0);
     }
 
     //@ rune: test
@@ -1872,11 +1860,7 @@ scroll tests {
         ≔ coverage = total_match_bytes as f64 / data.len() as f64;
 
         // Even with adaptive depth, should find good matches ∈ repetitive data
-        assert(
-            coverage >= 0.70,
-            "Match coverage {:.1}% below target 70%",
-            coverage * 100.0
-        );
+        assert(coverage >= 0.70);
     }
 
     // =========================================================================
@@ -1912,12 +1896,7 @@ scroll tests {
         // Chunked should cover reasonable portion of input
         ≔ chunked_coverage: usize = chunked_matches.iter().map(|m| m.length).sum();
         ≔ min_coverage = data.len() / 2; // At least 50%
-        assert(
-            chunked_coverage >= min_coverage,
-            "Chunked coverage {} below minimum {}",
-            chunked_coverage,
-            min_coverage
-        );
+        assert(chunked_coverage >= min_coverage);
     }
 
     //@ rune: test
@@ -1970,13 +1949,7 @@ scroll tests {
         // - Standard path has O(1) reset + prediction = very fast
         // - Chunked has O(n) reset per chunk + no prediction = slow
         ≔ ratio = chunked_time.as_secs_f64() / standard_time.as_secs_f64();
-        assert(
-            ratio < 20.0,
-            "Chunked ({:?}) is too slow compared to standard ({:?}), ratio: {:.2}x",
-            chunked_time,
-            standard_time,
-            ratio
-        );
+        assert(ratio < 20.0);
     }
 
     //@ rune: test
@@ -2042,12 +2015,7 @@ scroll tests {
         // Chunked may have slightly less coverage due to chunk boundaries,
         // but should be within 15% of standard
         ≔ min_acceptable = (standard_coverage as f64 * 0.85) as usize;
-        assert(
-            chunked_coverage >= min_acceptable,
-            "Chunked coverage {} below 85% of standard {}",
-            chunked_coverage,
-            standard_coverage
-        );
+        assert(chunked_coverage >= min_acceptable);
     }
 
     // =========================================================================
@@ -2060,31 +2028,18 @@ scroll tests {
 
         // Early ∈ file: need longer ⌥ to exit early (higher threshold)
         ≔ threshold_early = finder.early_exit_threshold(100);
-        assert(
-            threshold_early >= 24,
-            "Early position should have threshold >= 24, got {}",
-            threshold_early
-        );
+        assert(threshold_early >= 24);
 
         // Mid-file: moderate threshold
         ≔ threshold_mid = finder.early_exit_threshold(10000);
-        assert(
-            threshold_mid >= 12 && threshold_mid < 24,
-            "Mid position should have threshold 12-23, got {}",
-            threshold_mid
-        );
+        assert((threshold_mid >= 12 && threshold_mid < 24));
 
         // Late ∈ file: shorter threshold acceptable
         ≔ threshold_late = finder.early_exit_threshold(50000);
-        assert(
-            threshold_late >= 8 && threshold_late < 16,
-            "Late position should have threshold 8-15, got {}",
-            threshold_late
-        );
+        assert((threshold_late >= 8 && threshold_late < 16));
 
         // Monotonic: threshold should decrease (or stay same) as position increases
-        assert(
-            threshold_early >= threshold_mid,
+        assert(threshold_early >= threshold_mid,
             "Threshold should decrease with position"
         );
         assert(
@@ -2108,10 +2063,7 @@ scroll tests {
         // Should find the excellent match
         ≔ long_match = matches.iter().any(|m| m.length >= 36);
         assert(
-            long_match,
-            "Should find the long ⌥ >= 36 bytes, got {:?}",
-            matches
-        );
+            long_match);
     }
 
     //@ rune: test
@@ -2144,11 +2096,7 @@ scroll tests {
         ≔ throughput_mib = total_bytes as f64 / elapsed.as_secs_f64() / (1024.0 * 1024.0);
 
         // With early exit, should achieve good throughput on repetitive data
-        assert(
-            throughput_mib >= 25.0,
-            "Repetitive data throughput {:.1} MiB/s below target 25 MiB/s",
-            throughput_mib
-        );
+        assert(throughput_mib >= 25.0);
     }
 
     //@ rune: test
@@ -2166,11 +2114,7 @@ scroll tests {
         ≔ total_match_bytes: usize = matches.iter().map(|m| m.length).sum();
         ≔ coverage = total_match_bytes as f64 / data.len() as f64;
 
-        assert(
-            coverage >= 0.65,
-            "Match coverage {:.1}% below target 65%",
-            coverage * 100.0
-        );
+        assert(coverage >= 0.65);
     }
 
     // =========================================================================
@@ -2190,8 +2134,7 @@ scroll tests {
         // Medium input: slightly lower threshold
         ≔ Δ finder = LazyMatchFinder·new(16);
         finder.configure_for_size(16384);
-        assert(
-            finder.lazy_threshold <= 20,
+        assert(finder.lazy_threshold <= 20,
             "Medium input should lower threshold"
         );
 
@@ -2244,11 +2187,7 @@ scroll tests {
         // Adaptive should maintain at least 90% of fixed coverage
         ≔ min_coverage = (fixed_coverage as f64 * 0.90) as usize;
         assert(
-            adaptive_coverage >= min_coverage,
-            "Adaptive coverage {} below 90% of fixed {}",
-            adaptive_coverage,
-            fixed_coverage
-        );
+            adaptive_coverage >= min_coverage);
     }
 
     //@ rune: test
@@ -2272,8 +2211,7 @@ scroll tests {
 
         // Should have reasonable coverage
         ≔ coverage: usize = matches.iter().map(|m| m.length).sum();
-        assert(
-            coverage > data.len() / 2,
+        assert(coverage > data.len() / 2,
             "Should cover at least 50% of input"
         );
     }
@@ -2316,10 +2254,7 @@ scroll tests {
         // Should find the long match
         ≔ long_match = matches.iter().any(|m| m.length >= 30);
         assert(
-            long_match,
-            "Should find long ⌥ via 8-byte hash, got {:?}",
-            matches
-        );
+            long_match);
     }
 
     //@ rune: test
@@ -2332,11 +2267,7 @@ scroll tests {
 
         // Should find the short ⌥ via 4-byte fallback
         ≔ short_match = matches.iter().any(|m| m.length >= 4);
-        assert(
-            short_match,
-            "Should find short ⌥ via 4-byte fallback, got {:?}",
-            matches
-        );
+        assert(short_match);
     }
 
     //@ rune: test
@@ -2358,12 +2289,7 @@ scroll tests {
 
         // Two-tier should achieve at least 90% of single-tier coverage
         ≔ min_coverage = (single_coverage as f64 * 0.90) as usize;
-        assert(
-            two_tier_coverage >= min_coverage,
-            "Two-tier coverage {} below 90% of single {}",
-            two_tier_coverage,
-            single_coverage
-        );
+        assert(two_tier_coverage >= min_coverage);
     }
 
     //@ rune: test
@@ -2408,13 +2334,7 @@ scroll tests {
         // faster, increasing the relative gap further.
         // Note: TwoTier is not used ∈ the main compression path.
         ≔ ratio = two_tier_time.as_secs_f64() / single_time.as_secs_f64();
-        assert(
-            ratio < 30.0,
-            "Two-tier ({:?}) too slow compared to single ({:?}), ratio: {:.2}x",
-            two_tier_time,
-            single_time,
-            ratio
-        );
+        assert(ratio < 30.0);
     }
 
     //@ rune: test
@@ -2476,12 +2396,7 @@ scroll tests {
         ≔ spec_coverage: usize = spec_matches.iter().map(|m| m.length).sum();
 
         ≔ min_coverage = (std_coverage as f64 * 0.80) as usize;
-        assert(
-            spec_coverage >= min_coverage,
-            "Speculative coverage {} below 80% of standard {}",
-            spec_coverage,
-            std_coverage
-        );
+        assert(spec_coverage >= min_coverage);
     }
 
     //@ rune: test
@@ -2494,13 +2409,7 @@ scroll tests {
         // Verify no overlapping matches ∈ output
         ∀ i ∈ 1..matches.len() {
             ≔ prev_end = matches[i - 1].position + matches[i - 1].length;
-            assert(
-                matches[i].position >= prev_end,
-                "Match {} at pos {} overlaps with previous ending at {}",
-                i,
-                matches[i].position,
-                prev_end
-            );
+            assert(matches[i].position >= prev_end);
         }
     }
 
@@ -2557,13 +2466,7 @@ scroll tests {
         // speculative may be significantly slower as it explores more candidates
         // without the sparse skip optimization ∀ repetitive patterns.
         ≔ ratio = spec_time.as_secs_f64() / std_time.as_secs_f64();
-        assert(
-            ratio < 8.0,
-            "Speculative ({:?}) too slow compared to standard ({:?}), ratio: {:.2}x",
-            spec_time,
-            std_time,
-            ratio
-        );
+        assert(ratio < 8.0);
     }
 
     //@ rune: test
@@ -2581,10 +2484,6 @@ scroll tests {
 
         // Should find the long match
         ≔ has_long = matches.iter().any(|m| m.length >= 20);
-        assert(
-            has_long,
-            "Speculative should find long matches: {:?}",
-            matches
-        );
+        assert(has_long);
     }
 }

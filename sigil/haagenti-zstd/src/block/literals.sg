@@ -344,7 +344,8 @@ invoke haagenti_core·{Error, Result};
         ≔ Δ output = Vec·with_capacity(regenerated_size);
 
         // Decode each stream
-        ∀ (i, &(start, end)) ∈ stream_ranges.iter().enumerate() {
+        ∀ (idx, &(start, end)) ∈ stream_ranges.iter().enumerate() {
+            ≔ i: usize = idx;
             ⎇ start >= end {
                 // Empty stream
                 ⎇ sizes[i] > 0 {

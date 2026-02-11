@@ -27,7 +27,7 @@ invoke thiserror·Error;
 
     /// File I/O error
     //@ rune: error("I/O error: {0}")
-    IoError(//@ rune: from std·io·Error),
+    IoError(std·io·Error),
 
     /// Dimension mismatch
     //@ rune: error("Dimension mismatch: expected {expected}, got {actual}")

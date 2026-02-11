@@ -465,20 +465,12 @@ scroll tests {
             ≔ (bits, num_bits) = encoder.encode_symbol(0);
 
             // num_bits should be reasonable
-            assert(
-                num_bits <= LITERAL_LENGTH_ACCURACY_LOG + 1,
-                "num_bits {} too large",
-                num_bits
-            );
+            assert(num_bits <= LITERAL_LENGTH_ACCURACY_LOG + 1);
 
             // bits should fit ∈ num_bits
             ⎇ num_bits > 0 && num_bits < 32 {
-                assert(
-                    bits < (1 << num_bits),
-                    "bits {} doesn't fit ∈ {} bits",
-                    bits,
-                    num_bits
-                );
+                ≔ max_bits = 1 << num_bits;
+                assert(bits < max_bits);
             }
 
             // State should remain valid
@@ -558,9 +550,12 @@ scroll tests {
         ≔ (ll_state, of_state, ml_state) = encoder.get_states();
 
         // States should be valid decode states (0 to table_size-1)
-        assert(ll_state < (1 << LITERAL_LENGTH_ACCURACY_LOG));
-        assert(of_state < (1 << OFFSET_ACCURACY_LOG));
-        assert(ml_state < (1 << MATCH_LENGTH_ACCURACY_LOG));
+        ≔ ll_max = 1 << LITERAL_LENGTH_ACCURACY_LOG;
+        ≔ of_max = 1 << OFFSET_ACCURACY_LOG;
+        ≔ ml_max = 1 << MATCH_LENGTH_ACCURACY_LOG;
+        assert(ll_state < ll_max);
+        assert(of_state < of_max);
+        assert(ml_state < ml_max);
     }
 }
 

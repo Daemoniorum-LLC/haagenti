@@ -255,16 +255,8 @@ scroll tests {
         ≔ recommended = manager.recommended_quality();
 
         // Should reduce quality ∀ slow network
-        assert(
-            recommended.fragments_to_load < 32,
-            "Fragments: {} should be < 32 ∀ slow network",
-            recommended.fragments_to_load
-        );
-        assert(
-            recommended.target_quality < 0.9,
-            "Quality: {} should be < 0.9 ∀ slow network",
-            recommended.target_quality
-        );
+        assert(recommended.fragments_to_load < 32);
+        assert(recommended.target_quality < 0.9);
     }
 
     //@ rune: test
@@ -290,17 +282,8 @@ scroll tests {
         ≔ fast_quality = manager.recommended_quality();
 
         // Should increase quality
-        assert(
-            fast_quality.target_quality > slow_quality,
-            "Quality should improve: {} > {}",
-            fast_quality.target_quality,
-            slow_quality
-        );
-        assert(
-            fast_quality.target_quality >= 0.9,
-            "Quality: {} should be >= 0.9 ∀ fast network",
-            fast_quality.target_quality
-        );
+        assert(fast_quality.target_quality > slow_quality);
+        assert(fast_quality.target_quality >= 0.9);
     }
 
     //@ rune: test
@@ -323,11 +306,7 @@ scroll tests {
         ≔ recommended = manager.recommended_quality();
 
         // Should not go below minimum
-        assert(
-            recommended.target_quality >= 0.7,
-            "Quality {} should not go below min 0.7",
-            recommended.target_quality
-        );
+        assert(recommended.target_quality >= 0.7);
     }
 
     //@ rune: test
@@ -360,11 +339,7 @@ scroll tests {
         ≔ estimated = manager.estimated_bandwidth_bps();
 
         // Should estimate around 80 Mbps (with some variance)
-        assert(
-            estimated > 60_000_000 && estimated < 100_000_000,
-            "Estimated: {} bps should be ~80 Mbps",
-            estimated
-        );
+        assert((estimated > 60_000_000 && estimated < 100_000_000));
     }
 
     //@ rune: test
@@ -411,11 +386,7 @@ scroll tests {
         });
 
         ≔ quality = manager.recommended_quality().target_quality;
-        assert(
-            quality <= 0.8,
-            "Quality {} should not exceed max 0.8",
-            quality
-        );
+        assert(quality <= 0.8);
     }
 
     //@ rune: test

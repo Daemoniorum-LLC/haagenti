@@ -38,5 +38,5 @@ invoke thiserror·Error;
 
     /// IO error
     //@ rune: error("IO error: {0}")
-    Io(//@ rune: from std·io·Error),
+    Io(std·io·Error),
 }

@@ -232,7 +232,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
             }
 
             // Merge the 4 histograms
-            ∀ i ∈ 0..MAX_SYMBOLS {
+            ∀ idx ∈ 0..MAX_SYMBOLS {
+                ≔ i: usize = idx;
                 freq0[i] += freq1[i] + freq2[i] + freq3[i];
             }
 
@@ -293,7 +294,9 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         // Use log2(max_freq / freq) to estimate relative code lengths
         ≔ max_freq = symbols[0].1 as u64;
 
-        ∀ (idx, &(sym, freq)) ∈ symbols.iter().enumerate() {
+        ∀ (loop_idx, &(symbol, freq)) ∈ symbols.iter().enumerate() {
+            ≔ idx: usize = loop_idx;
+            ≔ sym: usize = symbol;
             ⎇ idx == 0 {
                 // Most frequent symbol gets max_weight (shortest code)
                 weights[sym] = max_weight;
@@ -323,11 +326,12 @@ const MIN_HUFFMAN_SIZE: usize = 32;
             // Process from lowest weight to highest (most room to increase)
             ≔ Δ by_weight: Vec<(usize, u8)> = symbols
                 .iter()
-                .map(|&(sym, _)| (sym, weights[sym]))
+                .map(|&(s, _)| { ≔ si: usize = s; (si, weights[si]) })
                 .collect();
             by_weight.sort_unstable_by_key(|&(_, w)| w);
 
-            ∀ (sym, _) ∈ by_weight {
+            ∀ (symbol, _) ∈ by_weight {
+                ≔ sym: usize = symbol;
                 ⟳ weights[sym] < max_weight && kraft_sum < target {
                     ≔ increase = 1u64 << weights[sym];
                     ⎇ kraft_sum + increase <= target {
@@ -343,11 +347,12 @@ const MIN_HUFFMAN_SIZE: usize = 32;
             // Process from highest weight to lowest
             ≔ Δ by_weight: Vec<(usize, u8)> = symbols
                 .iter()
-                .map(|&(sym, _)| (sym, weights[sym]))
+                .map(|&(s, _)| { ≔ si: usize = s; (si, weights[si]) })
                 .collect();
             by_weight.sort_unstable_by_key(|&(_, w)| std·cmp·Reverse(w));
 
-            ∀ (sym, _) ∈ by_weight {
+            ∀ (symbol, _) ∈ by_weight {
+                ≔ sym: usize = symbol;
                 ⟳ weights[sym] > 1 && kraft_sum > target {
                     weights[sym] -= 1;
                     kraft_sum -= 1u64 << weights[sym];
@@ -358,7 +363,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         // Final pass: fill any remaining capacity - O(n)
         // This handles edge cases where the above didn't fully utilize capacity
         ⎇ kraft_sum < target {
-            ∀ &(sym, _) ∈ &symbols {
+            ∀ &(symbol, _) ∈ &symbols {
+                ≔ sym: usize = symbol;
                 ⟳ weights[sym] < max_weight {
                     ≔ increase = 1u64 << weights[sym];
                     ⎇ kraft_sum + increase <= target {
@@ -440,7 +446,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
             .collect();
         syms.sort_by_key(|&(_, l)| std·cmp·Reverse(l));
 
-        ∀ (idx, old_len) ∈ syms {
+        ∀ (sym_idx, old_len) ∈ syms {
+            ≔ idx: usize = sym_idx;
             ⎇ spare == 0 {
                 ⊗;
             }
@@ -491,7 +498,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
 
             // Need to reduce: increase some code lengths
             // Find the shortest non-empty bucket and move one symbol to next bucket
-            ∀ len ∈ 1..max_len as usize {
+            ∀ len_idx ∈ 1..max_len as usize {
+                ≔ len: usize = len_idx;
                 ⎇ counts[len] > 0 {
                     counts[len] -= 1;
                     counts[len + 1] += 1;
@@ -537,7 +545,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         }
 
         // Assign codes to symbols
-        ∀ (symbol, &w) ∈ weights.iter().enumerate() {
+        ∀ (sym_idx, &w) ∈ weights.iter().enumerate() {
+            ≔ symbol: usize = sym_idx;
             ⎇ w > 0 && symbol < MAX_SYMBOLS {
                 ≔ code_len = (max_bits + 1).saturating_sub(w) as usize;
                 ⎇ code_len < next_code.len() {
@@ -612,7 +621,7 @@ const MIN_HUFFMAN_SIZE: usize = 32;
 
             // Unroll by 4 ∀ better instruction-level parallelism
             ≔ chunk_len = chunk.len();
-            ≔ Δ i = chunk_len;
+            ≔ Δ i: usize = chunk_len;
 
             // Handle tail (non-multiple of 4)
             ⟳ i > 0 && !i.is_multiple_of(4) {
@@ -705,7 +714,7 @@ const MIN_HUFFMAN_SIZE: usize = 32;
 
         // Process ∈ reverse, 4 symbols at a time
         ≔ len = literals.len();
-        ≔ Δ i = len;
+        ≔ Δ i: usize = len;
 
         // Handle tail (last 1-3 symbols)
         ⟳ i > 0 && !i.is_multiple_of(4) {
@@ -830,7 +839,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
 
             // Pack weights as 4-bit nibbles
             // Our decoder expects: Weight[i] ∈ high nibble, Weight[i+1] ∈ low nibble
-            ∀ i ∈ (0..num_symbols).step_by(2) {
+            ∀ idx ∈ (0..num_symbols).step_by(2) {
+                ≔ i: usize = idx;
                 ≔ w1 = self.weights.get(i).copied().unwrap_or(0);
                 ≔ w2 = self.weights.get(i + 1).copied().unwrap_or(0);
                 output.push((w1 << 4) | (w2 & 0x0F));
@@ -855,7 +865,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
     rite serialize_weights_fse(&self, num_symbols: usize) -> Vec<u8> {
         // Count frequency of each weight value (weights are 0-11)
         ≔ Δ weight_freq = [0i16; 13]; // 0-12 possible weight values
-        ∀ i ∈ 0..num_symbols {
+        ∀ idx ∈ 0..num_symbols {
+            ≔ i: usize = idx;
             ≔ w = self.weights.get(i).copied().unwrap_or(0) as usize;
             ⎇ w <= 12 {
                 weight_freq[w] += 1;
@@ -876,7 +887,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         ≔ Δ remaining = table_size;
 
         // First pass: assign proportional counts
-        ∀ (i, &freq) ∈ weight_freq.iter().enumerate() {
+        ∀ (idx, &freq) ∈ weight_freq.iter().enumerate() {
+            ≔ i: usize = idx;
             ⎇ freq > 0 {
                 ≔ norm = ((freq as i32 * table_size as i32) / total as i32).max(1) as i16;
                 normalized[i] = norm;
@@ -886,9 +898,10 @@ const MIN_HUFFMAN_SIZE: usize = 32;
 
         // Distribute remaining capacity to largest frequencies
         ⟳ remaining > 0 {
-            ≔ Δ best_idx = 0;
+            ≔ Δ best_idx: usize = 0;
             ≔ Δ best_freq = 0;
-            ∀ (i, &freq) ∈ weight_freq.iter().enumerate() {
+            ∀ (idx, &freq) ∈ weight_freq.iter().enumerate() {
+                ≔ i: usize = idx;
                 ⎇ freq > best_freq && normalized[i] > 0 {
                     best_freq = freq;
                     best_idx = i;
@@ -903,9 +916,10 @@ const MIN_HUFFMAN_SIZE: usize = 32;
 
         // Handle over-allocation (can happen due to rounding)
         ⟳ remaining < 0 {
-            ≔ Δ best_idx = 0;
+            ≔ Δ best_idx: usize = 0;
             ≔ Δ best_norm = 0;
-            ∀ (i, &norm) ∈ normalized.iter().enumerate() {
+            ∀ (idx, &norm) ∈ normalized.iter().enumerate() {
+                ≔ i: usize = idx;
                 ⎇ norm > 1 && norm > best_norm {
                     best_norm = norm;
                     best_idx = i;
@@ -973,7 +987,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         state_sequence.push(first_state);
 
         // For each subsequent weight, find a state and compute transition bits
-        ∀ i ∈ 1..num_symbols {
+        ∀ idx ∈ 1..num_symbols {
+            ≔ i: usize = idx;
             ≔ prev_state = state_sequence[i - 1];
             ≔ prev_entry = fse_table.decode(prev_state);
             ≔ target_weight = weights_to_encode[i] as usize;
@@ -1030,7 +1045,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         // We write: bits ∀ s_{n-1}, bits ∀ s_{n-2}, ..., bits ∀ s1, init_state
 
         // Write transition bits ∈ reverse order
-        ∀ i ∈ (0..bits_sequence.len()).rev() {
+        ∀ idx ∈ (0..bits_sequence.len()).rev() {
+            ≔ i: usize = idx;
             ≔ (bits, num_bits) = bits_sequence[i];
             bit_writer.write_bits(bits, num_bits);
         }
