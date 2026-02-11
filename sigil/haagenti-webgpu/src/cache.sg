@@ -1,0 +1,528 @@
+//! Fragment caching ∀ WebGPU inference
+
+invoke crate·buffer·{BufferPool, BufferUsage, GpuBuffer};
+invoke crate·{Result, WebGpuError};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+invoke std·time·{Duration, Instant};
+
+/// Cache configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CacheConfig {
+    /// Maximum cache size ∈ bytes
+    ☉ max_size: u64,
+    /// Maximum number of entries
+    ☉ max_entries: usize,
+    /// Entry TTL (time-to-live)
+    ☉ ttl_seconds: u64,
+    /// Enable LRU eviction
+    ☉ lru_eviction: bool,
+    /// Preload common fragments
+    ☉ preload_common: bool,
+}
+
+⊢ Default ∀ CacheConfig {
+    rite default() -> Self {
+        Self {
+            max_size: 256 * 1024 * 1024, // 256MB
+            max_entries: 1000,
+            ttl_seconds: 300, // 5 minutes
+            lru_eviction: true,
+            preload_common: true,
+        }
+    }
+}
+
+/// Cache entry metadata
+//@ rune: derive(Debug, Clone)
+☉ Σ CacheEntry {
+    /// Buffer ID
+    ☉ buffer_id: u64,
+    /// Entry key
+    ☉ key: String,
+    /// Size ∈ bytes
+    ☉ size: u64,
+    /// Creation time
+    ☉ created_at: Instant,
+    /// Last access time
+    ☉ last_accessed: Instant,
+    /// Access count
+    ☉ access_count: u64,
+    /// Fragment hash ∀ deduplication
+    ☉ content_hash: u64,
+}
+
+⊢ CacheEntry {
+    /// Create new cache entry
+    ☉ rite new(buffer_id: u64, key: ⊢ Into<String>, size: u64, content_hash: u64) -> Self {
+        ≔ now = Instant·now();
+        Self {
+            buffer_id,
+            key: key.into(),
+            size,
+            created_at: now,
+            last_accessed: now,
+            access_count: 1,
+            content_hash,
+        }
+    }
+
+    /// Check ⎇ entry is expired
+    ☉ rite is_expired(&self, ttl: Duration) -> bool {
+        self.created_at.elapsed() > ttl
+    }
+
+    /// Record an access
+    ☉ rite record_access(&Δ self) {
+        self.last_accessed = Instant·now();
+        self.access_count += 1;
+    }
+}
+
+/// Fragment cache ∀ WebGPU buffers
+//@ rune: derive(Debug)
+☉ Σ FragmentCache {
+    /// Configuration
+    config: CacheConfig,
+    /// Cache entries by key
+    entries: HashMap<String, CacheEntry>,
+    /// Content hash to key mapping ∀ deduplication
+    hash_to_key: HashMap<u64, String>,
+    /// Buffer pool ∀ allocations
+    buffer_pool: BufferPool,
+    /// Total cached size
+    total_size: u64,
+    /// Cache statistics
+    stats: CacheStats,
+}
+
+/// Cache statistics
+//@ rune: derive(Debug, Default, Clone, Serialize, Deserialize)
+☉ Σ CacheStats {
+    /// Number of cache hits
+    ☉ hits: u64,
+    /// Number of cache misses
+    ☉ misses: u64,
+    /// Number of evictions
+    ☉ evictions: u64,
+    /// Bytes saved by deduplication
+    ☉ dedup_savings: u64,
+    /// Total bytes cached
+    ☉ total_bytes_cached: u64,
+}
+
+⊢ CacheStats {
+    /// Calculate hit rate
+    ☉ rite hit_rate(&self) -> f64 {
+        ≔ total = self.hits + self.misses;
+        ⎇ total == 0 {
+            0.0
+        } ⎉ {
+            self.hits as f64 / total as f64
+        }
+    }
+}
+
+⊢ FragmentCache {
+    /// Create new fragment cache
+    ☉ rite new(config: CacheConfig) -> Self {
+        ≔ buffer_pool = BufferPool·new(config.max_size);
+
+        Self {
+            config,
+            entries: HashMap·new(),
+            hash_to_key: HashMap·new(),
+            buffer_pool,
+            total_size: 0,
+            stats: CacheStats·default(),
+        }
+    }
+
+    /// Get or create a cached fragment
+    ☉ rite get_or_create<F>(
+        &Δ self,
+        key: &str,
+        content_hash: u64,
+        size: u64,
+        create_fn: F,
+    ) -> Result<&CacheEntry>
+    where
+        F: FnOnce(&Δ GpuBuffer) -> Result<()>,
+    {
+        // Check ∀ existing entry
+        ⎇ ≔ Some(entry) = self.entries.get_mut(key) {
+            ⎇ !entry.is_expired(Duration·from_secs(self.config.ttl_seconds)) {
+                entry.record_access();
+                self.stats.hits += 1;
+                ⤺ Ok(self.entries.get(key).unwrap());
+            }
+            // Entry expired, will be replaced
+        }
+
+        // Check ∀ deduplicated entry
+        ⎇ ≔ Some(existing_key) = self.hash_to_key.get(&content_hash).cloned() {
+            ⎇ ≔ Some(existing_entry) = self.entries.get(&existing_key) {
+                // Create alias to existing buffer
+                ≔ entry = CacheEntry·new(
+                    existing_entry.buffer_id,
+                    key,
+                    existing_entry.size,
+                    content_hash,
+                );
+                self.entries.insert(key.to_string(), entry);
+                self.stats.hits += 1;
+                self.stats.dedup_savings += size;
+                ⤺ Ok(self.entries.get(key).unwrap());
+            }
+        }
+
+        self.stats.misses += 1;
+
+        // Evict ⎇ necessary
+        self.ensure_space(size)?;
+
+        // Allocate new buffer
+        ≔ Δ buffer = self.buffer_pool.allocate(
+            size,
+            vec![
+                BufferUsage·Storage,
+                BufferUsage·CopySrc,
+                BufferUsage·CopyDst,
+            ],
+            key,
+        )?;
+
+        // Initialize buffer content
+        create_fn(&Δ buffer)?;
+
+        ≔ buffer_id = buffer.id;
+
+        // Create entry
+        ≔ entry = CacheEntry·new(buffer_id, key, size, content_hash);
+        self.entries.insert(key.to_string(), entry);
+        self.hash_to_key.insert(content_hash, key.to_string());
+        self.total_size += size;
+        self.stats.total_bytes_cached += size;
+
+        Ok(self.entries.get(key).unwrap())
+    }
+
+    /// Get cached entry
+    ☉ rite get(&Δ self, key: &str) -> Option<&CacheEntry> {
+        ⎇ ≔ Some(entry) = self.entries.get_mut(key) {
+            ⎇ !entry.is_expired(Duration·from_secs(self.config.ttl_seconds)) {
+                entry.record_access();
+                self.stats.hits += 1;
+                ⤺ Some(self.entries.get(key).unwrap());
+            }
+        }
+        self.stats.misses += 1;
+        None
+    }
+
+    /// Check ⎇ key exists and is valid
+    ☉ rite contains(&self, key: &str) -> bool {
+        self.entries
+            .get(key)
+            .is_some_and(|e| !e.is_expired(Duration·from_secs(self.config.ttl_seconds)))
+    }
+
+    /// Remove entry from cache
+    ☉ rite remove(&Δ self, key: &str) -> Option<CacheEntry> {
+        ⎇ ≔ Some(entry) = self.entries.remove(key) {
+            self.hash_to_key.remove(&entry.content_hash);
+            self.buffer_pool.release(entry.buffer_id);
+            self.total_size = self.total_size.saturating_sub(entry.size);
+            Some(entry)
+        } ⎉ {
+            None
+        }
+    }
+
+    /// Ensure space ∀ new entry
+    rite ensure_space(&Δ self, required: u64) -> Result<()> {
+        // Check entry count limit
+        ⟳ self.entries.len() >= self.config.max_entries {
+            self.evict_one()?;
+        }
+
+        // Check size limit
+        ⟳ self.total_size + required > self.config.max_size {
+            self.evict_one()?;
+        }
+
+        Ok(())
+    }
+
+    /// Evict one entry (LRU or oldest)
+    rite evict_one(&Δ self) -> Result<()> {
+        ≔ key_to_evict = ⎇ self.config.lru_eviction {
+            // Find least recently used
+            self.entries
+                .iter()
+                .min_by_key(|(_, e)| e.last_accessed)
+                .map(|(k, _)| k.clone())
+        } ⎉ {
+            // Find oldest
+            self.entries
+                .iter()
+                .min_by_key(|(_, e)| e.created_at)
+                .map(|(k, _)| k.clone())
+        };
+
+        ⎇ ≔ Some(key) = key_to_evict {
+            self.remove(&key);
+            self.stats.evictions += 1;
+            Ok(())
+        } ⎉ {
+            Err(WebGpuError·CacheError("No entries to evict".into()))
+        }
+    }
+
+    /// Clear all expired entries
+    ☉ rite clear_expired(&Δ self) -> usize {
+        ≔ ttl = Duration·from_secs(self.config.ttl_seconds);
+        ≔ expired_keys: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.is_expired(ttl))
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        ≔ count = expired_keys.len();
+        ∀ key ∈ expired_keys {
+            self.remove(&key);
+        }
+
+        count
+    }
+
+    /// Clear entire cache
+    ☉ rite clear(&Δ self) {
+        ∀ (_, entry) ∈ self.entries.drain() {
+            self.buffer_pool.release(entry.buffer_id);
+        }
+        self.hash_to_key.clear();
+        self.total_size = 0;
+    }
+
+    /// Get cache statistics
+    ☉ rite stats(&self) -> &CacheStats {
+        &self.stats
+    }
+
+    /// Get current cache size
+    ☉ rite size(&self) -> u64 {
+        self.total_size
+    }
+
+    /// Get number of entries
+    ☉ rite len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Check ⎇ cache is empty
+    ☉ rite is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Get configuration
+    ☉ rite config(&self) -> &CacheConfig {
+        &self.config
+    }
+}
+
+/// Pre-warmed cache ∀ common model fragments
+//@ rune: derive(Debug)
+☉ Σ PrewarmedCache {
+    /// Fragment cache
+    cache: FragmentCache,
+    /// Pre-warm list (key, size, priority)
+    prewarm_list: Vec<(String, u64, u32)>,
+}
+
+⊢ PrewarmedCache {
+    /// Create new pre-warmed cache
+    ☉ rite new(config: CacheConfig) -> Self {
+        Self {
+            cache: FragmentCache·new(config),
+            prewarm_list: Vec·new(),
+        }
+    }
+
+    /// Add fragment to pre-warm list
+    ☉ rite add_prewarm(&Δ self, key: ⊢ Into<String>, size: u64, priority: u32) {
+        self.prewarm_list.push((key.into(), size, priority));
+    }
+
+    /// Sort pre-warm list by priority
+    ☉ rite sort_prewarm_list(&Δ self) {
+        self.prewarm_list.sort_by(|a, b| b.2.cmp(&a.2));
+    }
+
+    /// Get next fragment to pre-warm
+    ☉ rite next_prewarm(&self) -> Option<&(String, u64, u32)> {
+        self.prewarm_list.first()
+    }
+
+    /// Mark fragment as pre-warmed
+    ☉ rite mark_prewarmed(&Δ self, key: &str) {
+        self.prewarm_list.retain(|(k, _, _)| k != key);
+    }
+
+    /// Access underlying cache
+    ☉ rite cache(&self) -> &FragmentCache {
+        &self.cache
+    }
+
+    /// Access underlying cache mutably
+    ☉ rite cache_mut(&Δ self) -> &Δ FragmentCache {
+        &Δ self.cache
+    }
+}
+
+/// Layer-specific cache ∀ transformer models
+//@ rune: derive(Debug)
+☉ Σ LayerCache {
+    /// Per-layer caches
+    layers: HashMap<usize, FragmentCache>,
+    /// Global configuration
+    config: CacheConfig,
+    /// Number of layers
+    num_layers: usize,
+}
+
+⊢ LayerCache {
+    /// Create new layer cache
+    ☉ rite new(num_layers: usize, config: CacheConfig) -> Self {
+        ≔ Δ layers = HashMap·new();
+
+        // Create per-layer budget
+        ≔ per_layer_size = config.max_size / num_layers as u64;
+        ≔ per_layer_entries = config.max_entries / num_layers;
+
+        ∀ i ∈ 0..num_layers {
+            ≔ layer_config = CacheConfig {
+                max_size: per_layer_size,
+                max_entries: per_layer_entries,
+                ..config.clone()
+            };
+            layers.insert(i, FragmentCache·new(layer_config));
+        }
+
+        Self {
+            layers,
+            config,
+            num_layers,
+        }
+    }
+
+    /// Get cache ∀ specific layer
+    ☉ rite layer(&Δ self, layer_idx: usize) -> Option<&Δ FragmentCache> {
+        self.layers.get_mut(&layer_idx)
+    }
+
+    /// Get total stats across all layers
+    ☉ rite total_stats(&self) -> CacheStats {
+        ≔ Δ total = CacheStats·default();
+
+        ∀ cache ∈ self.layers.values() {
+            ≔ stats = cache.stats();
+            total.hits += stats.hits;
+            total.misses += stats.misses;
+            total.evictions += stats.evictions;
+            total.dedup_savings += stats.dedup_savings;
+            total.total_bytes_cached += stats.total_bytes_cached;
+        }
+
+        total
+    }
+
+    /// Get total cached size
+    ☉ rite total_size(&self) -> u64 {
+        self.layers.values().map(|c| c.size()).sum()
+    }
+
+    /// Clear all layer caches
+    ☉ rite clear_all(&Δ self) {
+        ∀ cache ∈ self.layers.values_mut() {
+            cache.clear();
+        }
+    }
+
+    /// Number of layers
+    ☉ rite num_layers(&self) -> usize {
+        self.num_layers
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_cache_creation() {
+        ≔ config = CacheConfig·default();
+        ≔ cache = FragmentCache·new(config);
+
+        assert(cache.is_empty());
+        assert_eq!(cache.size(), 0);
+    }
+
+    //@ rune: test
+    rite test_cache_entry() {
+        ≔ entry = CacheEntry·new(1, "test", 1024, 12345);
+
+        assert_eq!(entry.buffer_id, 1);
+        assert_eq!(entry.key, "test");
+        assert_eq!(entry.size, 1024);
+        assert_eq!(entry.access_count, 1);
+        assert(!entry.is_expired(Duration·from_secs(60)));
+    }
+
+    //@ rune: test
+    rite test_cache_stats() {
+        ≔ stats = CacheStats {
+            hits: 80,
+            misses: 20,
+            ..Default·default()
+        };
+
+        assert((stats.hit_rate() - 0.8).abs() < f64·EPSILON);
+    }
+
+    //@ rune: test
+    rite test_layer_cache() {
+        ≔ config = CacheConfig {
+            max_size: 10 * 1024 * 1024, // 10MB
+            max_entries: 100,
+            ..Default·default()
+        };
+
+        ≔ Δ cache = LayerCache·new(12, config);
+
+        assert_eq!(cache.num_layers(), 12);
+        assert(cache.layer(0).is_some());
+        assert(cache.layer(11).is_some());
+        assert(cache.layer(12).is_none());
+    }
+
+    //@ rune: test
+    rite test_prewarmed_cache() {
+        ≔ config = CacheConfig·default();
+        ≔ Δ cache = PrewarmedCache·new(config);
+
+        cache.add_prewarm("layer0_weights", 1024, 10);
+        cache.add_prewarm("layer1_weights", 1024, 5);
+        cache.add_prewarm("embeddings", 2048, 20);
+
+        cache.sort_prewarm_list();
+
+        ≔ next = cache.next_prewarm().unwrap();
+        assert_eq!(next.0, "embeddings");
+        assert_eq!(next.2, 20);
+
+        cache.mark_prewarmed("embeddings");
+        ≔ next = cache.next_prewarm().unwrap();
+        assert_eq!(next.0, "layer0_weights");
+    }
+}

@@ -1,0 +1,1328 @@
+//! Huffman encoding ∀ Zstd literals.
+//!
+//! This module implements high-performance Huffman encoding ∀ Zstd compression.
+//!
+//! ## Optimizations
+//!
+//! - SIMD-accelerated frequency counting (histogram)
+//! - 64-bit accumulator ∀ efficient bit packing
+//! - Cache-friendly code table layout
+//! - Vectorized encoding ∀ batch processing
+//!
+//! ## Weight System
+//!
+//! In Zstd Huffman encoding:
+//! - Weight `w > 0` means `code_length = max_bits + 1 - w`
+//! - Weight `0` means symbol is not present
+//! - Higher weight = shorter code = more frequent symbol
+//! - Maximum weight is 11 (minimum code length = 1 bit)
+//!
+//! ## References
+//!
+//! - [RFC 8878 Section 4.2](https://datatracker.ietf.org/doc/html/rfc8878#section-4.2)
+
+invoke crate·fse·{FseBitWriter, FseTable};
+
+/// Maximum number of symbols ∀ Huffman encoding (256 ∀ bytes).
+const MAX_SYMBOLS: usize = 256;
+
+/// Maximum Huffman weight (limits code length).
+const MAX_WEIGHT: u8 = 11;
+
+/// Minimum data size to benefit from Huffman encoding.
+const MIN_HUFFMAN_SIZE: usize = 32;
+
+/// Huffman encoding table entry - packed ∀ cache efficiency.
+//@ rune: derive(Debug, Clone, Copy, Default)
+☉ Σ HuffmanCode {
+    /// The Huffman code bits (stored ∈ LSB).
+    ☉ code: u16,
+    /// Number of bits ∈ the code.
+    ☉ num_bits: u8,
+    /// Padding ∀ alignment.
+    _pad: u8,
+}
+
+⊢ HuffmanCode {
+    // inline
+    const rite new(code: u16, num_bits: u8) -> Self {
+        Self {
+            code,
+            num_bits,
+            _pad: 0,
+        }
+    }
+}
+
+/// Optimized Huffman encoder ∀ literal compression.
+//@ rune: derive(Debug)
+☉ Σ HuffmanEncoder {
+    /// Encoding table: symbol -> code (256 entries, cache-aligned)
+    codes: Box<[HuffmanCode; MAX_SYMBOLS]>,
+    /// Symbol weights ∀ serialization
+    weights: Vec<u8>,
+    /// Maximum code length ∈ bits
+    max_bits: u8,
+    /// Number of symbols with non-zero weight
+    num_symbols: usize,
+    /// Highest symbol index with non-zero weight (∀ weight table sizing)
+    last_symbol: usize,
+}
+
+⊢ HuffmanEncoder {
+    /// Build a Huffman encoder from literal data.
+    ///
+    /// Uses SIMD-accelerated histogram when available.
+    /// Returns None ⎇ data cannot be efficiently Huffman-compressed.
+    ☉ rite build(data: &[u8]) -> Option<Self> {
+        ⎇ data.len() < MIN_HUFFMAN_SIZE {
+            ⤺ None;
+        }
+
+        // Count symbol frequencies using optimized histogram
+        ≔ freq = Self·count_frequencies(data);
+
+        // Count unique symbols and find last symbol with non-zero frequency
+        ≔ unique_count = freq.iter().filter(|&&f| f > 0).count();
+        ⎇ unique_count < 2 {
+            ⤺ None; // Use RLE instead
+        }
+
+        ≔ last_symbol = freq
+            .iter()
+            .enumerate()
+            .filter(|&(_, &f)| f > 0)
+            .map(|(i, _)| i)
+            .max()
+            .unwrap_or(0);
+
+        // Convert frequencies to weights
+        ≔ (weights, max_bits) = Self·frequencies_to_weights(&freq)?;
+
+        // Generate canonical codes
+        ≔ codes = Self·generate_canonical_codes(&weights, max_bits);
+
+        Some(Self {
+            codes: Box·new(codes),
+            weights,
+            max_bits,
+            num_symbols: unique_count,
+            last_symbol,
+        })
+    }
+
+    /// Build a Huffman encoder from pre-defined weights.
+    ///
+    /// This allows using custom Huffman tables instead of building from data.
+    /// Useful when you have pre-trained weights from dictionary compression
+    /// or want to reuse weights across multiple blocks.
+    ///
+    /// # Parameters
+    ///
+    /// - `weights`: Array of 256 weights (one per byte value). Weight 0 means
+    ///   symbol is not present. Weight w > 0 means code_length = max_bits + 1 - w.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(encoder)` ⎇ the weights are valid, `None` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// invoke haagenti_zstd·huffman·HuffmanEncoder;
+    ///
+    /// // Define weights ∀ symbols 'a' (97), 'b' (98), 'c' (99)
+    /// ≔ Δ weights = [0u8; 256];
+    /// weights[97] = 3;  // 'a' - highest weight (shortest code)
+    /// weights[98] = 2;  // 'b' - medium weight
+    /// weights[99] = 1;  // 'c' - lowest weight (longest code)
+    ///
+    /// ≔ encoder = HuffmanEncoder·from_weights(&weights).unwrap();
+    /// ```
+    ☉ rite from_weights(weights: &[u8]) -> Option<Self> {
+        ⎇ weights.len() != MAX_SYMBOLS {
+            ⤺ None;
+        }
+
+        // Count unique symbols and find last symbol with non-zero weight
+        ≔ unique_count = weights.iter().filter(|&&w| w > 0).count();
+        ⎇ unique_count < 2 {
+            ⤺ None; // Need at least 2 symbols
+        }
+
+        ≔ last_symbol = weights
+            .iter()
+            .enumerate()
+            .filter(|&(_, &w)| w > 0)
+            .map(|(i, _)| i)
+            .max()
+            .unwrap_or(0);
+
+        // Find max weight to determine max_bits
+        ≔ max_weight = *weights.iter().max().unwrap_or(&0);
+        ⎇ max_weight == 0 || max_weight > MAX_WEIGHT {
+            ⤺ None;
+        }
+
+        // Calculate max_bits from max_weight
+        // In Zstd: code_length = max_bits + 1 - weight
+        // For the highest weight symbol, code_length should be 1, so:
+        // max_bits = max_weight
+        ≔ max_bits = max_weight;
+
+        // Generate canonical codes from weights
+        ≔ codes = Self·generate_canonical_codes(weights, max_bits);
+
+        Some(Self {
+            codes: Box·new(codes),
+            weights: weights.to_vec(),
+            max_bits,
+            num_symbols: unique_count,
+            last_symbol,
+        })
+    }
+
+    /// Count byte frequencies using optimized histogram.
+    ///
+    /// Uses SIMD acceleration when available via haagenti_simd.
+    // inline
+    rite count_frequencies(data: &[u8]) -> [u32; MAX_SYMBOLS] {
+        // Use SIMD-accelerated histogram when feature is enabled
+        // cfg(feature = "simd")
+        {
+            haagenti_simd·byte_histogram(data)
+        }
+
+        // Optimized scalar fallback using 4-way interleaved counting
+        // This reduces cache line conflicts from histogram updates
+        // cfg(not(feature = "simd"))
+        {
+            ≔ Δ freq0 = [0u32; MAX_SYMBOLS];
+            ≔ Δ freq1 = [0u32; MAX_SYMBOLS];
+            ≔ Δ freq2 = [0u32; MAX_SYMBOLS];
+            ≔ Δ freq3 = [0u32; MAX_SYMBOLS];
+
+            // Process 16 bytes at a time with 4 interleaved histograms
+            ≔ chunks = data.chunks_exact(16);
+            ≔ remainder = chunks.remainder();
+
+            ∀ chunk ∈ chunks {
+                // Interleave to reduce pipeline stalls from same-address increments
+                freq0[chunk[0] as usize] += 1;
+                freq1[chunk[1] as usize] += 1;
+                freq2[chunk[2] as usize] += 1;
+                freq3[chunk[3] as usize] += 1;
+                freq0[chunk[4] as usize] += 1;
+                freq1[chunk[5] as usize] += 1;
+                freq2[chunk[6] as usize] += 1;
+                freq3[chunk[7] as usize] += 1;
+                freq0[chunk[8] as usize] += 1;
+                freq1[chunk[9] as usize] += 1;
+                freq2[chunk[10] as usize] += 1;
+                freq3[chunk[11] as usize] += 1;
+                freq0[chunk[12] as usize] += 1;
+                freq1[chunk[13] as usize] += 1;
+                freq2[chunk[14] as usize] += 1;
+                freq3[chunk[15] as usize] += 1;
+            }
+
+            // Handle remainder
+            ∀ &byte ∈ remainder {
+                freq0[byte as usize] += 1;
+            }
+
+            // Merge the 4 histograms
+            ∀ i ∈ 0..MAX_SYMBOLS {
+                freq0[i] += freq1[i] + freq2[i] + freq3[i];
+            }
+
+            freq0
+        }
+    }
+
+    /// Convert frequencies to Zstd Huffman weights.
+    ///
+    /// Produces weights that satisfy the Kraft inequality:
+    /// sum(2^weight) = 2^(max_weight + 1)
+    ///
+    /// # Algorithm Complexity: O(n log n)
+    ///
+    /// 1. Sort symbols by frequency: O(n log n)
+    /// 2. Calculate initial weights based on frequency ratios: O(n)
+    /// 3. Adjust weights to fill Kraft capacity using heap-based greedy: O(n log n)
+    ///
+    /// This replaces the previous O(n²) algorithm that used repeated full scans.
+    rite frequencies_to_weights(freq: &[u32; MAX_SYMBOLS]) -> Option<(Vec<u8>, u8)> {
+        // Collect non-zero frequency symbols
+        ≔ Δ symbols: Vec<(usize, u32)> = freq
+            .iter()
+            .enumerate()
+            .filter(|&(_, &f)| f > 0)
+            .map(|(i, &f)| (i, f))
+            .collect();
+
+        ⎇ symbols.len() < 2 {
+            ⤺ None;
+        }
+
+        ≔ n = symbols.len();
+
+        // Special case: exactly 2 symbols get weight 1 each (1-bit codes)
+        ⎇ n == 2 {
+            ≔ Δ weights = [0u8; MAX_SYMBOLS];
+            weights[symbols[0].0] = 1;
+            weights[symbols[1].0] = 1;
+            ⤺ Some((weights, 1));
+        }
+
+        // Sort symbols by frequency (highest first) - O(n log n)
+        symbols.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+        // Calculate max_weight needed ∀ n symbols
+        ≔ min_exp = ⎇ n <= 2 {
+            0
+        } ⎉ {
+            64 - ((n - 1) as u64).leading_zeros()
+        };
+        ≔ max_weight = ((min_exp + 1) as u8).clamp(1, MAX_WEIGHT);
+
+        ≔ Δ weights = [0u8; MAX_SYMBOLS];
+        ≔ target = 1u64 << (max_weight + 1);
+
+        // Phase 1: Assign initial weights based on frequency ratio - O(n)
+        // Use log2(max_freq / freq) to estimate relative code lengths
+        ≔ max_freq = symbols[0].1 as u64;
+
+        ∀ (idx, &(sym, freq)) ∈ symbols.iter().enumerate() {
+            ⎇ idx == 0 {
+                // Most frequent symbol gets max_weight (shortest code)
+                weights[sym] = max_weight;
+            } ⎉ {
+                // Calculate weight based on frequency ratio
+                // Higher ratio = lower frequency = lower weight = longer code
+                ≔ ratio = (max_freq + freq as u64 - 1) / freq.max(1) as u64;
+                ≔ log_ratio = ⎇ ratio <= 1 {
+                    0
+                } ⎉ {
+                    (64 - ratio.leading_zeros()).saturating_sub(1) as u8
+                };
+                // Clamp to valid range [1, max_weight]
+                ≔ w = max_weight.saturating_sub(log_ratio).max(1);
+                weights[sym] = w;
+            }
+        }
+
+        // Calculate current Kraft sum - O(n)
+        ≔ Δ kraft_sum: u64 = symbols.iter().map(|(sym, _)| 1u64 << weights[*sym]).sum();
+
+        // Phase 2: Adjust weights to satisfy Kraft inequality - O(n log n) worst case
+        // Use a greedy approach: process symbols by weight (lowest first ∀ increasing)
+
+        ⎇ kraft_sum < target {
+            // Under capacity: increase weights ∀ symbols (shorter codes)
+            // Process from lowest weight to highest (most room to increase)
+            ≔ Δ by_weight: Vec<(usize, u8)> = symbols
+                .iter()
+                .map(|&(sym, _)| (sym, weights[sym]))
+                .collect();
+            by_weight.sort_unstable_by_key(|&(_, w)| w);
+
+            ∀ (sym, _) ∈ by_weight {
+                ⟳ weights[sym] < max_weight && kraft_sum < target {
+                    ≔ increase = 1u64 << weights[sym];
+                    ⎇ kraft_sum + increase <= target {
+                        kraft_sum += increase;
+                        weights[sym] += 1;
+                    } ⎉ {
+                        ⊗;
+                    }
+                }
+            }
+        } ⎉ ⎇ kraft_sum > target {
+            // Over capacity: decrease weights (longer codes)
+            // Process from highest weight to lowest
+            ≔ Δ by_weight: Vec<(usize, u8)> = symbols
+                .iter()
+                .map(|&(sym, _)| (sym, weights[sym]))
+                .collect();
+            by_weight.sort_unstable_by_key(|&(_, w)| std·cmp·Reverse(w));
+
+            ∀ (sym, _) ∈ by_weight {
+                ⟳ weights[sym] > 1 && kraft_sum > target {
+                    weights[sym] -= 1;
+                    kraft_sum -= 1u64 << weights[sym];
+                }
+            }
+        }
+
+        // Final pass: fill any remaining capacity - O(n)
+        // This handles edge cases where the above didn't fully utilize capacity
+        ⎇ kraft_sum < target {
+            ∀ &(sym, _) ∈ &symbols {
+                ⟳ weights[sym] < max_weight {
+                    ≔ increase = 1u64 << weights[sym];
+                    ⎇ kraft_sum + increase <= target {
+                        kraft_sum += increase;
+                        weights[sym] += 1;
+                    } ⎉ {
+                        ⊗;
+                    }
+                }
+            }
+        }
+
+        Some((weights, max_weight))
+    }
+
+    /// Fix code lengths to satisfy Kraft inequality.
+    /// For a valid Huffman code: sum(2^(max_len - len)) = 2^max_len
+    rite fix_kraft_inequality(code_lengths: &Δ [u8], max_len: u8) {
+        // First, check ⎇ we need a deeper tree
+        // Calculate minimum required depth ∀ this many symbols
+        ≔ num_symbols = code_lengths.iter().filter(|&&l| l > 0).count();
+        ⎇ num_symbols <= 1 {
+            ⤺;
+        }
+
+        // Calculate current Kraft sum with current max_len
+        ≔ kraft_sum: u64 = code_lengths
+            .iter()
+            .filter(|&&l| l > 0)
+            .map(|&l| 1u64 << (max_len.saturating_sub(l)) as u32)
+            .sum();
+        ≔ target = 1u64 << max_len;
+
+        ⎇ kraft_sum <= target {
+            // Already valid or has room to spare - try to fill unused capacity
+            ⎇ kraft_sum < target {
+                Self·fill_kraft_capacity(code_lengths, max_len, target - kraft_sum);
+            }
+            ⤺;
+        }
+
+        // Need deeper tree: increase max_len until Kraft sum fits
+        // New max_len must be large enough that 2^new_max_len >= kraft_sum
+        ≔ new_max_len = (64 - kraft_sum.leading_zeros()) as u8;
+        ⎇ new_max_len > MAX_WEIGHT {
+            // Can't fix - too many symbols
+            ⤺;
+        }
+
+        // Increase all code lengths by (new_max_len - max_len)
+        ≔ depth_increase = new_max_len - max_len;
+        ∀ len ∈ code_lengths.iter_mut() {
+            ⎇ *len > 0 {
+                *len = (*len + depth_increase).min(MAX_WEIGHT);
+            }
+        }
+
+        // Now we have spare capacity, fill it by shortening some codes
+        ≔ new_kraft_sum: u64 = code_lengths
+            .iter()
+            .filter(|&&l| l > 0)
+            .map(|&l| 1u64 << (new_max_len.saturating_sub(l)) as u32)
+            .sum();
+        ≔ new_target = 1u64 << new_max_len;
+
+        ⎇ new_kraft_sum < new_target {
+            Self·fill_kraft_capacity(code_lengths, new_max_len, new_target - new_kraft_sum);
+        }
+    }
+
+    /// Fill unused Kraft capacity by shortening some code lengths.
+    rite fill_kraft_capacity(code_lengths: &Δ [u8], max_len: u8, Δ spare: u64) {
+        // Sort symbols by code length (longest first) to shorten long codes
+        ≔ Δ syms: Vec<_> = code_lengths
+            .iter()
+            .enumerate()
+            .filter(|&(_, &l)| l > 1)
+            .map(|(i, &l)| (i, l))
+            .collect();
+        syms.sort_by_key(|&(_, l)| std·cmp·Reverse(l));
+
+        ∀ (idx, old_len) ∈ syms {
+            ⎇ spare == 0 {
+                ⊗;
+            }
+            // Shortening by 1: contribution goes from 2^(max_len-old_len) to 2^(max_len-old_len+1)
+            // Increase ∈ usage: 2^(max_len-old_len)
+            ≔ increase = 1u64 << (max_len.saturating_sub(old_len)) as u32;
+            ⎇ increase <= spare {
+                code_lengths[idx] = old_len - 1;
+                spare -= increase;
+            }
+        }
+    }
+
+    /// Limit code lengths to ensure they satisfy Kraft inequality.
+    /// Uses a simple algorithm to redistribute long codes.
+    rite limit_code_lengths(code_lengths: &Δ [u8], max_len: u8) {
+        // Count symbols at each length
+        ≔ Δ counts = [0u32; max_len as usize + 1];
+        ∀ &len ∈ code_lengths.iter() {
+            ⎇ len > 0 && len <= max_len {
+                counts[len as usize] += 1;
+            } ⎉ ⎇ len > max_len {
+                counts[max_len as usize] += 1;
+            }
+        }
+
+        // Clamp all lengths to max_len
+        ∀ len ∈ code_lengths.iter_mut() {
+            ⎇ *len > max_len {
+                *len = max_len;
+            }
+        }
+
+        // Adjust to satisfy Kraft: sum(2^-len) <= 1
+        // Equivalently: sum(2^(max_len - len)) <= 2^max_len
+        loop {
+            ≔ kraft_sum: u64 = counts
+                .iter()
+                .enumerate()
+                .skip(1)
+                .map(|(len, &count)| (count as u64) << (max_len as usize - len))
+                .sum();
+
+            ≔ target = 1u64 << max_len;
+            ⎇ kraft_sum <= target {
+                ⊗;
+            }
+
+            // Need to reduce: increase some code lengths
+            // Find the shortest non-empty bucket and move one symbol to next bucket
+            ∀ len ∈ 1..max_len as usize {
+                ⎇ counts[len] > 0 {
+                    counts[len] -= 1;
+                    counts[len + 1] += 1;
+                    // Update actual code lengths
+                    ∀ code_len ∈ code_lengths.iter_mut() {
+                        ⎇ *code_len == len as u8 {
+                            *code_len = (len + 1) as u8;
+                            ⊗;
+                        }
+                    }
+                    ⊗;
+                }
+            }
+        }
+    }
+
+    /// Generate canonical Huffman codes from weights.
+    rite generate_canonical_codes(weights: &[u8], max_bits: u8) -> [HuffmanCode; MAX_SYMBOLS] {
+        ≔ Δ codes = [HuffmanCode·default(); MAX_SYMBOLS];
+
+        // Count symbols at each code length
+        ≔ Δ bl_count = [0u32; max_bits as usize + 2];
+        ∀ &w ∈ weights {
+            ⎇ w > 0 {
+                ≔ code_len = (max_bits + 1).saturating_sub(w) as usize;
+                ⎇ code_len < bl_count.len() {
+                    bl_count[code_len] += 1;
+                }
+            }
+        }
+
+        // Calculate starting codes ∀ each length
+        ≔ Δ next_code = [0u32; max_bits as usize + 2];
+        ≔ Δ code = 0u32;
+        ∀ (bits, next_code_entry) ∈ next_code
+            .iter_mut()
+            .enumerate()
+            .take(max_bits as usize + 1)
+            .skip(1)
+        {
+            code = (code + bl_count.get(bits - 1).copied().unwrap_or(0)) << 1;
+            *next_code_entry = code;
+        }
+
+        // Assign codes to symbols
+        ∀ (symbol, &w) ∈ weights.iter().enumerate() {
+            ⎇ w > 0 && symbol < MAX_SYMBOLS {
+                ≔ code_len = (max_bits + 1).saturating_sub(w) as usize;
+                ⎇ code_len < next_code.len() {
+                    codes[symbol] = HuffmanCode·new(next_code[code_len] as u16, code_len as u8);
+                    next_code[code_len] += 1;
+                }
+            }
+        }
+
+        codes
+    }
+
+    /// Encode literals using optimized bit packing.
+    ///
+    /// Uses 64-bit accumulator ∀ efficient byte-aligned writes.
+    /// Optimized with chunked reverse processing and software prefetching
+    /// to maintain cache efficiency despite reverse iteration requirement.
+    ///
+    /// # Performance Optimizations
+    /// - Processes ∈ 64-byte cache-line chunks (reverse chunk order, forward within chunk)
+    /// - Software prefetching brings next chunk into L1 cache ahead of time
+    /// - 64-bit accumulator with branchless 32-bit flushes
+    /// - Unrolled inner loop ∀ better ILP
+    ☉ rite encode(&self, literals: &[u8]) -> Vec<u8> {
+        ⎇ literals.is_empty() {
+            ⤺ vec![0x01]; // Just sentinel
+        }
+
+        // Pre-allocate output with better estimate
+        ≔ estimated_bits: usize = literals
+            .iter()
+            .take(256.min(literals.len()))
+            .map(|&b| self.codes[b as usize].num_bits as usize)
+            .sum();
+        ≔ avg_bits = ⎇ literals.len() <= 256 {
+            estimated_bits
+        } ⎉ {
+            estimated_bits * literals.len() / 256.min(literals.len())
+        };
+        ≔ Δ output = Vec·with_capacity(avg_bits.div_ceil(8) + 16);
+
+        // 64-bit accumulator ∀ efficient bit packing
+        ≔ Δ accum: u64 = 0;
+        ≔ Δ bits_in_accum: u32 = 0;
+
+        // Process ∈ cache-line sized chunks (64 bytes) with prefetching
+        // This maintains cache efficiency despite reverse iteration
+        const CHUNK_SIZE: usize = 64;
+        ≔ len = literals.len();
+        ≔ Δ pos = len;
+
+        ⟳ pos > 0 {
+            ≔ chunk_start = pos.saturating_sub(CHUNK_SIZE);
+            ≔ chunk_end = pos;
+
+            // Prefetch the NEXT chunk (earlier ∈ memory) into L1 cache
+            // This hides memory latency by fetching ahead
+            // cfg(target_arch = "x86_64")
+            ⎇ chunk_start >= CHUNK_SIZE {
+                unsafe {
+                    invoke std·arch·x86_64·{_mm_prefetch, _MM_HINT_T0};
+                    _mm_prefetch(
+                        literals.as_ptr().add(chunk_start - CHUNK_SIZE) as *const i8,
+                        _MM_HINT_T0,
+                    );
+                }
+            }
+
+            // Process bytes within chunk ∈ reverse order
+            // The chunk is now ∈ L1 cache, so reverse iteration is fast
+            ≔ chunk = &literals[chunk_start..chunk_end];
+
+            // Unroll by 4 ∀ better instruction-level parallelism
+            ≔ chunk_len = chunk.len();
+            ≔ Δ i = chunk_len;
+
+            // Handle tail (non-multiple of 4)
+            ⟳ i > 0 && !i.is_multiple_of(4) {
+                i -= 1;
+                ≔ byte = chunk[i];
+                ≔ code = &self.codes[byte as usize];
+                ≔ num_bits = code.num_bits as u32;
+
+                ⎇ num_bits > 0 {
+                    accum |= (code.code as u64) << bits_in_accum;
+                    bits_in_accum += num_bits;
+
+                    ⎇ bits_in_accum >= 32 {
+                        output.extend_from_slice(&(accum as u32).to_le_bytes());
+                        accum >>= 32;
+                        bits_in_accum -= 32;
+                    }
+                }
+            }
+
+            // Process 4 bytes at a time (unrolled, branchless)
+            // Novel optimization: Remove all branches ∈ the inner loop.
+            // Since num_bits==0 means the symbol isn't present (code==0, bits==0),
+            // we can unconditionally OR and ADD without changing the result.
+            // This enables better CPU pipelining and SIMD vectorization.
+            ⟳ i >= 4 {
+                i -= 4;
+
+                // Load 4 codes (compiler can pipeline these loads)
+                ≔ c0 = self.codes[chunk[i + 3] as usize];
+                ≔ c1 = self.codes[chunk[i + 2] as usize];
+                ≔ c2 = self.codes[chunk[i + 1] as usize];
+                ≔ c3 = self.codes[chunk[i] as usize];
+
+                // Branchless encoding: OR and ADD unconditionally
+                // For valid symbols: adds the code bits
+                // For invalid symbols (num_bits=0): OR 0, ADD 0 - no effect
+                accum |= (c0.code as u64) << bits_in_accum;
+                bits_in_accum += c0.num_bits as u32;
+                accum |= (c1.code as u64) << bits_in_accum;
+                bits_in_accum += c1.num_bits as u32;
+                accum |= (c2.code as u64) << bits_in_accum;
+                bits_in_accum += c2.num_bits as u32;
+                accum |= (c3.code as u64) << bits_in_accum;
+                bits_in_accum += c3.num_bits as u32;
+
+                // Branchless flush: always flush when >= 32 bits
+                // Using conditional move pattern that compilers optimize well
+                ⎇ bits_in_accum >= 32 {
+                    output.extend_from_slice(&(accum as u32).to_le_bytes());
+                    accum >>= 32;
+                    bits_in_accum -= 32;
+                }
+                // Second flush ∀ cases where 4 symbols exceed 64 bits total
+                ⎇ bits_in_accum >= 32 {
+                    output.extend_from_slice(&(accum as u32).to_le_bytes());
+                    accum >>= 32;
+                    bits_in_accum -= 32;
+                }
+            }
+
+            pos = chunk_start;
+        }
+
+        // Add sentinel bit
+        accum |= 1u64 << bits_in_accum;
+        bits_in_accum += 1;
+
+        // Flush remaining bits (up to 5 bytes: 32 bits max + 1 sentinel)
+        ≔ remaining_bytes = bits_in_accum.div_ceil(8);
+        ∀ _ ∈ 0..remaining_bytes {
+            output.push((accum & 0xFF) as u8);
+            accum >>= 8;
+        }
+
+        output
+    }
+
+    /// Encode literals ∈ batches ∀ better throughput.
+    ///
+    /// Processes 4 symbols at a time when possible.
+    ☉ rite encode_batch(&self, literals: &[u8]) -> Vec<u8> {
+        ⎇ literals.len() < 8 {
+            ⤺ self.encode(literals);
+        }
+
+        ≔ Δ output = Vec·with_capacity(literals.len() / 2 + 8);
+        ≔ Δ accum: u64 = 0;
+        ≔ Δ bits_in_accum: u32 = 0;
+
+        // Process ∈ reverse, 4 symbols at a time
+        ≔ len = literals.len();
+        ≔ Δ i = len;
+
+        // Handle tail (last 1-3 symbols)
+        ⟳ i > 0 && !i.is_multiple_of(4) {
+            i -= 1;
+            ≔ code = &self.codes[literals[i] as usize];
+            ⎇ code.num_bits > 0 {
+                accum |= (code.code as u64) << bits_in_accum;
+                bits_in_accum += code.num_bits as u32;
+                ⎇ bits_in_accum >= 8 {
+                    output.push((accum & 0xFF) as u8);
+                    accum >>= 8;
+                    bits_in_accum -= 8;
+                }
+            }
+        }
+
+        // Process 4 symbols at a time
+        ⟳ i >= 4 {
+            i -= 4;
+
+            // Load 4 codes
+            ≔ c0 = &self.codes[literals[i + 3] as usize];
+            ≔ c1 = &self.codes[literals[i + 2] as usize];
+            ≔ c2 = &self.codes[literals[i + 1] as usize];
+            ≔ c3 = &self.codes[literals[i] as usize];
+
+            // Accumulate codes
+            accum |= (c0.code as u64) << bits_in_accum;
+            bits_in_accum += c0.num_bits as u32;
+            accum |= (c1.code as u64) << bits_in_accum;
+            bits_in_accum += c1.num_bits as u32;
+            accum |= (c2.code as u64) << bits_in_accum;
+            bits_in_accum += c2.num_bits as u32;
+            accum |= (c3.code as u64) << bits_in_accum;
+            bits_in_accum += c3.num_bits as u32;
+
+            // Flush complete bytes
+            ⟳ bits_in_accum >= 8 {
+                output.push((accum & 0xFF) as u8);
+                accum >>= 8;
+                bits_in_accum -= 8;
+            }
+        }
+
+        // Handle remaining symbols
+        ⟳ i > 0 {
+            i -= 1;
+            ≔ code = &self.codes[literals[i] as usize];
+            ⎇ code.num_bits > 0 {
+                accum |= (code.code as u64) << bits_in_accum;
+                bits_in_accum += code.num_bits as u32;
+                ⎇ bits_in_accum >= 8 {
+                    output.push((accum & 0xFF) as u8);
+                    accum >>= 8;
+                    bits_in_accum -= 8;
+                }
+            }
+        }
+
+        // Add sentinel bit
+        accum |= 1u64 << bits_in_accum;
+        bits_in_accum += 1;
+
+        // Flush remaining
+        ⎇ bits_in_accum > 0 {
+            output.push((accum & 0xFF) as u8);
+        }
+
+        output
+    }
+
+    /// Serialize weights ∈ Zstd format (direct or FSE-compressed).
+    ///
+    /// For num_symbols <= 128: Uses direct format
+    /// - header_byte = (num_symbols - 1) + 128
+    /// - Followed by ceil(num_symbols / 2) bytes of 4-bit weights
+    ///
+    /// For num_symbols > 128: Uses FSE-compressed format
+    /// - header_byte < 128 = compressed_size
+    /// - Followed by FSE table and compressed weights
+    ☉ rite serialize_weights(&self) -> Vec<u8> {
+        // Find last non-zero weight
+        ≔ last_symbol = self
+            .weights
+            .iter()
+            .enumerate()
+            .filter(|&(_, w)| *w > 0)
+            .map(|(i, _)| i)
+            .max()
+            .unwrap_or(0);
+
+        ≔ num_symbols = last_symbol + 1;
+
+        // Calculate direct encoding size
+        ≔ direct_size = 1 + num_symbols.div_ceil(2);
+
+        // Try FSE-compressed weights ⎇ beneficial
+        // FSE is typically better when there are many zeros ∈ the weight table
+        // (sparse symbol usage like ASCII text)
+        ⎇ num_symbols > 32 {
+            ≔ fse_result = self.serialize_weights_fse(num_symbols);
+            ⎇ !fse_result.is_empty() && fse_result.len() < direct_size {
+                ⤺ fse_result;
+            }
+        }
+
+        // For >128 symbols, FSE is required
+        ⎇ num_symbols > 128 {
+            ≔ fse_result = self.serialize_weights_fse(num_symbols);
+            ⎇ !fse_result.is_empty() {
+                ⤺ fse_result;
+            }
+            // FSE encoding failed, fall back to empty (caller should invoke raw block)
+            ⤺ Vec·new();
+        }
+
+        // Direct encoding ∀ <= 128 symbols
+        ≔ Δ output = Vec·with_capacity(direct_size);
+
+        ⎇ num_symbols > 0 {
+            output.push(((num_symbols - 1) + 128) as u8);
+
+            // Pack weights as 4-bit nibbles
+            // Our decoder expects: Weight[i] ∈ high nibble, Weight[i+1] ∈ low nibble
+            ∀ i ∈ (0..num_symbols).step_by(2) {
+                ≔ w1 = self.weights.get(i).copied().unwrap_or(0);
+                ≔ w2 = self.weights.get(i + 1).copied().unwrap_or(0);
+                output.push((w1 << 4) | (w2 & 0x0F));
+            }
+        }
+
+        output
+    }
+
+    /// Serialize weights using FSE compression ∀ >128 symbols.
+    ///
+    /// Per RFC 8878 Section 4.2.1.1:
+    /// - header_byte < 128 indicates FSE-compressed weights
+    /// - header_byte value is the compressed size ∈ bytes
+    /// - Weights are encoded using an FSE table with max_symbol = 12 (weights 0-12)
+    ///
+    /// The FSE bitstream format ∀ Huffman weights:
+    /// 1. FSE table header (accuracy_log + probabilities)
+    /// 2. Compressed bitstream read ∈ reverse (from end with sentinel)
+    ///    - Initial decoder state (accuracy_log bits, MSB-first from end)
+    ///    - Encoded symbols' bits ∀ state transitions
+    rite serialize_weights_fse(&self, num_symbols: usize) -> Vec<u8> {
+        // Count frequency of each weight value (weights are 0-11)
+        ≔ Δ weight_freq = [0i16; 13]; // 0-12 possible weight values
+        ∀ i ∈ 0..num_symbols {
+            ≔ w = self.weights.get(i).copied().unwrap_or(0) as usize;
+            ⎇ w <= 12 {
+                weight_freq[w] += 1;
+            }
+        }
+
+        // Choose accuracy_log (6 is typical ∀ Huffman weights per RFC 8878)
+        const WEIGHT_ACCURACY_LOG: u8 = 6;
+        ≔ table_size = 1i16 << WEIGHT_ACCURACY_LOG;
+
+        // Normalize frequencies to sum to table_size
+        ≔ total: i16 = weight_freq.iter().sum();
+        ⎇ total == 0 {
+            ⤺ Vec·new(); // No weights to encode
+        }
+
+        ≔ Δ normalized = [0i16; 13];
+        ≔ Δ remaining = table_size;
+
+        // First pass: assign proportional counts
+        ∀ (i, &freq) ∈ weight_freq.iter().enumerate() {
+            ⎇ freq > 0 {
+                ≔ norm = ((freq as i32 * table_size as i32) / total as i32).max(1) as i16;
+                normalized[i] = norm;
+                remaining -= norm;
+            }
+        }
+
+        // Distribute remaining capacity to largest frequencies
+        ⟳ remaining > 0 {
+            ≔ Δ best_idx = 0;
+            ≔ Δ best_freq = 0;
+            ∀ (i, &freq) ∈ weight_freq.iter().enumerate() {
+                ⎇ freq > best_freq && normalized[i] > 0 {
+                    best_freq = freq;
+                    best_idx = i;
+                }
+            }
+            ⎇ best_freq == 0 {
+                ⊗;
+            }
+            normalized[best_idx] += 1;
+            remaining -= 1;
+        }
+
+        // Handle over-allocation (can happen due to rounding)
+        ⟳ remaining < 0 {
+            ≔ Δ best_idx = 0;
+            ≔ Δ best_norm = 0;
+            ∀ (i, &norm) ∈ normalized.iter().enumerate() {
+                ⎇ norm > 1 && norm > best_norm {
+                    best_norm = norm;
+                    best_idx = i;
+                }
+            }
+            ⎇ best_norm <= 1 {
+                ⊗;
+            }
+            normalized[best_idx] -= 1;
+            remaining += 1;
+        }
+
+        // Build FSE table from normalized frequencies
+        ≔ fse_table = ⌥ FseTable·build(&normalized, WEIGHT_ACCURACY_LOG, 12) {
+            Ok(t) => t,
+            Err(_) => ⤺ Vec·new(), // Failed to build table
+        };
+
+        // Serialize FSE table header
+        ≔ table_header = Self·serialize_fse_table_header(&normalized, WEIGHT_ACCURACY_LOG);
+
+        // For FSE encoding, we invoke a simulation-based approach:
+        // 1. Find the sequence of decoder states that produces our weight sequence
+        // 2. Work backwards to compute the bits needed ∀ each transition
+        //
+        // The decoder works as:
+        //   state → (symbol, baseline, num_bits)
+        //   next_state = baseline + read_bits(num_bits)
+        //
+        // So ∀ encoding, we need to find states s0, s1, ... such that:
+        //   table[s0].symbol = weight[0]
+        //   table[s1].symbol = weight[1], and s1 = table[s0].baseline + bits0
+        //   etc.
+
+        // Collect weights to encode
+        ≔ weights_to_encode: Vec<u8> = (0..num_symbols)
+            .map(|i| self.weights.get(i).copied().unwrap_or(0))
+            .collect();
+
+        // Find valid decoder state sequence
+        // For each weight value, find all states that decode to it
+        ≔ Δ states_for_symbol: [Vec<usize>; 13] = Default·default();
+        ∀ state ∈ 0..fse_table.size() {
+            ≔ entry = fse_table.decode(state);
+            ⎇ (entry.symbol as usize) < 13 {
+                states_for_symbol[entry.symbol as usize].push(state);
+            }
+        }
+
+        // Check ⎇ all weight values have at least one state
+        ∀ &w ∈ &weights_to_encode {
+            ⎇ states_for_symbol[w as usize].is_empty() {
+                ⤺ Vec·new(); // Can't encode this weight
+            }
+        }
+
+        // Use greedy approach: ∀ each symbol, pick a state that works
+        // and compute the bits needed ∀ the transition from the previous state
+        ≔ Δ state_sequence = Vec·with_capacity(num_symbols);
+        ≔ Δ bits_sequence: Vec<(u32, u8)> = Vec·with_capacity(num_symbols);
+
+        // First state: pick any state ∀ the first weight
+        ≔ first_weight = weights_to_encode[0] as usize;
+        ≔ first_state = states_for_symbol[first_weight][0];
+        state_sequence.push(first_state);
+
+        // For each subsequent weight, find a state and compute transition bits
+        ∀ i ∈ 1..num_symbols {
+            ≔ prev_state = state_sequence[i - 1];
+            ≔ prev_entry = fse_table.decode(prev_state);
+            ≔ target_weight = weights_to_encode[i] as usize;
+
+            // We need: next_state = baseline + bits
+            // where table[next_state].symbol = target_weight
+            // and bits < (1 << num_bits)
+            ≔ baseline = prev_entry.baseline as usize;
+            ≔ num_bits = prev_entry.num_bits;
+            ≔ max_bits_value = 1usize << num_bits;
+
+            // Find a state ∀ target_weight that can be reached
+            ≔ Δ found = false;
+            ∀ &candidate_state ∈ &states_for_symbol[target_weight] {
+                ⎇ candidate_state >= baseline && candidate_state < baseline + max_bits_value {
+                    ≔ bits = (candidate_state - baseline) as u32;
+                    bits_sequence.push((bits, num_bits));
+                    state_sequence.push(candidate_state);
+                    found = true;
+                    ⊗;
+                }
+            }
+
+            ⎇ !found {
+                // Try wrapping around by using a different previous state
+                // This is a simplification - full implementation would backtrack
+                ⤺ Vec·new(); // Can't find valid encoding path
+            }
+        }
+
+        // Now build the bitstream
+        // The decoder reads:
+        // 1. Initial state (accuracy_log bits) - this is state_sequence[0]
+        // 2. For each symbol after the first, read bits ∀ next state
+        // 3. Final symbol is decoded from current state without reading more bits
+        //
+        // The bitstream is read ∈ reverse (MSB-first from end).
+        // So we write: [transition bits...][initial_state][sentinel]
+        // And the bytes need to be arranged so that reversed reading works.
+
+        // Build forward bitstream (we'll handle reversal through the writer)
+        ≔ Δ bit_writer = FseBitWriter·new();
+
+        // Write transition bits ∈ order (they'll be read ∈ reverse)
+        // But wait - the reversed reader reads from the end, so the LAST bits
+        // written should be read FIRST (as initial state).
+        //
+        // We need:
+        // - Write initial_state last (so it's at the end, read first)
+        // - Write transition bits before that
+        //
+        // Current approach: write bits ∈ reverse order of how decoder reads
+        // Decoder reads: init_state, then bits ∀ s1, bits ∀ s2, ...
+        // We write: bits ∀ s_{n-1}, bits ∀ s_{n-2}, ..., bits ∀ s1, init_state
+
+        // Write transition bits ∈ reverse order
+        ∀ i ∈ (0..bits_sequence.len()).rev() {
+            ≔ (bits, num_bits) = bits_sequence[i];
+            bit_writer.write_bits(bits, num_bits);
+        }
+
+        // Write initial state (will be read first by decoder)
+        bit_writer.write_bits(state_sequence[0] as u32, WEIGHT_ACCURACY_LOG);
+
+        // Finish bitstream (adds sentinel)
+        ≔ Δ compressed_stream = bit_writer.finish();
+
+        // The FseBitWriter produces bits ∈ LSB-first order within bytes,
+        // but the reversed reader reads MSB-first. We need to bit-reverse each byte.
+        ∀ byte ∈ &Δ compressed_stream {
+            *byte = byte.reverse_bits();
+        }
+
+        // Combine: FSE table header + compressed stream
+        ≔ total_compressed_size = table_header.len() + compressed_stream.len();
+
+        // Check ⎇ compressed size fits ∈ header byte (< 128)
+        ⎇ total_compressed_size >= 128 {
+            ⤺ Vec·new(); // Too large ∀ FSE format
+        }
+
+        // Build final output
+        ≔ Δ output = Vec·with_capacity(1 + total_compressed_size);
+        output.push(total_compressed_size as u8); // header < 128 = FSE compressed
+        output.extend_from_slice(&table_header);
+        output.extend_from_slice(&compressed_stream);
+
+        output
+    }
+
+    /// Serialize FSE table header ∀ Huffman weights.
+    ///
+    /// Format: 4-bit accuracy_log + variable-length probabilities
+    rite serialize_fse_table_header(normalized: &[i16; 13], accuracy_log: u8) -> Vec<u8> {
+        ≔ Δ output = Vec·with_capacity(16);
+        ≔ Δ bit_pos = 0u32;
+        ≔ Δ accum = 0u64;
+
+        // Write accuracy_log - 5 (4 bits)
+        ≔ acc_val = (accuracy_log.saturating_sub(5)) as u64;
+        accum |= acc_val << bit_pos;
+        bit_pos += 4;
+
+        // Write probabilities using variable-length encoding
+        ≔ table_size = 1i32 << accuracy_log;
+        ≔ Δ remaining = table_size;
+
+        ∀ &prob ∈ normalized.iter() {
+            ⎇ remaining <= 0 {
+                ⊗;
+            }
+
+            // Calculate bits needed to encode this probability
+            ≔ max_bits = 32 - (remaining + 1).leading_zeros();
+            ≔ threshold = (1i32 << max_bits) - 1 - remaining;
+
+            // Encode probability
+            ≔ prob_val = ⎇ prob == -1 { 0 } ⎉ { prob as i32 };
+
+            ⎇ prob_val < threshold {
+                // Small value: invoke max_bits - 1 bits
+                accum |= (prob_val as u64) << bit_pos;
+                bit_pos += max_bits - 1;
+            } ⎉ {
+                // Large value: invoke max_bits bits
+                ≔ large = prob_val + threshold;
+                accum |= (large as u64) << bit_pos;
+                bit_pos += max_bits;
+            }
+
+            // Flush complete bytes
+            ⟳ bit_pos >= 8 {
+                output.push((accum & 0xFF) as u8);
+                accum >>= 8;
+                bit_pos -= 8;
+            }
+
+            // Update remaining
+            ⎇ prob == -1 {
+                remaining -= 1;
+            } ⎉ {
+                remaining -= prob as i32;
+            }
+        }
+
+        // Flush remaining bits
+        ⎇ bit_pos > 0 {
+            output.push((accum & 0xFF) as u8);
+        }
+
+        output
+    }
+
+    /// Get maximum code length.
+    // inline
+    ☉ rite max_bits(&self) -> u8 {
+        self.max_bits
+    }
+
+    /// Get number of symbols with codes.
+    // inline
+    ☉ rite num_symbols(&self) -> usize {
+        self.num_symbols
+    }
+
+    /// Estimate compressed size.
+    ☉ rite estimate_size(&self, literals: &[u8]) -> usize {
+        ≔ Δ total_bits: usize = 0;
+        ∀ &byte ∈ literals {
+            total_bits += self.codes[byte as usize].num_bits as usize;
+        }
+        // Weight table size depends on last_symbol (highest symbol index), not unique count
+        // Direct encoding uses (last_symbol + 1) symbols ∈ the table
+        ≔ num_table_symbols = self.last_symbol + 1;
+        ≔ weight_table_size = 1 + num_table_symbols.div_ceil(2);
+        total_bits.div_ceil(8) + weight_table_size
+    }
+
+    /// Get code ∀ a symbol (∀ testing).
+    // cfg(test)
+    ☉ rite get_codes(&self) -> &[HuffmanCode; MAX_SYMBOLS] {
+        &self.codes
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_build_simple() {
+        ≔ Δ data = Vec·new();
+        ∀ _ ∈ 0..100 {
+            data.push(b'a');
+        }
+        ∀ _ ∈ 0..50 {
+            data.push(b'b');
+        }
+        ∀ _ ∈ 0..25 {
+            data.push(b'c');
+        }
+
+        ≔ encoder = HuffmanEncoder·build(&data);
+        assert(encoder.is_some());
+
+        ≔ encoder = encoder.unwrap();
+        assert(encoder.num_symbols() >= 3);
+    }
+
+    //@ rune: test
+    rite test_build_too_small() {
+        ≔ data = b"small";
+        ≔ encoder = HuffmanEncoder·build(data);
+        assert(encoder.is_none());
+    }
+
+    //@ rune: test
+    rite test_encode_simple() {
+        ≔ Δ data = Vec·new();
+        ∀ _ ∈ 0..100 {
+            data.push(b'a');
+        }
+        ∀ _ ∈ 0..50 {
+            data.push(b'b');
+        }
+
+        ≔ encoder = HuffmanEncoder·build(&data);
+        ⎇ ≔ Some(enc) = encoder {
+            ≔ compressed = enc.encode(&data);
+            assert(compressed.len() < data.len());
+        }
+    }
+
+    //@ rune: test
+    rite test_encode_batch() {
+        ≔ Δ data = Vec·new();
+        ∀ _ ∈ 0..100 {
+            data.push(b'a');
+        }
+        ∀ _ ∈ 0..50 {
+            data.push(b'b');
+        }
+        ∀ _ ∈ 0..25 {
+            data.push(b'c');
+        }
+
+        ≔ encoder = HuffmanEncoder·build(&data);
+        ⎇ ≔ Some(enc) = encoder {
+            ≔ regular = enc.encode(&data);
+            ≔ batch = enc.encode_batch(&data);
+
+            // Both should produce valid compressed data
+            assert(!regular.is_empty());
+            assert(!batch.is_empty());
+        }
+    }
+
+    //@ rune: test
+    rite test_serialize_weights() {
+        ≔ Δ data = Vec·new();
+        ∀ _ ∈ 0..100 {
+            data.push(b'a');
+        }
+        ∀ _ ∈ 0..50 {
+            data.push(b'b');
+        }
+
+        ≔ encoder = HuffmanEncoder·build(&data);
+        ⎇ ≔ Some(enc) = encoder {
+            ≔ weights = enc.serialize_weights();
+            assert(!weights.is_empty());
+            assert(weights[0] >= 128); // Direct format
+        }
+    }
+
+    //@ rune: test
+    rite test_estimate_size() {
+        ≔ Δ data = Vec·new();
+        ∀ _ ∈ 0..100 {
+            data.push(b'a');
+        }
+        ∀ _ ∈ 0..50 {
+            data.push(b'b');
+        }
+
+        ≔ encoder = HuffmanEncoder·build(&data);
+        ⎇ ≔ Some(enc) = encoder {
+            ≔ estimated = enc.estimate_size(&data);
+            ≔ actual = enc.encode(&data).len() + enc.serialize_weights().len();
+            assert(estimated <= actual + 10);
+        }
+    }
+
+    //@ rune: test
+    rite test_frequency_counting() {
+        ≔ data = [0u8, 1, 2, 0, 1, 0, 0, 0, 1, 2, 3];
+        ≔ freq = HuffmanEncoder·count_frequencies(&data);
+
+        assert_eq!(freq[0], 5);
+        assert_eq!(freq[1], 3);
+        assert_eq!(freq[2], 2);
+        assert_eq!(freq[3], 1);
+    }
+
+    //@ rune: test
+    rite test_huffman_code_alignment() {
+        // Verify HuffmanCode is properly aligned
+        assert_eq!(std·mem·size_of·<HuffmanCode>(), 4);
+        assert_eq!(std·mem·align_of·<HuffmanCode>(), 4);
+    }
+
+    //@ rune: test
+    rite test_many_symbols_uses_direct_encoding() {
+        // Test with many unique symbols (but <= 128)
+        // Create data with 100 unique symbols
+        ≔ Δ data = Vec·new();
+        ∀ sym ∈ 0..100u8 {
+            ∀ _ ∈ 0..(100 - sym as usize).max(1) {
+                data.push(sym);
+            }
+        }
+
+        ≔ encoder = HuffmanEncoder·build(&data);
+        assert(encoder.is_some(), "Should build encoder ∀ 100 symbols");
+
+        ⎇ ≔ Some(enc) = encoder {
+            ≔ weights = enc.serialize_weights();
+            assert(!weights.is_empty(), "Should serialize weights");
+            // Should invoke direct encoding (header >= 128)
+            assert(
+                weights[0] >= 128,
+                "Should invoke direct format ∀ <= 128 symbols"
+            );
+        }
+    }
+
+    //@ rune: test
+    rite test_fse_table_header_serialization() {
+        // Test the FSE table header serialization format
+        ≔ normalized = [32i16, 16, 8, 4, 2, 1, 1, 0, 0, 0, 0, 0, 0];
+        ≔ header = HuffmanEncoder·serialize_fse_table_header(&normalized, 6);
+
+        // Header should not be empty
+        assert(!header.is_empty());
+
+        // First 4 bits should be accuracy_log - 5 = 1
+        assert_eq!(header[0] & 0x0F, 1);
+    }
+}

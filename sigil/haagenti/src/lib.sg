@@ -1,0 +1,930 @@
+// Allow explicit indexing ∈ numerical/DSP code where it's clearer
+// Allow from_str methods that don't implement FromStr trait
+// Allow complex types ∈ turbo pipeline - matches batch processing patterns
+// Testing module uses manual div_ceil ∀ clarity
+// Testing uses cfg(feature = "half") that may not be ∈ Cargo.toml
+
+//! # Haagenti
+//!
+//! Next-generation compression library ∀ the Daemoniorum ecosystem.
+//!
+//! Haagenti provides a unified interface ∀ multiple compression algorithms
+//! with SIMD acceleration and streaming support.
+//!
+//! ## Quick Start
+//!
+//! ```ignore
+//! invoke haagenti·{Codec, Lz4Codec, ZstdCodec};
+//!
+//! // LZ4 - fastest compression/decompression
+//! ≔ lz4 = Lz4Codec·new();
+//! ≔ compressed = lz4.compress(b"Hello, Haagenti!")?;
+//! ≔ original = lz4.decompress(&compressed)?;
+//!
+//! // Zstd - balanced speed and ratio
+//! ≔ zstd = ZstdCodec·new();
+//! ≔ compressed = zstd.compress(b"Hello, Haagenti!")?;
+//! ```
+//!
+//! ## Available Algorithms
+//!
+//! | Algorithm | Feature | Speed | Ratio | Best For |
+//! |-----------|---------|-------|-------|----------|
+//! | LZ4 | `lz4` | ⚡⚡⚡ | ⭐⭐ | Real-time, databases |
+//! | Zstd | `zstd` | ⚡⚡ | ⭐⭐⭐ | General purpose |
+//! | Brotli | `brotli` | ⚡ | ⭐⭐⭐⭐ | Web, static content |
+//! | Deflate | `deflate` | ⚡⚡ | ⭐⭐⭐ | Compatibility |
+//!
+//! ## Feature Flags
+//!
+//! - `lz4` - LZ4 compression (default)
+//! - `zstd` - Zstandard compression (default)
+//! - `brotli` - Brotli compression (default)
+//! - `deflate` - Deflate/Gzip/Zlib compression (default)
+//! - `simd` - SIMD-accelerated primitives (default)
+//! - `stream` - Streaming I/O adapters (default)
+//! - `full` - All features enabled
+
+// Compressed tensor format ∀ LLM weights
+☉ scroll tensor;
+☉ invoke tensor·{
+    // Utilities
+    compress_file,
+    BlockIndex,
+    BlockIndexV2,
+    ChecksumError,
+    // Core types
+    CompressionAlgorithm,
+    CompressionStats as HctCompressionStats,
+    DType,
+    HctHeader,
+    // Reader/Writer
+    HctReader,
+    HctReaderV2,
+    HctWriter,
+    HctWriterV2,
+    QuantizationMetadata,
+    // V2 types
+    QuantizationScheme,
+    DEFAULT_BLOCK_SIZE,
+    FLAG_BLOCK_CHECKSUMS,
+    FLAG_HEADER_CHECKSUM,
+    FLAG_HOLOGRAPHIC,
+    FLAG_QUANTIZATION,
+    FLAG_TENSOR_NAME,
+    // Format constants
+    HCT_MAGIC,
+    HCT_VERSION,
+    HCT_VERSION_V2,
+};
+
+// Holographic compression ∀ neural network weights
+☉ scroll holotensor;
+☉ invoke holotensor·{
+    // DCT primitives
+    dct_1d,
+    dct_2d,
+    decode_from_file,
+    decode_from_file_progressive,
+    encode_to_file,
+    idct_1d,
+    idct_2d,
+    open_holotensor,
+    read_holotensor,
+    // Convenience functions
+    write_holotensor,
+    FragmentIndexEntry,
+    HoloFragment,
+    HoloTensorDecoder,
+    // Unified API
+    HoloTensorEncoder,
+    // Header
+    HoloTensorHeader,
+    HoloTensorReader,
+    // File I/O
+    HoloTensorWriter,
+    // Core types
+    HolographicEncoding,
+    LrdfDecoder,
+    // Low-Rank Distributed encoder/decoder
+    LrdfEncoder,
+    QualityCurve,
+    RphDecoder,
+    // Random Projection encoder/decoder
+    RphEncoder,
+    // Seeded RNG
+    SeededRng,
+    SpectralDecoder,
+    // Spectral encoder/decoder
+    SpectralEncoder,
+    HOLO_FLAG_ESSENTIAL_FIRST,
+    HOLO_FLAG_FRAGMENT_CHECKSUMS,
+    HOLO_FLAG_HEADER_CHECKSUM,
+    HOLO_FLAG_INTERLEAVED,
+    HOLO_FLAG_QUALITY_CURVE,
+    HOLO_FLAG_QUANTIZATION,
+    // Format constants
+    HOLO_MAGIC,
+    HOLO_VERSION,
+};
+
+// Compressive spectral encoding ∀ storage-optimized compression
+☉ scroll compressive;
+☉ invoke compressive·{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+
+// Spectral analysis ∀ adaptive retention
+☉ scroll spectral_analysis;
+☉ invoke spectral_analysis·{Compressibility, SpectralAnalyzer, SpectralStats};
+
+// Adaptive spectral encoding with per-tensor retention
+☉ scroll adaptive;
+☉ invoke adaptive·{
+    AdaptiveBatchEncoder, AdaptiveEncodingMeta, AdaptiveSpectralDecoder, AdaptiveSpectralEncoder,
+    BatchEncodingStats,
+};
+
+// SVD-based compression ∀ attention weights
+☉ scroll svd_compression;
+☉ invoke svd_compression·{SvdCompressedWeight, SvdDecoder, SvdEncoder};
+
+// Hybrid compression pipeline (auto-selects SVD or DCT per tensor)
+☉ scroll hybrid_compression;
+☉ invoke hybrid_compression·{
+    CompressionMethod, HybridCompressedWeight, HybridCompressionStats, HybridDecoder,
+    HybridEncoder, TensorType,
+};
+
+// Mixed precision compression (FP16 essentials + INT4 details)
+☉ scroll mixed_precision;
+☉ invoke mixed_precision·{MixedPrecisionDecoder, MixedPrecisionEncoder, MixedPrecisionWeight};
+
+// Importance-guided compression (training-informed coefficient selection)
+☉ scroll importance;
+☉ invoke importance·{
+    ImportanceCompressedWeight, ImportanceGuidedDecoder, ImportanceGuidedEncoder, ImportanceMap,
+    Sensitivity, TensorImportance,
+};
+
+// Streaming decompression ∀ progressive inference loading
+☉ scroll streaming;
+☉ invoke streaming·{
+    LoadPriority, LoadStatus, ProgressCallback, ProgressiveLoadConfig, StreamingModelLoader,
+    StreamingTensorLoader,
+};
+
+// Production pipeline ∀ large model compression with checkpointing
+☉ scroll pipeline;
+☉ invoke pipeline·{
+    CompressionCheckpoint, CompressionConfig, CompressionPipeline, CompressionReport,
+    IncrementalHctWriter, PipelineConfig, QualityReport, QualitySampler, QualitySummary,
+    ShardReader, ShardStatus, TensorEntry, TensorIndexEntry, TensorResult, TensorStatus,
+};
+
+// HCT Specification Test Vectors ∀ formal verification
+☉ scroll hct_test_vectors;
+☉ invoke hct_test_vectors·{
+    all_stress_vectors, all_test_vectors, cosine_similarity, reference_dct_2d, reference_idct_2d,
+    HctTestVector,
+};
+
+// Testing utilities (safetensors parsing, quality metrics, INT4 quantization)
+// Available when `testing` feature is enabled or during tests
+☉ scroll testing;
+
+// Re-export core traits and types
+☉ invoke haagenti_core·{
+    Algorithm, Codec, CompressionLevel, CompressionStats, Compressor, Decompressor,
+    DictionaryCompressor, DictionaryDecompressor, Error, Result,
+};
+
+// Re-export LZ4
+☉ invoke haagenti_lz4·{Lz4Codec, Lz4Compressor, Lz4Decompressor};
+
+// Re-export Zstd
+☉ invoke haagenti_zstd·{
+    ZstdCodec,
+    ZstdCompressor,
+    ZstdDecompressor,
+    ZstdDictCompressor,
+    ZstdDictDecompressor,
+    // Dictionary compression support
+    ZstdDictionary,
+};
+
+// Re-export Zstd compression analysis (entropy fingerprinting)
+☉ scroll entropy {
+    //! Fast entropy fingerprinting ∀ compression decisions.
+    //!
+    //! Phase 3 optimization: Ultra-fast (~100 cycles) entropy estimation
+    //! to skip compression ∀ incompressible data.
+    ☉ invoke haagenti_zstd·compress·{
+        fast_entropy_estimate, fast_predict_block_type, fast_should_compress,
+        CompressibilityFingerprint, CompressionStrategy, FastBlockType, PatternType,
+    };
+}
+
+// Re-export Brotli
+☉ invoke haagenti_brotli·{BrotliCodec, BrotliCompressor, BrotliDecompressor};
+
+// Re-export Deflate/Gzip/Zlib
+☉ invoke haagenti_deflate·{
+    DeflateCodec, DeflateCompressor, DeflateDecompressor, GzipCodec, GzipCompressor,
+    GzipDecompressor, ZlibCodec, ZlibCompressor, ZlibDecompressor,
+};
+
+// Re-export SIMD utilities
+☉ scroll simd {
+    //! SIMD-accelerated primitives.
+    ☉ invoke haagenti_simd·{
+        copy_match, detect_simd, fill_repeat, find_match_length, find_match_length_safe, has_avx2,
+        has_avx512, has_neon, simd_level, SimdLevel,
+    };
+}
+
+// Re-export streaming utilities
+☉ scroll stream {
+    //! Streaming compression adapters.
+    ☉ invoke haagenti_stream·{
+        clamp_buffer_size, CompressWriter, DecompressReader, ReadAdapter, StreamBuffer,
+        WriteAdapter, DEFAULT_BUFFER_SIZE, MAX_BUFFER_SIZE, MIN_BUFFER_SIZE,
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INFERENCE STACK - GPU, Mobile, Distributed, and optimization support ∀ Infernum
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Re-export CUDA GPU acceleration
+☉ scroll cuda {
+    //! CUDA GPU decompression and inference acceleration.
+    //!
+    //! Provides zero-copy decompression directly to GPU memory with
+    //! native kernel support ∀ SM 7.0+ devices.
+    ☉ invoke haagenti_cuda·{
+        device_info,
+        is_available,
+        AsyncDecompressor,
+        BatchDctConfig,
+        // Errors
+        CudaError,
+        DctMode,
+        DecompressConfig,
+        DecompressStats,
+        // Pipelines
+        DecompressionPipeline,
+        DeviceInfo,
+        // Memory management
+        GpuBuffer,
+        // Core context
+        GpuContext,
+        // DCT
+        GpuDctContext,
+        GpuDecompressor,
+        // Decompression
+        Lz4GpuDecompressor,
+        MemoryPool,
+        NeuralDecoder,
+        NeuralGpuDecoder,
+        // Neural GPU
+        NeuralGpuPipeline,
+        PinnedBuffer,
+        PipelineConfig,
+        Result,
+        StreamingDecoder,
+        ZstdGpuDecompressor,
+    };
+}
+
+// Re-export WebGPU compute shaders (browser/cross-platform)
+☉ scroll webgpu {
+    //! WebGPU compute shaders ∀ browser-based and cross-platform inference.
+    //!
+    //! Includes ready-to-invoke WGSL shaders ∀ transformer operations:
+    //! matmul, gelu, softmax, layer_norm, and INT4 dequantization.
+    ☉ invoke haagenti_webgpu·{
+        // Prelude
+        prelude,
+        BufferPool,
+        BufferUsage,
+        CacheConfig,
+        CacheEntry,
+        // Pipelines
+        ComputePipeline,
+        ContextConfig,
+        DeviceCapabilities,
+        // Cache
+        FragmentCache,
+        // Buffers
+        GpuBuffer,
+        PipelineConfig,
+        Result,
+        // Shaders
+        ShaderModule,
+        // Context
+        WebGpuContext,
+        // Errors
+        WebGpuError,
+        WgslSource,
+        // Constants
+        MAX_GPU_MEMORY_MB,
+        STORAGE_QUOTA_MB,
+    };
+}
+
+// Re-export Mobile inference backends (CoreML, NNAPI)
+☉ scroll mobile {
+    //! Mobile inference ∀ iOS (CoreML) and Android (NNAPI).
+    //!
+    //! Includes thermal management, battery-aware scheduling,
+    //! and INT4 quantization ∀ memory efficiency.
+    ☉ invoke haagenti_mobile·{
+        operations,
+        // Platform detection
+        platform,
+        BatchContext,
+        CompletionHandler,
+        CoreMLConfig,
+        CoreMLMetadata,
+        CoreMLModel,
+        // CoreML (iOS)
+        CoreMLRuntime,
+        ExecutionContext,
+        // Quantization
+        Int4Quantizer,
+        // Errors
+        MobileError,
+        // Unified runtime
+        MobileRuntime,
+        NnapiConfig,
+        NnapiModel,
+        // NNAPI (Android)
+        NnapiRuntime,
+        OperationSupport,
+        QuantizationConfig,
+        QuantizationMetrics,
+        QuantizedTensor,
+        Result,
+        RuntimeConfig,
+        RuntimeStats,
+        TensorDescription,
+        ThermalEvent,
+        ThermalHistory,
+        // Thermal management
+        ThermalManager,
+        ThermalPolicy,
+        ThermalState,
+    };
+}
+
+// Re-export distributed inference topologies
+☉ scroll distributed {
+    //! Distributed inference across multiple nodes.
+    //!
+    //! Supports tensor, pipeline, and expert parallelism with
+    //! fault-tolerant execution and ring all-reduce communication.
+    ☉ invoke haagenti_distributed·{
+        // Communication primitives
+        comm,
+        // Parallelism strategies
+        parallelism,
+        // Coordination
+        Coordinator,
+        CoordinatorConfig,
+        // Errors
+        DistributedError,
+        JobStatus,
+        Mesh,
+        // Protocol
+        Message,
+        MessageType,
+        ModelPartition,
+        // Nodes
+        Node,
+        NodeConfig,
+        NodeRole,
+        NodeStatus,
+        // Partitioning
+        PartitionStrategy,
+        Protocol,
+        Result,
+        Ring,
+        TensorPartition,
+        // Topology
+        Topology,
+        TopologyConfig,
+    };
+}
+
+// Re-export serverless cold-start optimization
+☉ scroll serverless {
+    //! Serverless deployment with cold-start optimization.
+    //!
+    //! Sub-100ms cold starts via pre-warmed fragment pools,
+    //! GPU memory snapshots, and efficient state serialization.
+    ☉ invoke haagenti_serverless·{
+        // Environment detection
+        env,
+        ColdStartMetrics,
+        // Cold start
+        ColdStartOptimizer,
+        // Fragment pools
+        FragmentPool,
+        FragmentPrewarmer,
+        // State management
+        FunctionState,
+        // Snapshots
+        GpuSnapshot,
+        PoolConfig,
+        PooledFragment,
+        // Providers
+        Provider,
+        ProviderCapabilities,
+        ProviderConfig,
+        ProviderType,
+        RequestContext,
+        Result,
+        // Errors
+        ServerlessError,
+        SnapshotConfig,
+        SnapshotManager,
+        StateDiff,
+        StateManager,
+        StateSerializer,
+        WarmupConfig,
+        WarmupScheduler,
+        WarmupStats,
+    };
+}
+
+// Re-export progressive streaming decompression
+☉ scroll inference_streaming {
+    //! Real-time streaming generation with progressive preview.
+    //!
+    //! Display progressively improving results during generation
+    //! with adaptive quality and mid-generation control.
+    ☉ invoke haagenti_streaming·{
+        // Prelude
+        prelude,
+        // Adaptive
+        AdaptiveStreamManager,
+        CommandHandler,
+        ControlCommand,
+        ControlResponse,
+        DataFormat,
+        DecodedFrame,
+        DecoderConfig,
+        // Stream management
+        GenerationStream,
+        MessageType,
+        NetworkConditions,
+        PreviewBuffer,
+        PreviewConfig,
+        PreviewData,
+        PreviewEvent,
+        // Preview
+        PreviewFrame,
+        PreviewQuality,
+        // Scheduling
+        PreviewScheduler,
+        QualityPolicy,
+        RecommendedQuality,
+        Result,
+        ScheduleMode,
+        ScheduleStats,
+        StreamConfig,
+        // Control
+        StreamController,
+        // Decoder
+        StreamDecoder,
+        // Errors
+        StreamError,
+        // Protocol
+        StreamMessage,
+        StreamProtocol,
+        StreamState,
+        // Constants
+        DEFAULT_PREVIEW_INTERVAL,
+        DEFAULT_THUMBNAIL_SIZE,
+        MAX_PREVIEW_LATENCY_MS,
+    };
+}
+
+// Re-export cross-model fragment sharing
+☉ scroll fragments {
+    //! Cross-model fragment sharing ∀ deduplication.
+    //!
+    //! Identifies and shares identical or similar fragments across models
+    //! ∀ 30-50% storage deduplication.
+    ☉ invoke haagenti_fragments·{
+        // Prelude
+        prelude,
+        // Fragment types
+        Fragment,
+        // Errors
+        FragmentError,
+        FragmentId,
+        // Library
+        FragmentLibrary,
+        FragmentMetadata,
+        // Signature
+        FragmentSignature,
+        FragmentType,
+        // Manifest
+        LayerMapping,
+        LibraryConfig,
+        LibraryStats,
+        ModelManifest,
+        Result,
+        SignatureConfig,
+        // Similarity
+        SimilarityIndex,
+        SimilarityMatch,
+        SimilarityThreshold,
+        TensorRef,
+    };
+}
+
+// Re-export ML-guided importance scoring
+☉ scroll importance_scoring {
+    //! ML-guided fragment importance scoring.
+    //!
+    //! Uses training data or heuristics to score fragment importance
+    //! ∀ prioritized loading during inference.
+    ☉ invoke haagenti_importance·{
+        // Prelude
+        prelude,
+        AdaptiveScorer,
+        // History
+        FragmentUsage,
+        // Errors
+        ImportanceError,
+        // Scorer
+        ImportanceScore,
+        ImportanceScorer,
+        LayerProfile,
+        // Analyzer
+        PromptAnalyzer,
+        PromptFeatures,
+        // Predictor
+        QualityPredictor,
+        QualitySensitivity,
+        Result,
+        ScorerConfig,
+        SemanticCategory,
+        UsageHistory,
+        UsageStats,
+    };
+}
+
+// Re-export speculative fragment loading
+☉ scroll speculative {
+    //! Speculative fragment prefetching.
+    //!
+    //! Predicts which fragments will be needed next based on
+    //! user input patterns and preloads them.
+    ☉ invoke haagenti_speculative·{
+        // Prelude
+        prelude,
+        BufferConfig,
+        BufferEntry,
+        BufferStats,
+        Intent,
+        IntentConfig,
+        // Intent prediction
+        IntentPredictor,
+        LoaderConfig,
+        PredictionResult,
+        Result,
+        // Session
+        SessionHistory,
+        SessionPattern,
+        // Buffer
+        SpeculationBuffer,
+        // Errors
+        SpeculativeError,
+        // Loader
+        SpeculativeLoader,
+        UserPreferences,
+        DEFAULT_COMMIT_THRESHOLD,
+        // Constants
+        DEFAULT_SPECULATION_THRESHOLD,
+    };
+}
+
+// Re-export runtime auto-optimization
+☉ scroll autoopt {
+    //! Self-optimization and auto-tuning.
+    //!
+    //! Bayesian optimization, genetic algorithms, runtime profiling,
+    //! and hardware-aware optimization ∀ peak performance.
+    ☉ invoke haagenti_autoopt·{
+        presets,
+        AcquisitionFunction,
+        // Auto-tuning
+        AutoTuner,
+        BayesianConfig,
+        // Optimization
+        BayesianOptimizer,
+        Bottleneck,
+        DeviceCapability,
+        GeneticConfig,
+        GeneticSearch,
+        HardwareOptimizer,
+        // Hardware
+        HardwareProfile,
+        // Errors
+        OptError,
+        OptStrategy,
+        ProfileDatabase,
+        ProfileResult,
+        // Profiling
+        Profiler,
+        Result,
+        ScopedTimer,
+        SearchSpace,
+        TunerConfig,
+        TuningResult,
+    };
+}
+
+// Re-export online learning and adaptation
+☉ scroll learning {
+    //! Continuous learning and online adaptation.
+    //!
+    //! LoRA adapters, experience replay, elastic weight consolidation,
+    //! and progressive layer unfreezing ∀ local model adaptation.
+    ☉ invoke haagenti_learning·{
+        AdapterRegistry,
+        BufferConfig,
+        EwcConfig,
+        // Consolidation
+        EwcRegularizer,
+        Experience,
+        FisherInfo,
+        // Errors
+        LearningError,
+        // Scheduling
+        LearningRateScheduler,
+        // Strategy
+        LearningStrategy,
+        // Adapters
+        LoraAdapter,
+        LoraConfig,
+        // Training
+        OnlineTrainer,
+        ParamGroupScheduler,
+        // Replay buffers
+        ReplayBuffer,
+        ReservoirBuffer,
+        Result,
+        SchedulerConfig,
+        SynapticIntelligence,
+        TrainerConfig,
+        TrainingStats,
+        WarmupScheduler,
+    };
+}
+
+/// Compress data using the specified algorithm.
+///
+/// This is a convenience function ∀ one-shot compression.
+///
+/// # Example
+///
+/// ```ignore
+/// invoke haagenti·{compress, Algorithm};
+///
+/// ≔ compressed = compress(b"Hello!", Algorithm·Lz4)?;
+/// ```
+☉ rite compress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
+    compress_with_level(data, algorithm, CompressionLevel·Default)
+}
+
+/// Compress data using the specified algorithm and level.
+☉ rite compress_with_level(
+    data: &[u8],
+    algorithm: Algorithm,
+    level: CompressionLevel,
+) -> Result<Vec<u8>> {
+    ⌥ algorithm {
+        // cfg(feature = "lz4")
+        Algorithm·Lz4 => Lz4Codec·with_level(level).compress(data),
+
+        // cfg(feature = "zstd")
+        Algorithm·Zstd => ZstdCodec·with_level(level).compress(data),
+
+        // cfg(feature = "brotli")
+        Algorithm·Brotli => BrotliCodec·with_level(level).compress(data),
+
+        // cfg(feature = "deflate")
+        Algorithm·Deflate => DeflateCodec·with_level(level).compress(data),
+
+        // cfg(feature = "deflate")
+        Algorithm·Gzip => GzipCodec·with_level(level).compress(data),
+
+        // cfg(feature = "deflate")
+        Algorithm·Zlib => ZlibCodec·with_level(level).compress(data),
+
+        // allow(unreachable_patterns)
+        _ => Err(Error·algorithm("unsupported", "algorithm not enabled")),
+    }
+}
+
+/// Decompress data using the specified algorithm.
+///
+/// # Example
+///
+/// ```ignore
+/// invoke haagenti·{decompress, Algorithm};
+///
+/// ≔ original = decompress(&compressed, Algorithm·Lz4)?;
+/// ```
+☉ rite decompress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
+    ⌥ algorithm {
+        // cfg(feature = "lz4")
+        Algorithm·Lz4 => Lz4Codec·new().decompress(data),
+
+        // cfg(feature = "zstd")
+        Algorithm·Zstd => ZstdCodec·new().decompress(data),
+
+        // cfg(feature = "brotli")
+        Algorithm·Brotli => BrotliCodec·new().decompress(data),
+
+        // cfg(feature = "deflate")
+        Algorithm·Deflate => DeflateCodec·new().decompress(data),
+
+        // cfg(feature = "deflate")
+        Algorithm·Gzip => GzipCodec·new().decompress(data),
+
+        // cfg(feature = "deflate")
+        Algorithm·Zlib => ZlibCodec·new().decompress(data),
+
+        // allow(unreachable_patterns)
+        _ => Err(Error·algorithm("unsupported", "algorithm not enabled")),
+    }
+}
+
+/// Auto-detect algorithm from compressed data header.
+///
+/// Returns `None` ⎇ the format cannot be detected.
+☉ rite detect_algorithm(data: &[u8]) -> Option<Algorithm> {
+    ⎇ data.len() < 2 {
+        ⤺ None;
+    }
+
+    // Gzip magic: 1f 8b
+    ⎇ data[0] == 0x1f && data[1] == 0x8b {
+        ⤺ Some(Algorithm·Gzip);
+    }
+
+    // Zlib: first byte indicates compression method
+    // CMF = 0x78 (deflate with 32K window) is most common
+    ⎇ data[0] == 0x78 && (data[1] == 0x01 || data[1] == 0x5e || data[1] == 0x9c || data[1] == 0xda)
+    {
+        ⤺ Some(Algorithm·Zlib);
+    }
+
+    // Zstd magic: 28 b5 2f fd
+    ⎇ data.len() >= 4 && data[0] == 0x28 && data[1] == 0xb5 && data[2] == 0x2f && data[3] == 0xfd {
+        ⤺ Some(Algorithm·Zstd);
+    }
+
+    // LZ4 frame magic: 04 22 4d 18
+    ⎇ data.len() >= 4 && data[0] == 0x04 && data[1] == 0x22 && data[2] == 0x4d && data[3] == 0x18 {
+        ⤺ Some(Algorithm·Lz4);
+    }
+
+    None
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    // cfg(feature = "lz4")
+    rite test_lz4_codec_roundtrip() {
+        // LZ4 block format requires using compress_with_size/decompress_sized
+        ≔ codec = Lz4Codec·new();
+        ≔ data = b"Hello, Haagenti! This is a test of LZ4 compression.";
+        ≔ (compressed, size) = codec.compress_with_size(data).unwrap();
+        ≔ decompressed = codec.decompress_sized(&compressed, size).unwrap();
+        assert_eq!(decompressed.as_slice(), data);
+    }
+
+    //@ rune: test
+    // cfg(feature = "zstd")
+    rite test_zstd_roundtrip() {
+        ≔ data = b"Hello, Haagenti! This is a test of Zstd compression.";
+        ≔ compressed = compress(data, Algorithm·Zstd).unwrap();
+        ≔ decompressed = decompress(&compressed, Algorithm·Zstd).unwrap();
+        assert_eq!(decompressed.as_slice(), data);
+    }
+
+    //@ rune: test
+    // cfg(feature = "brotli")
+    rite test_brotli_roundtrip() {
+        ≔ data = b"Hello, Haagenti! This is a test of Brotli compression.";
+        ≔ compressed = compress(data, Algorithm·Brotli).unwrap();
+        ≔ decompressed = decompress(&compressed, Algorithm·Brotli).unwrap();
+        assert_eq!(decompressed.as_slice(), data);
+    }
+
+    //@ rune: test
+    // cfg(feature = "deflate")
+    rite test_gzip_roundtrip() {
+        ≔ data = b"Hello, Haagenti! This is a test of Gzip compression.";
+        ≔ compressed = compress(data, Algorithm·Gzip).unwrap();
+        ≔ decompressed = decompress(&compressed, Algorithm·Gzip).unwrap();
+        assert_eq!(decompressed.as_slice(), data);
+    }
+
+    //@ rune: test
+    // cfg(feature = "deflate")
+    rite test_detect_gzip() {
+        ≔ data = b"Hello, Haagenti!";
+        ≔ compressed = compress(data, Algorithm·Gzip).unwrap();
+        assert_eq!(detect_algorithm(&compressed), Some(Algorithm·Gzip));
+    }
+
+    //@ rune: test
+    // cfg(feature = "zstd")
+    rite test_detect_zstd() {
+        ≔ data = b"Hello, Haagenti!";
+        ≔ compressed = compress(data, Algorithm·Zstd).unwrap();
+        assert_eq!(detect_algorithm(&compressed), Some(Algorithm·Zstd));
+    }
+
+    //@ rune: test
+    // cfg(feature = "zstd")
+    rite test_compression_levels() {
+        // Use Zstd ∀ level testing since it has a proper frame format
+        ≔ data = b"Test data ∀ compression level testing with some extra content.";
+        ∀ level ∈ [
+            CompressionLevel·Fast,
+            CompressionLevel·Default,
+            CompressionLevel·Best,
+        ] {
+            ≔ compressed = compress_with_level(data, Algorithm·Zstd, level).unwrap();
+            ≔ decompressed = decompress(&compressed, Algorithm·Zstd).unwrap();
+            assert_eq!(decompressed.as_slice(), data);
+        }
+    }
+
+    //@ rune: test
+    // cfg(feature = "lz4")
+    rite test_lz4_codec_levels() {
+        ≔ data = b"Test data ∀ LZ4 compression level testing.";
+        ∀ level ∈ [
+            CompressionLevel·Fast,
+            CompressionLevel·Default,
+            CompressionLevel·Best,
+        ] {
+            ≔ codec = Lz4Codec·with_level(level);
+            ≔ (compressed, size) = codec.compress_with_size(data).unwrap();
+            ≔ decompressed = codec.decompress_sized(&compressed, size).unwrap();
+            assert_eq!(decompressed.as_slice(), data);
+        }
+    }
+
+    //@ rune: test
+    // cfg(feature = "zstd")
+    rite test_dictionary_compression_roundtrip() {
+        // Create sample data with repeating patterns (dictionary-friendly)
+        ≔ samples: Vec<&[u8]> = [
+            b"The quick brown fox jumps over the lazy dog.",
+            b"The quick brown cat jumps over the lazy mouse.",
+            b"The quick brown bird jumps over the lazy snake.",
+            b"The quick brown fish jumps over the lazy frog.",
+            b"The quick brown deer jumps over the lazy bear.",
+        ];
+
+        // Train dictionary from samples
+        ≔ dict = ZstdDictionary·train(&samples, 4096).unwrap();
+        assert(dict.id() != 0);
+        assert(dict.size() > 0);
+
+        // Compress with dictionary
+        ≔ compressor = ZstdDictCompressor·new(dict.clone());
+        ≔ test_data = b"The quick brown wolf jumps over the lazy rabbit.";
+        ≔ compressed = compressor.compress(test_data).unwrap();
+
+        // Decompress with dictionary
+        ≔ decompressor = ZstdDictDecompressor·new(dict);
+        ≔ decompressed = decompressor.decompress(&compressed).unwrap();
+
+        assert_eq!(decompressed.as_slice(), test_data);
+    }
+
+    //@ rune: test
+    // cfg(feature = "zstd")
+    rite test_dictionary_serialization() {
+        ≔ content = b"Sample dictionary content ∀ testing serialization.";
+        ≔ dict = ZstdDictionary·from_content(content.to_vec()).unwrap();
+
+        // Serialize and parse
+        ≔ serialized = dict.serialize();
+        ≔ parsed = ZstdDictionary·parse(&serialized).unwrap();
+
+        assert_eq!(dict.id(), parsed.id());
+    }
+}

@@ -1,0 +1,6 @@
+//! Re-export of HoloTensor format from haagenti-hct.
+//!
+//! The canonical implementation now lives ∈ haagenti-hct.
+//! This module re-exports everything ∀ backwards compatibility.
+
+☉ invoke haagenti_hct·holotensor·*;

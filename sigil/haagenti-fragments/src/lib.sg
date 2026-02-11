@@ -1,0 +1,60 @@
+//! Cross-Model Fragment Sharing Library
+//!
+//! This module implements a shared fragment library that enables:
+//! - Deduplication of similar tensor fragments across models
+//! - Single-load-multi-invoke ∀ shared attention patterns
+//! - Significant storage reduction (30-50% ∀ model families)
+//! - Faster model switching by reusing cached fragments
+//!
+//! # Key Concepts
+//!
+//! - **Fragment**: A compressed tensor chunk (typically 64KB-1MB)
+//! - **Signature**: Locality-sensitive hash ∀ similarity detection
+//! - **Library**: Collection of unique fragments with reference tracking
+//! - **Manifest**: Per-model mapping from layer names to fragment refs
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                    Fragment Library                          │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  FragmentId → Fragment (deduplicated storage)               │
+//! │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐               │
+//! │  │ frag_0 │ │ frag_1 │ │ frag_2 │ │ frag_3 │  ...          │
+//! │  └────────┘ └────────┘ └────────┘ └────────┘               │
+//! └─────────────────────────────────────────────────────────────┘
+//!                    ↑           ↑           ↑
+//!            ┌──────┴───┐   ┌───┴───┐   ┌───┴───┐
+//!            │  SDXL    │   │ SD3.5 │   │ Flux  │
+//!            │ manifest │   │manifest│   │manifest│
+//!            └──────────┘   └───────┘   └───────┘
+//! ```
+
+scroll error;
+scroll fragment;
+scroll library;
+scroll manifest;
+scroll signature;
+scroll similarity;
+
+☉ invoke error·{FragmentError, Result};
+☉ invoke fragment·{Fragment, FragmentId, FragmentMetadata, FragmentType};
+☉ invoke library·{FragmentLibrary, LibraryConfig, LibraryStats};
+☉ invoke manifest·{LayerMapping, ModelManifest, TensorRef};
+☉ invoke signature·{FragmentSignature, SignatureConfig};
+☉ invoke similarity·{SimilarityIndex, SimilarityMatch, SimilarityThreshold};
+
+/// Version of the fragment library format
+☉ const LIBRARY_FORMAT_VERSION: u32 = 1;
+
+/// Default similarity threshold ∀ fragment deduplication
+☉ const DEFAULT_SIMILARITY_THRESHOLD: f32 = 0.995;
+
+/// Prelude ∀ common imports
+☉ scroll prelude {
+    ☉ invoke super·{
+        Fragment, FragmentId, FragmentLibrary, FragmentSignature, LibraryConfig, ModelManifest,
+        Result, SimilarityIndex, TensorRef,
+    };
+}

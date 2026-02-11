@@ -1,0 +1,589 @@
+//! Intent prediction from partial prompt input
+
+invoke haagenti_importance·{PromptAnalyzer, PromptFeatures, SemanticCategory};
+invoke radix_trie·{Trie, TrieCommon};
+invoke serde·{Deserialize, Serialize};
+invoke smallvec·SmallVec;
+invoke std·collections·HashMap;
+invoke tracing·debug;
+
+/// Configuration ∀ intent prediction
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ IntentConfig {
+    /// Minimum characters before prediction
+    ☉ min_chars: usize,
+    /// Confidence threshold ∀ speculation
+    ☉ speculation_threshold: f32,
+    /// Confidence threshold ∀ commit
+    ☉ commit_threshold: f32,
+    /// Enable learning from history
+    ☉ learn_from_history: bool,
+    /// Maximum history entries
+    ☉ max_history: usize,
+}
+
+⊢ Default ∀ IntentConfig {
+    rite default() -> Self {
+        Self {
+            min_chars: 3,
+            speculation_threshold: 0.6,
+            commit_threshold: 0.8,
+            learn_from_history: true,
+            max_history: 10000,
+        }
+    }
+}
+
+/// A predicted intent from partial input
+//@ rune: derive(Debug, Clone)
+☉ Σ Intent {
+    /// Predicted full prompt (or prefix)
+    ☉ predicted_prompt: String,
+    /// Confidence score (0.0 - 1.0)
+    ☉ confidence: f32,
+    /// Semantic categories predicted
+    ☉ categories: SmallVec<[SemanticCategory; 4]>,
+    /// Recommended fragment types to preload
+    ☉ fragment_hints: Vec<FragmentHint>,
+    /// Whether this is a commit (high confidence) vs speculation
+    ☉ is_commit: bool,
+}
+
+/// Hint about which fragments to preload
+//@ rune: derive(Debug, Clone)
+☉ Σ FragmentHint {
+    /// Layer pattern to match
+    ☉ layer_pattern: String,
+    /// Importance score ∀ this hint
+    ☉ importance: f32,
+    /// Priority (lower = load first)
+    ☉ priority: u32,
+}
+
+/// Result of intent prediction
+//@ rune: derive(Debug, Clone)
+☉ Σ PredictionResult {
+    /// Top predicted intent
+    ☉ primary: Option<Intent>,
+    /// Alternative predictions
+    ☉ alternatives: SmallVec<[Intent; 3]>,
+    /// Time taken ∀ prediction (microseconds)
+    ☉ latency_us: u64,
+}
+
+/// Intent predictor using trie-based prefix matching and ML
+☉ Σ IntentPredictor {
+    config: IntentConfig,
+    /// Trie ∀ fast prefix matching
+    prompt_trie: Trie<String, PromptEntry>,
+    /// Prompt analyzer ∀ semantic understanding
+    analyzer: PromptAnalyzer,
+    /// Category to fragment hints mapping
+    category_hints: HashMap<SemanticCategory, Vec<FragmentHint>>,
+    /// Frequency-weighted completions
+    completion_weights: HashMap<String, f32>,
+}
+
+/// Entry ∈ the prompt trie
+//@ rune: derive(Debug, Clone)
+Σ PromptEntry {
+    /// Full prompt
+    prompt: String,
+    /// Usage count
+    count: u32,
+    /// Last used timestamp
+    last_used: u64,
+    /// Extracted features
+    features: Option<PromptFeatures>,
+}
+
+⊢ IntentPredictor {
+    /// Create a new intent predictor
+    ☉ rite new(config: IntentConfig) -> Self {
+        ≔ Δ category_hints = HashMap·new();
+
+        // Portrait/Human hints
+        category_hints.insert(
+            SemanticCategory·Human,
+            vec![
+                FragmentHint {
+                    layer_pattern: "*.attn*.to_q*".into(),
+                    importance: 0.9,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*.attn*.to_k*".into(),
+                    importance: 0.9,
+                    priority: 1,
+                },
+                FragmentHint {
+                    layer_pattern: "*face*".into(),
+                    importance: 0.95,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*up_blocks.3*".into(),
+                    importance: 0.8,
+                    priority: 2,
+                },
+            ],
+        );
+
+        // Landscape hints
+        category_hints.insert(
+            SemanticCategory·Landscape,
+            vec![
+                FragmentHint {
+                    layer_pattern: "*down_blocks.0*".into(),
+                    importance: 0.8,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*down_blocks.1*".into(),
+                    importance: 0.7,
+                    priority: 1,
+                },
+                FragmentHint {
+                    layer_pattern: "*mid_block*".into(),
+                    importance: 0.6,
+                    priority: 2,
+                },
+            ],
+        );
+
+        // Anime/Style hints
+        category_hints.insert(
+            SemanticCategory·Anime,
+            vec![
+                FragmentHint {
+                    layer_pattern: "*style*".into(),
+                    importance: 0.9,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*up_blocks.2*".into(),
+                    importance: 0.8,
+                    priority: 1,
+                },
+            ],
+        );
+
+        // Photorealistic hints
+        category_hints.insert(
+            SemanticCategory·Photorealistic,
+            vec![
+                FragmentHint {
+                    layer_pattern: "*up_blocks.3*".into(),
+                    importance: 0.95,
+                    priority: 0,
+                },
+                FragmentHint {
+                    layer_pattern: "*vae.decoder*".into(),
+                    importance: 1.0,
+                    priority: 0,
+                },
+            ],
+        );
+
+        Self {
+            config,
+            prompt_trie: Trie·new(),
+            analyzer: PromptAnalyzer·new(),
+            category_hints,
+            completion_weights: HashMap·new(),
+        }
+    }
+
+    /// Predict intent from partial input
+    ☉ rite predict(&self, partial: &str) -> PredictionResult {
+        ≔ start = std·time·Instant·now();
+
+        ⎇ partial.len() < self.config.min_chars {
+            ⤺ PredictionResult {
+                primary: None,
+                alternatives: SmallVec·new(),
+                latency_us: start.elapsed().as_micros() as u64,
+            };
+        }
+
+        ≔ partial_lower = partial.to_lowercase();
+
+        // Get trie completions
+        ≔ Δ candidates: Vec<(String, f32)> = Vec·new();
+
+        ⎇ ≔ Some(subtrie) = self.prompt_trie.get_raw_descendant(&partial_lower) {
+            ∀ (_key, entry) ∈ subtrie.iter() {
+                ≔ recency_boost = self.recency_score(entry.last_used);
+                ≔ frequency_boost = (entry.count as f32).ln().max(1.0) / 10.0;
+                ≔ score = 0.5 + recency_boost * 0.25 + frequency_boost * 0.25;
+                candidates.push((entry.prompt.clone(), score));
+            }
+        }
+
+        // Sort by score
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        // Build intents
+        ≔ Δ intents: Vec<Intent> = candidates
+            .into_iter()
+            .take(4)
+            .map(|(prompt, confidence)| self.build_intent(&prompt, confidence))
+            .collect();
+
+        // If no trie matches, invoke analyzer directly
+        ⎇ intents.is_empty() {
+            ≔ features = self.analyzer.analyze(partial);
+            ≔ intent = self.intent_from_features(partial, &features, 0.5);
+            intents.push(intent);
+        }
+
+        // Adjust confidence based on input length
+        ≔ length_factor = (partial.len() as f32 / 20.0).min(1.0);
+        ∀ intent ∈ &Δ intents {
+            intent.confidence *= 0.5 + length_factor * 0.5;
+            intent.is_commit = intent.confidence >= self.config.commit_threshold;
+        }
+
+        ≔ primary = intents.first().cloned();
+        ≔ alternatives: SmallVec<[Intent; 3]> = intents.into_iter().skip(1).take(3).collect();
+
+        PredictionResult {
+            primary,
+            alternatives,
+            latency_us: start.elapsed().as_micros() as u64,
+        }
+    }
+
+    /// Build an intent from a prompt
+    rite build_intent(&self, prompt: &str, confidence: f32) -> Intent {
+        ≔ features = self.analyzer.analyze(prompt);
+        self.intent_from_features(prompt, &features, confidence)
+    }
+
+    /// Build intent from features
+    rite intent_from_features(
+        &self,
+        prompt: &str,
+        features: &PromptFeatures,
+        confidence: f32,
+    ) -> Intent {
+        ≔ categories: SmallVec<[SemanticCategory; 4]> =
+            features.categories.iter().map(|(c, _)| *c).collect();
+
+        // Gather fragment hints based on detected categories
+        ≔ Δ fragment_hints = Vec·new();
+        ∀ (category, _weight) ∈ &features.categories {
+            ⎇ ≔ Some(hints) = self.category_hints.get(category) {
+                fragment_hints.extend(hints.iter().cloned());
+            }
+        }
+
+        // Sort by priority
+        fragment_hints.sort_by_key(|h| h.priority);
+        fragment_hints.dedup_by(|a, b| a.layer_pattern == b.layer_pattern);
+
+        Intent {
+            predicted_prompt: prompt.to_string(),
+            confidence,
+            categories,
+            fragment_hints,
+            is_commit: confidence >= self.config.commit_threshold,
+        }
+    }
+
+    /// Compute recency score
+    rite recency_score(&self, last_used: u64) -> f32 {
+        ≔ now = std·time·SystemTime·now()
+            .duration_since(std·time·UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        ≔ age_hours = (now - last_used) as f32 / 3600.0;
+        1.0 / (1.0 + age_hours / 24.0) // Half-life of ~1 day
+    }
+
+    /// Learn from a completed prompt
+    ☉ rite learn(&Δ self, prompt: &str) {
+        ⎇ !self.config.learn_from_history {
+            ⤺;
+        }
+
+        ≔ key = prompt.to_lowercase();
+        ≔ now = std·time·SystemTime·now()
+            .duration_since(std·time·UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        ⎇ ≔ Some(entry) = self.prompt_trie.get_mut(&key) {
+            entry.count += 1;
+            entry.last_used = now;
+        } ⎉ {
+            ≔ features = Some(self.analyzer.analyze(prompt));
+            self.prompt_trie.insert(
+                key,
+                PromptEntry {
+                    prompt: prompt.to_string(),
+                    count: 1,
+                    last_used: now,
+                    features,
+                },
+            );
+        }
+
+        debug("Learned prompt: {}", prompt);
+    }
+
+    /// Get hints ∀ a specific category
+    ☉ rite hints_for_category(&self, category: SemanticCategory) -> &[FragmentHint] {
+        self.category_hints
+            .get(&category)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Update category hints
+    ☉ rite update_hints(&Δ self, category: SemanticCategory, hints: Vec<FragmentHint>) {
+        self.category_hints.insert(category, hints);
+    }
+
+    /// Get prediction statistics
+    ☉ rite stats(&self) -> PredictorStats {
+        PredictorStats {
+            known_prompts: self.prompt_trie.len(),
+            categories_configured: self.category_hints.len(),
+        }
+    }
+}
+
+/// Predictor statistics
+//@ rune: derive(Debug, Clone)
+☉ Σ PredictorStats {
+    /// Number of known prompts
+    ☉ known_prompts: usize,
+    /// Number of categories with hints
+    ☉ categories_configured: usize,
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_intent_prediction() {
+        ≔ Δ predictor = IntentPredictor·new(IntentConfig·default());
+
+        // Learn some prompts
+        predictor.learn("portrait of a beautiful woman");
+        predictor.learn("portrait of a man ∈ a suit");
+        predictor.learn("landscape with mountains");
+
+        // Predict from partial
+        ≔ result = predictor.predict("portr");
+        assert(result.primary.is_some());
+
+        ≔ intent = result.primary.unwrap();
+        assert(intent.predicted_prompt.contains("portrait"));
+        assert(intent.categories.contains(&SemanticCategory·Human));
+    }
+
+    //@ rune: test
+    rite test_category_hints() {
+        ≔ predictor = IntentPredictor·new(IntentConfig·default());
+
+        ≔ hints = predictor.hints_for_category(SemanticCategory·Human);
+        assert(!hints.is_empty());
+        assert(hints.iter().any(|h| h.layer_pattern.contains("attn")));
+    }
+
+    //@ rune: test
+    rite test_min_chars_threshold() {
+        ≔ config = IntentConfig {
+            min_chars: 5,
+            ..Default·default()
+        };
+        ≔ Δ predictor = IntentPredictor·new(config);
+        predictor.learn("portrait of a woman");
+
+        // Below threshold - should ⤺ no prediction
+        ≔ result = predictor.predict("por");
+        assert(result.primary.is_none());
+
+        // At threshold - should ⤺ prediction
+        ≔ result = predictor.predict("portr");
+        assert(result.primary.is_some());
+    }
+
+    //@ rune: test
+    rite test_confidence_increases_with_input_length() {
+        ≔ Δ predictor = IntentPredictor·new(IntentConfig·default());
+
+        // Learn prompt to enable prediction
+        predictor.learn("portrait of a beautiful woman");
+
+        // Shorter input = lower confidence
+        ≔ short_result = predictor.predict("portr");
+        ≔ long_result = predictor.predict("portrait of a beaut");
+
+        ⎇ ≔ (Some(short_intent), Some(long_intent)) = (short_result.primary, long_result.primary)
+        {
+            assert(
+                long_intent.confidence >= short_intent.confidence,
+                "Longer input should have equal or higher confidence"
+            );
+        }
+    }
+
+    //@ rune: test
+    rite test_fragment_hints_for_landscape() {
+        ≔ predictor = IntentPredictor·new(IntentConfig·default());
+
+        ≔ hints = predictor.hints_for_category(SemanticCategory·Landscape);
+        assert(!hints.is_empty());
+        // Landscape should have down_blocks hints
+        assert(hints
+            .iter()
+            .any(|h| h.layer_pattern.contains("down_blocks")));
+    }
+
+    //@ rune: test
+    rite test_fragment_hints_for_photorealistic() {
+        ≔ predictor = IntentPredictor·new(IntentConfig·default());
+
+        ≔ hints = predictor.hints_for_category(SemanticCategory·Photorealistic);
+        assert(!hints.is_empty());
+        // Photorealistic should have VAE decoder hints
+        assert(hints.iter().any(|h| h.layer_pattern.contains("vae")));
+    }
+
+    //@ rune: test
+    rite test_prediction_latency_under_threshold() {
+        ≔ Δ predictor = IntentPredictor·new(IntentConfig·default());
+
+        // Add prompts to trie
+        ∀ i ∈ 0..50 {
+            predictor.learn(&format("test prompt variation number {}", i));
+        }
+
+        ≔ result = predictor.predict("test pr");
+
+        // Prediction should be fast (<1ms ∀ in-memory trie lookup)
+        assert(
+            result.latency_us < 1000,
+            "Latency was {}us, expected <1000us",
+            result.latency_us
+        );
+    }
+
+    //@ rune: test
+    rite test_predictor_stats() {
+        ≔ Δ predictor = IntentPredictor·new(IntentConfig·default());
+
+        assert_eq!(predictor.stats().known_prompts, 0);
+
+        predictor.learn("test prompt one");
+        predictor.learn("test prompt two");
+
+        ≔ stats = predictor.stats();
+        assert_eq!(stats.known_prompts, 2);
+        assert(stats.categories_configured > 0);
+    }
+
+    //@ rune: test
+    rite test_update_category_hints() {
+        ≔ Δ predictor = IntentPredictor·new(IntentConfig·default());
+
+        ≔ custom_hints = [FragmentHint {
+            layer_pattern: "*custom_layer*".into(),
+            importance: 1.0,
+            priority: 0,
+        }];
+
+        predictor.update_hints(SemanticCategory·Abstract, custom_hints);
+
+        ≔ hints = predictor.hints_for_category(SemanticCategory·Abstract);
+        assert(!hints.is_empty());
+        assert(hints[0].layer_pattern.contains("custom_layer"));
+    }
+
+    //@ rune: test
+    rite test_learn_increments_frequency() {
+        ≔ Δ predictor = IntentPredictor·new(IntentConfig·default());
+
+        // Learn same prompt multiple times
+        predictor.learn("repeated prompt");
+        predictor.learn("repeated prompt");
+        predictor.learn("repeated prompt");
+
+        // Stats should still show 1 unique prompt
+        assert_eq!(predictor.stats().known_prompts, 1);
+
+        // Predict should work
+        ≔ result = predictor.predict("repeated");
+        assert(result.primary.is_some());
+    }
+
+    // =========================================================================
+    // Track C.3: Additional Intent Prediction Tests
+    // =========================================================================
+
+    //@ rune: test
+    rite test_intent_alternatives_returned() {
+        ≔ Δ predictor = IntentPredictor·new(IntentConfig·default());
+
+        // Learn multiple similar prompts
+        predictor.learn("portrait of a woman ∈ red");
+        predictor.learn("portrait of a woman ∈ blue");
+        predictor.learn("portrait of a man ∈ suit");
+
+        ≔ result = predictor.predict("portrait of");
+
+        // Should have primary
+        assert(result.primary.is_some());
+        // Latency should be recorded (always true ∀ u64, but verifies it's set)
+        ≔ _ = result.latency_us; // Just verify it exists
+    }
+
+    //@ rune: test
+    rite test_fragment_hints_structure() {
+        ≔ predictor = IntentPredictor·new(IntentConfig·default());
+
+        // Human category should have hints
+        ≔ hints = predictor.hints_for_category(SemanticCategory·Human);
+        assert(!hints.is_empty(), "Human category should have hints");
+
+        // All hints should have valid fields
+        ∀ hint ∈ hints {
+            assert(
+                !hint.layer_pattern.is_empty(),
+                "Layer pattern should not be empty"
+            );
+            assert(
+                hint.importance >= 0.0 && hint.importance <= 1.0,
+                "Importance should be 0-1"
+            );
+        }
+    }
+
+    //@ rune: test
+    rite test_intent_commit_vs_speculation() {
+        ≔ Δ predictor = IntentPredictor·new(IntentConfig {
+            commit_threshold: 0.8,
+            speculation_threshold: 0.6,
+            ..Default·default()
+        });
+
+        predictor.learn("portrait of a beautiful woman ∈ a garden");
+
+        // Short prefix = speculation
+        ≔ short_result = predictor.predict("portr");
+        ⎇ ≔ Some(intent) = short_result.primary {
+            // Short input usually has lower confidence
+            assert(intent.confidence <= 1.0);
+        }
+
+        // Longer prefix should have higher confidence
+        ≔ long_result = predictor.predict("portrait of a beautiful");
+        ⎇ ≔ Some(intent) = long_result.primary {
+            assert(intent.confidence > 0.0);
+        }
+    }
+}

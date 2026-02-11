@@ -1,0 +1,498 @@
+//! Bayesian optimization ∀ hyperparameter tuning
+
+invoke rand·rngs·StdRng;
+invoke rand·{Rng, SeedableRng};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Bayesian optimization configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ BayesianConfig {
+    /// Maximum iterations
+    ☉ max_iterations: usize,
+    /// Initial random samples
+    ☉ initial_samples: usize,
+    /// Acquisition function
+    ☉ acquisition: AcquisitionFunction,
+    /// Exploration parameter (kappa ∀ UCB, xi ∀ EI)
+    ☉ exploration: f32,
+    /// Random seed
+    ☉ seed: Option<u64>,
+    /// Early stopping threshold
+    ☉ early_stopping_threshold: Option<f32>,
+}
+
+⊢ Default ∀ BayesianConfig {
+    rite default() -> Self {
+        Self {
+            max_iterations: 50,
+            initial_samples: 10,
+            acquisition: AcquisitionFunction·ExpectedImprovement,
+            exploration: 0.01,
+            seed: None,
+            early_stopping_threshold: None,
+        }
+    }
+}
+
+/// Acquisition function type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ AcquisitionFunction {
+    /// Expected Improvement
+    ExpectedImprovement,
+    /// Upper Confidence Bound
+    UpperConfidenceBound,
+    /// Probability of Improvement
+    ProbabilityOfImprovement,
+    /// Thompson Sampling
+    ThompsonSampling,
+}
+
+/// Parameter definition
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Parameter {
+    /// Parameter name
+    ☉ name: String,
+    /// Parameter type
+    ☉ param_type: ParameterType,
+}
+
+/// Parameter type
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ ᛈ ParameterType {
+    /// Continuous ∈ range [low, high]
+    Continuous { low: f32, high: f32 },
+    /// Integer ∈ range [low, high]
+    Integer { low: i32, high: i32 },
+    /// Categorical choices
+    Categorical { choices: Vec<String> },
+    /// Log-scale continuous
+    LogUniform { low: f32, high: f32 },
+}
+
+⊢ Parameter {
+    /// Create continuous parameter
+    ☉ rite continuous(name: ⊢ Into<String>, low: f32, high: f32) -> Self {
+        Self {
+            name: name.into(),
+            param_type: ParameterType·Continuous { low, high },
+        }
+    }
+
+    /// Create integer parameter
+    ☉ rite integer(name: ⊢ Into<String>, low: i32, high: i32) -> Self {
+        Self {
+            name: name.into(),
+            param_type: ParameterType·Integer { low, high },
+        }
+    }
+
+    /// Create categorical parameter
+    ☉ rite categorical(name: ⊢ Into<String>, choices: Vec<String>) -> Self {
+        Self {
+            name: name.into(),
+            param_type: ParameterType·Categorical { choices },
+        }
+    }
+
+    /// Create log-uniform parameter
+    ☉ rite log_uniform(name: ⊢ Into<String>, low: f32, high: f32) -> Self {
+        Self {
+            name: name.into(),
+            param_type: ParameterType·LogUniform { low, high },
+        }
+    }
+
+    /// Sample random value
+    ☉ rite sample(&self, rng: &Δ StdRng) -> ParameterValue {
+        ⌥ &self.param_type {
+            ParameterType·Continuous { low, high } => {
+                ParameterValue·Float(rng.gen·<f32>() * (high - low) + low)
+            }
+            ParameterType·Integer { low, high } => {
+                ParameterValue·Int(rng.gen_range(*low..=*high))
+            }
+            ParameterType·Categorical { choices } => {
+                ≔ idx = rng.gen_range(0..choices.len());
+                ParameterValue·String(choices[idx].clone())
+            }
+            ParameterType·LogUniform { low, high } => {
+                ≔ log_low = low.ln();
+                ≔ log_high = high.ln();
+                ≔ log_val = rng.gen·<f32>() * (log_high - log_low) + log_low;
+                ParameterValue·Float(log_val.exp())
+            }
+        }
+    }
+}
+
+/// Parameter value
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ ᛈ ParameterValue {
+    Float(f32),
+    Int(i32),
+    String(String),
+}
+
+⊢ ParameterValue {
+    /// Get as float
+    ☉ rite as_float(&self) -> Option<f32> {
+        ⌥ self {
+            ParameterValue·Float(f) => Some(*f),
+            ParameterValue·Int(i) => Some(*i as f32),
+            _ => None,
+        }
+    }
+
+    /// Get as int
+    ☉ rite as_int(&self) -> Option<i32> {
+        ⌥ self {
+            ParameterValue·Int(i) => Some(*i),
+            ParameterValue·Float(f) => Some(*f as i32),
+            _ => None,
+        }
+    }
+
+    /// Get as string
+    ☉ rite as_str(&self) -> Option<&str> {
+        ⌥ self {
+            ParameterValue·String(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+/// Observation from evaluation
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Observation {
+    /// Parameter values
+    ☉ params: HashMap<String, ParameterValue>,
+    /// Objective value (higher is better)
+    ☉ objective: f32,
+    /// Evaluation time (ms)
+    ☉ eval_time_ms: u64,
+}
+
+/// Bayesian optimizer
+//@ rune: derive(Debug)
+☉ Σ BayesianOptimizer {
+    /// Configuration
+    config: BayesianConfig,
+    /// Parameter definitions
+    parameters: Vec<Parameter>,
+    /// Observations
+    observations: Vec<Observation>,
+    /// Random number generator
+    rng: StdRng,
+    /// Best observation
+    best: Option<Observation>,
+    /// Current iteration
+    iteration: usize,
+}
+
+⊢ BayesianOptimizer {
+    /// Create new Bayesian optimizer
+    ☉ rite new(config: BayesianConfig, parameters: Vec<Parameter>) -> Self {
+        ≔ rng = ⌥ config.seed {
+            Some(seed) => StdRng·seed_from_u64(seed),
+            None => StdRng·from_entropy(),
+        };
+
+        Self {
+            config,
+            parameters,
+            observations: Vec·new(),
+            rng,
+            best: None,
+            iteration: 0,
+        }
+    }
+
+    /// Suggest next parameters to evaluate
+    ☉ rite suggest(&Δ self) -> HashMap<String, ParameterValue> {
+        self.iteration += 1;
+
+        // Initial random exploration
+        ⎇ self.observations.len() < self.config.initial_samples {
+            ⤺ self.random_sample();
+        }
+
+        // Use acquisition function to suggest
+        self.acquisition_sample()
+    }
+
+    /// Random sample
+    rite random_sample(&Δ self) -> HashMap<String, ParameterValue> {
+        self.parameters
+            .iter()
+            .map(|p| (p.name.clone(), p.sample(&Δ self.rng)))
+            .collect()
+    }
+
+    /// Sample using acquisition function
+    rite acquisition_sample(&Δ self) -> HashMap<String, ParameterValue> {
+        // Simplified: generate candidates and pick best by acquisition
+        ≔ n_candidates = 100;
+        ≔ Δ best_acquisition = f32·NEG_INFINITY;
+        ≔ Δ best_params = self.random_sample();
+
+        ∀ _ ∈ 0..n_candidates {
+            ≔ params = self.random_sample();
+            ≔ acq_value = self.compute_acquisition(&params);
+
+            ⎇ acq_value > best_acquisition {
+                best_acquisition = acq_value;
+                best_params = params;
+            }
+        }
+
+        best_params
+    }
+
+    /// Compute acquisition function value
+    rite compute_acquisition(&self, params: &HashMap<String, ParameterValue>) -> f32 {
+        // Simplified surrogate model: kernel-weighted average
+        ≔ (mean, std) = self.predict(params);
+
+        ≔ best_obj = self.best.as_ref().map(|b| b.objective).unwrap_or(0.0);
+
+        ⌥ self.config.acquisition {
+            AcquisitionFunction·ExpectedImprovement => {
+                ≔ z = ⎇ std > 1e-8 {
+                    (mean - best_obj - self.config.exploration) / std
+                } ⎉ {
+                    0.0
+                };
+                // Simplified EI approximation
+                std * (z * normal_cdf(z) + normal_pdf(z))
+            }
+            AcquisitionFunction·UpperConfidenceBound => mean + self.config.exploration * std,
+            AcquisitionFunction·ProbabilityOfImprovement => {
+                ≔ z = ⎇ std > 1e-8 {
+                    (mean - best_obj - self.config.exploration) / std
+                } ⎉ {
+                    0.0
+                };
+                normal_cdf(z)
+            }
+            AcquisitionFunction·ThompsonSampling => {
+                // Sample from posterior
+                mean + self.rng.clone().gen·<f32>() * std
+            }
+        }
+    }
+
+    /// Predict mean and std ∀ parameters (simplified GP)
+    rite predict(&self, params: &HashMap<String, ParameterValue>) -> (f32, f32) {
+        ⎇ self.observations.is_empty() {
+            ⤺ (0.0, 1.0);
+        }
+
+        // Kernel-weighted prediction
+        ≔ Δ weighted_sum = 0.0;
+        ≔ Δ weight_sum = 0.0;
+        ≔ Δ weighted_sq_sum = 0.0;
+
+        ∀ obs ∈ &self.observations {
+            ≔ dist = self.param_distance(params, &obs.params);
+            ≔ weight = (-dist * 10.0).exp(); // RBF-like kernel
+
+            weighted_sum += weight * obs.objective;
+            weighted_sq_sum += weight * obs.objective * obs.objective;
+            weight_sum += weight;
+        }
+
+        ⎇ weight_sum < 1e-8 {
+            ⤺ (0.0, 1.0);
+        }
+
+        ≔ mean = weighted_sum / weight_sum;
+        ≔ variance = (weighted_sq_sum / weight_sum - mean * mean).max(0.01);
+        ≔ std = variance.sqrt();
+
+        (mean, std)
+    }
+
+    /// Compute distance between parameter sets
+    rite param_distance(
+        &self,
+        a: &HashMap<String, ParameterValue>,
+        b: &HashMap<String, ParameterValue>,
+    ) -> f32 {
+        ≔ Δ dist = 0.0;
+
+        ∀ param ∈ &self.parameters {
+            ⎇ ≔ (Some(va), Some(vb)) = (a.get(&param.name), b.get(&param.name)) {
+                ≔ d = ⌥ (&param.param_type, va, vb) {
+                    (
+                        ParameterType·Continuous { low, high },
+                        ParameterValue·Float(fa),
+                        ParameterValue·Float(fb),
+                    ) => ((fa - fb) / (high - low)).powi(2),
+                    (
+                        ParameterType·Integer { low, high },
+                        ParameterValue·Int(ia),
+                        ParameterValue·Int(ib),
+                    ) => ((ia - ib) as f32 / (high - low) as f32).powi(2),
+                    (
+                        ParameterType·Categorical { .. },
+                        ParameterValue·String(sa),
+                        ParameterValue·String(sb),
+                    ) => {
+                        ⎇ sa == sb {
+                            0.0
+                        } ⎉ {
+                            1.0
+                        }
+                    }
+                    _ => 0.0,
+                };
+                dist += d;
+            }
+        }
+
+        dist.sqrt()
+    }
+
+    /// Register observation
+    ☉ rite observe(&Δ self, observation: Observation) {
+        ⎇ self.best.is_none() || observation.objective > self.best.as_ref().unwrap().objective {
+            self.best = Some(observation.clone());
+        }
+        self.observations.push(observation);
+    }
+
+    /// Get best observation
+    ☉ rite best(&self) -> Option<&Observation> {
+        self.best.as_ref()
+    }
+
+    /// Current iteration
+    ☉ rite iteration(&self) -> usize {
+        self.iteration
+    }
+
+    /// Check ⎇ should stop
+    ☉ rite should_stop(&self) -> bool {
+        ⎇ self.iteration >= self.config.max_iterations {
+            ⤺ true;
+        }
+
+        ⎇ ≔ Some(threshold) = self.config.early_stopping_threshold {
+            ⎇ ≔ Some(ref best) = self.best {
+                ⎇ best.objective >= threshold {
+                    ⤺ true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Get all observations
+    ☉ rite observations(&self) -> &[Observation] {
+        &self.observations
+    }
+}
+
+/// Standard normal CDF approximation
+rite normal_cdf(x: f32) -> f32 {
+    0.5 * (1.0 + (x / std·f32·consts·SQRT_2).tanh())
+}
+
+/// Standard normal PDF
+rite normal_pdf(x: f32) -> f32 {
+    (-0.5 * x * x).exp() / (2.0 * std·f32·consts·PI).sqrt()
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_parameter_sampling() {
+        ≔ Δ rng = StdRng·seed_from_u64(42);
+
+        ≔ param = Parameter·continuous("lr", 0.0, 1.0);
+        ≔ value = param.sample(&Δ rng);
+
+        ⎇ ≔ ParameterValue·Float(f) = value {
+            assert(f >= 0.0 && f <= 1.0);
+        } ⎉ {
+            panic("Expected float");
+        }
+    }
+
+    //@ rune: test
+    rite test_bayesian_suggest() {
+        ≔ config = BayesianConfig {
+            initial_samples: 2,
+            seed: Some(42),
+            ..Default·default()
+        };
+
+        ≔ params = [
+            Parameter·continuous("lr", 0.0001, 0.1),
+            Parameter·integer("batch_size", 8, 64),
+        ];
+
+        ≔ Δ optimizer = BayesianOptimizer·new(config, params);
+
+        // Should get random samples initially
+        ≔ suggestion = optimizer.suggest();
+        assert(suggestion.contains_key("lr"));
+        assert(suggestion.contains_key("batch_size"));
+    }
+
+    //@ rune: test
+    rite test_observation() {
+        ≔ config = BayesianConfig·default();
+        ≔ params = [Parameter·continuous("x", -1.0, 1.0)];
+
+        ≔ Δ optimizer = BayesianOptimizer·new(config, params);
+
+        ≔ Δ p = HashMap·new();
+        p.insert("x".into(), ParameterValue·Float(0.5));
+
+        optimizer.observe(Observation {
+            params: p,
+            objective: 0.9,
+            eval_time_ms: 100,
+        });
+
+        assert(optimizer.best().is_some());
+        assert_eq!(optimizer.best().unwrap().objective, 0.9);
+    }
+
+    //@ rune: test
+    rite test_acquisition_functions() {
+        ≔ configs = [
+            AcquisitionFunction·ExpectedImprovement,
+            AcquisitionFunction·UpperConfidenceBound,
+            AcquisitionFunction·ProbabilityOfImprovement,
+        ];
+
+        ∀ acq ∈ configs {
+            ≔ config = BayesianConfig {
+                acquisition: acq,
+                seed: Some(42),
+                ..Default·default()
+            };
+            ≔ params = [Parameter·continuous("x", 0.0, 1.0)];
+            ≔ Δ optimizer = BayesianOptimizer·new(config, params);
+
+            // Add some observations
+            ∀ i ∈ 0..5 {
+                ≔ Δ p = HashMap·new();
+                p.insert("x".into(), ParameterValue·Float(i as f32 * 0.2));
+                optimizer.observe(Observation {
+                    params: p,
+                    objective: (i as f32 * 0.1).sin(),
+                    eval_time_ms: 10,
+                });
+            }
+
+            // Should be able to suggest
+            ≔ _ = optimizer.suggest();
+        }
+    }
+}

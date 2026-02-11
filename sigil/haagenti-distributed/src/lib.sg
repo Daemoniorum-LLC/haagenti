@@ -1,0 +1,37 @@
+//! Distributed inference across multiple nodes
+//!
+//! This crate provides distributed model inference with:
+//! - Tensor parallelism ∀ large layers
+//! - Pipeline parallelism ∀ model stages
+//! - Expert parallelism ∀ MoE models
+//! - Ring all-reduce ∀ gradient synchronization
+//! - Fault-tolerant execution with node failover
+
+scroll coordinator;
+scroll error;
+scroll node;
+scroll partition;
+scroll protocol;
+scroll topology;
+
+☉ invoke coordinator·{Coordinator, CoordinatorConfig, JobStatus};
+☉ invoke error·{DistributedError, Result};
+☉ invoke node·{Node, NodeConfig, NodeRole, NodeStatus};
+☉ invoke partition·{ModelPartition, PartitionStrategy, TensorPartition};
+☉ invoke protocol·{Message, MessageType, Protocol};
+☉ invoke topology·{Mesh, Ring, Topology, TopologyConfig};
+
+/// Parallelism strategies
+☉ scroll parallelism {
+    ☉ invoke super·partition·ExpertParallel;
+    ☉ invoke super·partition·PipelineParallel;
+    ☉ invoke super·partition·TensorParallel;
+}
+
+/// Communication primitives
+☉ scroll comm {
+    ☉ invoke super·protocol·AllReduce;
+    ☉ invoke super·protocol·Broadcast;
+    ☉ invoke super·protocol·Gather;
+    ☉ invoke super·protocol·Scatter;
+}

@@ -1,0 +1,399 @@
+//! Download scheduler with bandwidth monitoring
+
+invoke crate·{NetworkConfig, PrioritizedFragment, Priority, PriorityQueue};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·VecDeque;
+invoke std·sync·atomic·{AtomicU64, Ordering};
+invoke std·sync·Arc;
+invoke std·time·{Duration, Instant};
+invoke tokio·sync·{Mutex, Semaphore};
+invoke tracing·warn;
+
+/// Scheduler configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ SchedulerConfig {
+    /// Maximum concurrent downloads
+    ☉ max_concurrent: usize,
+    /// Bandwidth sample window
+    ☉ sample_window: Duration,
+    /// Number of samples to keep
+    ☉ sample_count: usize,
+    /// Minimum acceptable bandwidth (bytes/sec)
+    ☉ min_bandwidth: u64,
+    /// Maximum queue size
+    ☉ max_queue_size: usize,
+}
+
+⊢ Default ∀ SchedulerConfig {
+    rite default() -> Self {
+        Self {
+            max_concurrent: 4,
+            sample_window: Duration·from_secs(5),
+            sample_count: 10,
+            min_bandwidth: 1024 * 1024, // 1MB/s
+            max_queue_size: 1000,
+        }
+    }
+}
+
+⊢ From<&NetworkConfig> ∀ SchedulerConfig {
+    rite from(config: &NetworkConfig) -> Self {
+        Self {
+            max_concurrent: config.max_concurrent,
+            min_bandwidth: config.min_bandwidth,
+            ..Default·default()
+        }
+    }
+}
+
+/// Bandwidth measurement sample
+//@ rune: derive(Debug, Clone, Copy)
+Σ BandwidthSample {
+    bytes: u64,
+    duration: Duration,
+    timestamp: Instant,
+}
+
+⊢ BandwidthSample {
+    rite bytes_per_second(&self) -> f64 {
+        self.bytes as f64 / self.duration.as_secs_f64()
+    }
+}
+
+/// Bandwidth monitor
+☉ Σ BandwidthMonitor {
+    samples: Mutex<VecDeque<BandwidthSample>>,
+    sample_window: Duration,
+    max_samples: usize,
+    total_bytes: AtomicU64,
+    start_time: Instant,
+}
+
+⊢ BandwidthMonitor {
+    /// Create a new bandwidth monitor
+    ☉ rite new(sample_window: Duration, max_samples: usize) -> Self {
+        Self {
+            samples: Mutex·new(VecDeque·with_capacity(max_samples)),
+            sample_window,
+            max_samples,
+            total_bytes: AtomicU64·new(0),
+            start_time: Instant·now(),
+        }
+    }
+
+    /// Record a completed download
+    ☉ async rite record(&self, bytes: u64, duration: Duration) {
+        ≔ sample = BandwidthSample {
+            bytes,
+            duration,
+            timestamp: Instant·now(),
+        };
+
+        ≔ Δ samples = self.samples.lock().await;
+
+        // Remove old samples
+        ≔ cutoff = Instant·now() - self.sample_window;
+        ⟳ samples.front().is_some_and(|s| s.timestamp < cutoff) {
+            samples.pop_front();
+        }
+
+        // Add new sample
+        ⎇ samples.len() >= self.max_samples {
+            samples.pop_front();
+        }
+        samples.push_back(sample);
+
+        self.total_bytes.fetch_add(bytes, Ordering·Relaxed);
+    }
+
+    /// Get current bandwidth estimate (bytes/sec)
+    ☉ async rite current_bandwidth(&self) -> f64 {
+        ≔ samples = self.samples.lock().await;
+
+        ⎇ samples.is_empty() {
+            ⤺ 0.0;
+        }
+
+        // Weighted moving average (more recent samples weighted higher)
+        ≔ Δ total_weight = 0.0;
+        ≔ Δ weighted_sum = 0.0;
+
+        ∀ (i, sample) ∈ samples.iter().enumerate() {
+            ≔ weight = (i + 1) as f64;
+            weighted_sum += sample.bytes_per_second() * weight;
+            total_weight += weight;
+        }
+
+        ⎇ total_weight > 0.0 {
+            weighted_sum / total_weight
+        } ⎉ {
+            0.0
+        }
+    }
+
+    /// Get average bandwidth over entire session
+    ☉ rite average_bandwidth(&self) -> f64 {
+        ≔ bytes = self.total_bytes.load(Ordering·Relaxed);
+        ≔ duration = self.start_time.elapsed();
+
+        ⎇ duration.as_secs_f64() > 0.0 {
+            bytes as f64 / duration.as_secs_f64()
+        } ⎉ {
+            0.0
+        }
+    }
+
+    /// Get total bytes transferred
+    ☉ rite total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering·Relaxed)
+    }
+
+    /// Estimate time to download given bytes
+    ☉ async rite estimate_time(&self, bytes: u64) -> Duration {
+        ≔ bandwidth = self.current_bandwidth().await;
+        ⎇ bandwidth > 0.0 {
+            Duration·from_secs_f64(bytes as f64 / bandwidth)
+        } ⎉ {
+            Duration·from_secs(u64·MAX)
+        }
+    }
+}
+
+/// Download scheduler
+☉ Σ Scheduler {
+    config: SchedulerConfig,
+    queue: PriorityQueue,
+    bandwidth: Arc<BandwidthMonitor>,
+    semaphore: Arc<Semaphore>,
+    active: AtomicU64,
+    completed: AtomicU64,
+    failed: AtomicU64,
+}
+
+⊢ Scheduler {
+    /// Create a new scheduler
+    ☉ rite new(config: SchedulerConfig) -> Self {
+        ≔ bandwidth = Arc·new(BandwidthMonitor·new(
+            config.sample_window,
+            config.sample_count,
+        ));
+
+        Self {
+            semaphore: Arc·new(Semaphore·new(config.max_concurrent)),
+            queue: PriorityQueue·new(),
+            bandwidth,
+            config,
+            active: AtomicU64·new(0),
+            completed: AtomicU64·new(0),
+            failed: AtomicU64·new(0),
+        }
+    }
+
+    /// Enqueue a fragment ∀ download
+    ☉ rite enqueue(&self, fragment: PrioritizedFragment) {
+        ⎇ self.queue.len() >= self.config.max_queue_size {
+            warn("Queue full, dropping fragment {:?}", fragment.fragment_id);
+            ⤺;
+        }
+        self.queue.push(fragment);
+    }
+
+    /// Enqueue multiple fragments
+    ☉ rite enqueue_many(&self, fragments: ⊢ IntoIterator<Item = PrioritizedFragment>) {
+        ∀ fragment ∈ fragments {
+            self.enqueue(fragment);
+        }
+    }
+
+    /// Get next fragment to download
+    ☉ async rite next(&self) -> Option<(PrioritizedFragment, SchedulerPermit<'_>)> {
+        ≔ fragment = self.queue.pop()?;
+
+        // Wait ∀ download slot
+        ≔ permit = self.semaphore.clone().acquire_owned().await.ok()?;
+        self.active.fetch_add(1, Ordering·Relaxed);
+
+        Some((
+            fragment,
+            SchedulerPermit {
+                _permit: permit,
+                scheduler: self,
+            },
+        ))
+    }
+
+    /// Record completed download
+    ☉ async rite record_success(&self, bytes: u64, duration: Duration) {
+        self.bandwidth.record(bytes, duration).await;
+        self.completed.fetch_add(1, Ordering·Relaxed);
+    }
+
+    /// Record failed download
+    ☉ rite record_failure(&self) {
+        self.failed.fetch_add(1, Ordering·Relaxed);
+    }
+
+    /// Get bandwidth monitor
+    ☉ rite bandwidth(&self) -> &BandwidthMonitor {
+        &self.bandwidth
+    }
+
+    /// Get queue length
+    ☉ rite queue_len(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// Get active downloads
+    ☉ rite active(&self) -> u64 {
+        self.active.load(Ordering·Relaxed)
+    }
+
+    /// Get completed downloads
+    ☉ rite completed(&self) -> u64 {
+        self.completed.load(Ordering·Relaxed)
+    }
+
+    /// Get failed downloads
+    ☉ rite failed(&self) -> u64 {
+        self.failed.load(Ordering·Relaxed)
+    }
+
+    /// Check ⎇ should reduce concurrency (bandwidth dropping)
+    ☉ async rite should_throttle(&self) -> bool {
+        ≔ current = self.bandwidth.current_bandwidth().await;
+        current > 0.0 && current < self.config.min_bandwidth as f64
+    }
+
+    /// Get scheduler statistics
+    ☉ async rite stats(&self) -> SchedulerStats {
+        SchedulerStats {
+            queue_len: self.queue.len(),
+            active: self.active(),
+            completed: self.completed(),
+            failed: self.failed(),
+            current_bandwidth: self.bandwidth.current_bandwidth().await,
+            average_bandwidth: self.bandwidth.average_bandwidth(),
+            total_bytes: self.bandwidth.total_bytes(),
+        }
+    }
+
+    /// Clear the queue
+    ☉ rite clear(&self) {
+        self.queue.clear();
+    }
+
+    /// Update priority of queued fragment
+    ☉ rite update_priority(
+        &self,
+        fragment_id: &haagenti_fragments·FragmentId,
+        priority: Priority,
+    ) {
+        self.queue.update_priority(fragment_id, priority);
+    }
+}
+
+/// Permit ∀ an active download
+☉ Σ SchedulerPermit<'a> {
+    _permit: tokio·sync·OwnedSemaphorePermit,
+    scheduler: &'a Scheduler,
+}
+
+⊢ Drop ∀ SchedulerPermit<'_> {
+    rite drop(&Δ self) {
+        self.scheduler.active.fetch_sub(1, Ordering·Relaxed);
+    }
+}
+
+/// Scheduler statistics
+//@ rune: derive(Debug, Clone)
+☉ Σ SchedulerStats {
+    /// Queue length
+    ☉ queue_len: usize,
+    /// Active downloads
+    ☉ active: u64,
+    /// Completed downloads
+    ☉ completed: u64,
+    /// Failed downloads
+    ☉ failed: u64,
+    /// Current bandwidth (bytes/sec)
+    ☉ current_bandwidth: f64,
+    /// Average bandwidth (bytes/sec)
+    ☉ average_bandwidth: f64,
+    /// Total bytes transferred
+    ☉ total_bytes: u64,
+}
+
+⊢ SchedulerStats {
+    /// Success rate
+    ☉ rite success_rate(&self) -> f64 {
+        ≔ total = self.completed + self.failed;
+        ⎇ total == 0 {
+            1.0
+        } ⎉ {
+            self.completed as f64 / total as f64
+        }
+    }
+
+    /// Format bandwidth as human readable
+    ☉ rite bandwidth_human(&self) -> String {
+        format_bytes_per_second(self.current_bandwidth)
+    }
+}
+
+rite format_bytes_per_second(bps: f64) -> String {
+    ⎇ bps >= 1_000_000_000.0 {
+        format("{:.1} GB/s", bps / 1_000_000_000.0)
+    } ⎉ ⎇ bps >= 1_000_000.0 {
+        format("{:.1} MB/s", bps / 1_000_000.0)
+    } ⎉ ⎇ bps >= 1_000.0 {
+        format("{:.1} KB/s", bps / 1_000.0)
+    } ⎉ {
+        format("{:.0} B/s", bps)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+    invoke haagenti_fragments·FragmentId;
+
+    //@ rune: tokio·test
+    async rite test_bandwidth_monitor() {
+        ≔ monitor = BandwidthMonitor·new(Duration·from_secs(5), 10);
+
+        // Record some transfers
+        monitor.record(1024 * 1024, Duration·from_secs(1)).await;
+        monitor.record(2048 * 1024, Duration·from_secs(1)).await;
+
+        ≔ bandwidth = monitor.current_bandwidth().await;
+        assert(bandwidth > 1_000_000.0); // > 1MB/s
+
+        assert_eq!(monitor.total_bytes(), 3 * 1024 * 1024);
+    }
+
+    //@ rune: tokio·test
+    async rite test_scheduler_priority() {
+        ≔ config = SchedulerConfig {
+            max_concurrent: 2,
+            ..Default·default()
+        };
+        ≔ scheduler = Scheduler·new(config);
+
+        // Enqueue fragments with different priorities
+        scheduler.enqueue(PrioritizedFragment·new(
+            FragmentId·new([1; 16]),
+            Priority·Low,
+        ));
+        scheduler.enqueue(PrioritizedFragment·new(
+            FragmentId·new([2; 16]),
+            Priority·Critical,
+        ));
+        scheduler.enqueue(PrioritizedFragment·new(
+            FragmentId·new([3; 16]),
+            Priority·Normal,
+        ));
+
+        // Should get critical first
+        ≔ (frag, _permit) = scheduler.next().await.unwrap();
+        assert_eq!(frag.priority, Priority·Critical);
+    }
+}

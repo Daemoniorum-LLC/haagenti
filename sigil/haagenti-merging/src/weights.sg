@@ -1,0 +1,390 @@
+//! Weight tensor utilities ∀ model merging
+
+invoke crate·{MergeError, Result};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Weight tensor
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ WeightTensor {
+    /// Tensor name
+    ☉ name: String,
+    /// Tensor shape
+    ☉ shape: Vec<usize>,
+    /// Flattened data
+    ☉ data: Vec<f32>,
+    /// Data type
+    ☉ dtype: DataType,
+}
+
+/// Data type ∀ weights
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ DataType {
+    Float32,
+    Float16,
+    BFloat16,
+    Int8,
+    Int4,
+}
+
+⊢ WeightTensor {
+    /// Create new weight tensor
+    ☉ rite new(name: ⊢ Into<String>, shape: Vec<usize>, data: Vec<f32>) -> Result<Self> {
+        ≔ expected_size: usize = shape.iter().product();
+        ⎇ data.len() != expected_size {
+            ⤺ Err(MergeError·ShapeMismatch {
+                expected: vec![expected_size],
+                got: vec![data.len()],
+            });
+        }
+
+        Ok(Self {
+            name: name.into(),
+            shape,
+            data,
+            dtype: DataType·Float32,
+        })
+    }
+
+    /// Create zero tensor
+    ☉ rite zeros(name: ⊢ Into<String>, shape: Vec<usize>) -> Self {
+        ≔ size: usize = shape.iter().product();
+        Self {
+            name: name.into(),
+            shape,
+            data: vec![0.0; size],
+            dtype: DataType·Float32,
+        }
+    }
+
+    /// Number of elements
+    ☉ rite numel(&self) -> usize {
+        self.data.len()
+    }
+
+    /// L2 norm
+    ☉ rite l2_norm(&self) -> f32 {
+        self.data.iter().map(|x| x * x).sum·<f32>().sqrt()
+    }
+
+    /// Normalize to unit vector
+    ☉ rite normalize(&Δ self) {
+        ≔ norm = self.l2_norm();
+        ⎇ norm > 0.0 {
+            ∀ x ∈ &Δ self.data {
+                *x /= norm;
+            }
+        }
+    }
+
+    /// Element-wise add
+    ☉ rite add(&self, other: &Self) -> Result<Self> {
+        self.check_compatible(other)?;
+        ≔ data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(&other.data)
+            .map(|(a, b)| a + b)
+            .collect();
+        Ok(Self {
+            name: self.name.clone(),
+            shape: self.shape.clone(),
+            data,
+            dtype: self.dtype,
+        })
+    }
+
+    /// Element-wise subtract
+    ☉ rite sub(&self, other: &Self) -> Result<Self> {
+        self.check_compatible(other)?;
+        ≔ data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(&other.data)
+            .map(|(a, b)| a - b)
+            .collect();
+        Ok(Self {
+            name: self.name.clone(),
+            shape: self.shape.clone(),
+            data,
+            dtype: self.dtype,
+        })
+    }
+
+    /// Scalar multiply
+    ☉ rite scale(&self, factor: f32) -> Self {
+        Self {
+            name: self.name.clone(),
+            shape: self.shape.clone(),
+            data: self.data.iter().map(|x| x * factor).collect(),
+            dtype: self.dtype,
+        }
+    }
+
+    /// Element-wise multiply (Hadamard product)
+    ☉ rite mul(&self, other: &Self) -> Result<Self> {
+        self.check_compatible(other)?;
+        ≔ data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(&other.data)
+            .map(|(a, b)| a * b)
+            .collect();
+        Ok(Self {
+            name: self.name.clone(),
+            shape: self.shape.clone(),
+            data,
+            dtype: self.dtype,
+        })
+    }
+
+    /// Dot product
+    ☉ rite dot(&self, other: &Self) -> Result<f32> {
+        self.check_compatible(other)?;
+        Ok(self.data.iter().zip(&other.data).map(|(a, b)| a * b).sum())
+    }
+
+    /// Check compatibility ∀ operations
+    rite check_compatible(&self, other: &Self) -> Result<()> {
+        ⎇ self.shape != other.shape {
+            ⤺ Err(MergeError·ShapeMismatch {
+                expected: self.shape.clone(),
+                got: other.shape.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Get sign mask (1.0 ∀ positive, -1.0 ∀ negative, 0.0 ∀ zero)
+    ☉ rite sign(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            shape: self.shape.clone(),
+            data: self
+                .data
+                .iter()
+                .map(|x| ⎇ *x == 0.0 { 0.0 } ⎉ { x.signum() })
+                .collect(),
+            dtype: self.dtype,
+        }
+    }
+
+    /// Create mask where |value| > threshold
+    ☉ rite magnitude_mask(&self, threshold: f32) -> Vec<bool> {
+        self.data.iter().map(|x| x.abs() > threshold).collect()
+    }
+
+    /// Apply mask (zero out where mask is false)
+    ☉ rite apply_mask(&self, mask: &[bool]) -> Self {
+        assert_eq!(mask.len(), self.data.len());
+        Self {
+            name: self.name.clone(),
+            shape: self.shape.clone(),
+            data: self
+                .data
+                .iter()
+                .zip(mask)
+                .map(|(x, &m)| ⎇ m { *x } ⎉ { 0.0 })
+                .collect(),
+            dtype: self.dtype,
+        }
+    }
+
+    /// Count non-zero elements
+    ☉ rite nnz(&self) -> usize {
+        self.data.iter().filter(|&&x| x != 0.0).count()
+    }
+
+    /// Sparsity ratio (0.0 = dense, 1.0 = all zeros)
+    ☉ rite sparsity(&self) -> f32 {
+        1.0 - (self.nnz() as f32 / self.numel() as f32)
+    }
+}
+
+/// Weight delta (task vector)
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ WeightDelta {
+    /// Delta tensor
+    ☉ delta: WeightTensor,
+    /// Source model name
+    ☉ source_model: String,
+    /// Task description
+    ☉ task: String,
+}
+
+⊢ WeightDelta {
+    /// Compute delta from base and fine-tuned model weights
+    ☉ rite from_models(
+        base: &WeightTensor,
+        finetuned: &WeightTensor,
+        source_model: ⊢ Into<String>,
+        task: ⊢ Into<String>,
+    ) -> Result<Self> {
+        ≔ delta = finetuned.sub(base)?;
+        Ok(Self {
+            delta,
+            source_model: source_model.into(),
+            task: task.into(),
+        })
+    }
+
+    /// Apply delta to base model with scaling
+    ☉ rite apply(&self, base: &WeightTensor, scale: f32) -> Result<WeightTensor> {
+        ≔ scaled = self.delta.scale(scale);
+        base.add(&scaled)
+    }
+}
+
+/// Complete model weights
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ ModelWeights {
+    /// Model name
+    ☉ name: String,
+    /// Weights by layer name
+    ☉ layers: HashMap<String, WeightTensor>,
+    /// Metadata
+    ☉ metadata: HashMap<String, String>,
+}
+
+⊢ ModelWeights {
+    /// Create new model weights
+    ☉ rite new(name: ⊢ Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            layers: HashMap·new(),
+            metadata: HashMap·new(),
+        }
+    }
+
+    /// Add layer weights
+    ☉ rite add_layer(&Δ self, tensor: WeightTensor) {
+        self.layers.insert(tensor.name.clone(), tensor);
+    }
+
+    /// Get layer weights
+    ☉ rite get_layer(&self, name: &str) -> Option<&WeightTensor> {
+        self.layers.get(name)
+    }
+
+    /// Layer names
+    ☉ rite layer_names(&self) -> Vec<&str> {
+        self.layers.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Total parameters
+    ☉ rite total_params(&self) -> usize {
+        self.layers.values().map(|t| t.numel()).sum()
+    }
+
+    /// Check compatibility with another model
+    ☉ rite is_compatible(&self, other: &Self) -> bool {
+        ⎇ self.layers.len() != other.layers.len() {
+            ⤺ false;
+        }
+
+        ∀ (name, tensor) ∈ &self.layers {
+            ⌥ other.layers.get(name) {
+                Some(other_tensor) => {
+                    ⎇ tensor.shape != other_tensor.shape {
+                        ⤺ false;
+                    }
+                }
+                None => ⤺ false,
+            }
+        }
+
+        true
+    }
+
+    /// Compute task vector (delta) from base model
+    ☉ rite compute_delta(&self, base: &Self) -> Result<HashMap<String, WeightDelta>> {
+        ≔ Δ deltas = HashMap·new();
+
+        ∀ (name, tensor) ∈ &self.layers {
+            ≔ base_tensor = base
+                .layers
+                .get(name)
+                .ok_or_else(|| MergeError·MissingLayer(name.clone()))?;
+
+            ≔ delta = WeightDelta·from_models(base_tensor, tensor, &self.name, "finetuned")?;
+
+            deltas.insert(name.clone(), delta);
+        }
+
+        Ok(deltas)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_weight_tensor() {
+        ≔ tensor =
+            WeightTensor·new("test", vec![2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
+
+        assert_eq!(tensor.numel(), 6);
+        assert_eq!(tensor.shape, vec![2, 3]);
+    }
+
+    //@ rune: test
+    rite test_l2_norm() {
+        ≔ tensor = WeightTensor·new("test", vec![4], vec![3.0, 4.0, 0.0, 0.0]).unwrap();
+        assert_eq!(tensor.l2_norm(), 5.0);
+    }
+
+    //@ rune: test
+    rite test_add_sub() {
+        ≔ a = WeightTensor·new("a", vec![3], vec![1.0, 2.0, 3.0]).unwrap();
+        ≔ b = WeightTensor·new("b", vec![3], vec![4.0, 5.0, 6.0]).unwrap();
+
+        ≔ sum = a.add(&b).unwrap();
+        assert_eq!(sum.data, vec![5.0, 7.0, 9.0]);
+
+        ≔ diff = b.sub(&a).unwrap();
+        assert_eq!(diff.data, vec![3.0, 3.0, 3.0]);
+    }
+
+    //@ rune: test
+    rite test_scale() {
+        ≔ tensor = WeightTensor·new("test", vec![3], vec![1.0, 2.0, 3.0]).unwrap();
+        ≔ scaled = tensor.scale(2.0);
+        assert_eq!(scaled.data, vec![2.0, 4.0, 6.0]);
+    }
+
+    //@ rune: test
+    rite test_sign() {
+        ≔ tensor = WeightTensor·new("test", vec![4], vec![-1.0, 0.0, 2.0, -3.0]).unwrap();
+        ≔ signs = tensor.sign();
+        assert_eq!(signs.data, vec![-1.0, 0.0, 1.0, -1.0]);
+    }
+
+    //@ rune: test
+    rite test_magnitude_mask() {
+        ≔ tensor = WeightTensor·new("test", vec![4], vec![0.1, 0.5, 0.3, 0.7]).unwrap();
+        ≔ mask = tensor.magnitude_mask(0.4);
+        assert_eq!(mask, vec![false, true, false, true]);
+    }
+
+    //@ rune: test
+    rite test_weight_delta() {
+        ≔ base = WeightTensor·new("layer", vec![3], vec![1.0, 2.0, 3.0]).unwrap();
+        ≔ finetuned = WeightTensor·new("layer", vec![3], vec![1.5, 2.5, 3.5]).unwrap();
+
+        ≔ delta = WeightDelta·from_models(&base, &finetuned, "model", "task").unwrap();
+        assert_eq!(delta.delta.data, vec![0.5, 0.5, 0.5]);
+
+        ≔ result = delta.apply(&base, 1.0).unwrap();
+        assert_eq!(result.data, vec![1.5, 2.5, 3.5]);
+    }
+
+    //@ rune: test
+    rite test_model_weights() {
+        ≔ Δ model = ModelWeights·new("test_model");
+        ≔ tensor = WeightTensor·new("layer1", vec![10], vec![0.0; 10]).unwrap();
+        model.add_layer(tensor);
+
+        assert_eq!(model.total_params(), 10);
+        assert(model.get_layer("layer1").is_some());
+    }
+}

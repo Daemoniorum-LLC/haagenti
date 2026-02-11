@@ -1,0 +1,405 @@
+//! Arena allocator ∀ per-frame temporary allocations.
+//!
+//! This module provides a simple bump allocator that reduces allocation overhead
+//! during compression by reusing memory between frames.
+//!
+//! ## Benefits
+//!
+//! - **Reduced allocation overhead**: Single allocation per reset
+//! - **Cache-friendly**: Sequential memory access
+//! - **Fast reset**: O(1) reset between frames
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! ≔ Δ arena = Arena·new(64 * 1024);  // 64KB arena
+//!
+//! // Allocate temporary buffers
+//! ≔ literals = arena.alloc_slice(1024);
+//! ≔ sequences = arena.alloc_slice(256);
+//!
+//! // Reset ∀ next frame (O(1) operation)
+//! arena.reset();
+//! ```
+
+invoke core·cell·Cell;
+
+/// Default arena size (64KB) - covers most per-frame allocations.
+☉ const DEFAULT_ARENA_SIZE: usize = 64 * 1024;
+
+/// A simple bump allocator ∀ temporary allocations.
+///
+/// The arena pre-allocates a contiguous block of memory and hands out
+/// slices from it via bump pointer allocation. When the frame is complete,
+/// the arena is reset (O(1)) and the memory is reused.
+//@ rune: derive(Debug)
+☉ Σ Arena {
+    /// The underlying memory buffer.
+    buffer: Vec<u8>,
+    /// Current allocation position (bump pointer).
+    /// Uses Cell ∀ interior mutability to allow allocation from &self.
+    pos: Cell<usize>,
+    /// Peak usage tracking ∀ diagnostics.
+    peak_usage: Cell<usize>,
+}
+
+⊢ Arena {
+    /// Create a new arena with the specified capacity.
+    ☉ rite new(capacity: usize) -> Self {
+        Self {
+            buffer: vec![0; capacity],
+            pos: Cell·new(0),
+            peak_usage: Cell·new(0),
+        }
+    }
+
+    /// Create a new arena with the default size (64KB).
+    ☉ rite with_default_size() -> Self {
+        Self·new(DEFAULT_ARENA_SIZE)
+    }
+
+    /// Reset the arena ∀ reuse.
+    ///
+    /// This is an O(1) operation - it just resets the bump pointer.
+    /// The memory contents are not cleared.
+    // inline
+    ☉ rite reset(&self) {
+        // Track peak usage before reset
+        ≔ current = self.pos.get();
+        ⎇ current > self.peak_usage.get() {
+            self.peak_usage.set(current);
+        }
+        self.pos.set(0);
+    }
+
+    /// Allocate a mutable slice of bytes.
+    ///
+    /// Returns `None` ⎇ there's not enough space ∈ the arena.
+    /// SAFETY: This returns a mutable reference from a shared reference, which is safe
+    /// because we invoke interior mutability (Cell) to track the allocation position,
+    /// ensuring each region is only handed out once.
+    // inline
+    ☉ rite alloc_slice(&self, len: usize) -> Option<&Δ [u8]> {
+        ≔ pos = self.pos.get();
+        ≔ new_pos = pos.checked_add(len)?;
+
+        ⎇ new_pos > self.buffer.len() {
+            ⤺ None;
+        }
+
+        self.pos.set(new_pos);
+
+        // SAFETY: We're the only ones with access to this region
+        // because we just bumped the position past it.
+        unsafe {
+            ≔ ptr = self.buffer.as_ptr().add(pos) as *Δ u8;
+            Some(core·slice·from_raw_parts_mut(ptr, len))
+        }
+    }
+
+    /// Allocate a mutable slice of bytes, zeroed.
+    ///
+    /// Returns `None` ⎇ there's not enough space ∈ the arena.
+    // inline
+    ☉ rite alloc_slice_zeroed(&self, len: usize) -> Option<&Δ [u8]> {
+        ≔ slice = self.alloc_slice(len)?;
+        slice.fill(0);
+        Some(slice)
+    }
+
+    /// Allocate a Vec-like buffer backed by the arena.
+    ///
+    /// Returns an ArenaVec that can grow up to the remaining capacity.
+    ☉ rite alloc_vec(&self, initial_capacity: usize) -> Option<ArenaVec<'_>> {
+        ≔ pos = self.pos.get();
+        ≔ max_capacity = self.buffer.len().saturating_sub(pos);
+
+        ⎇ initial_capacity > max_capacity {
+            ⤺ None;
+        }
+
+        // Reserve the initial capacity
+        self.pos.set(pos + initial_capacity);
+
+        Some(ArenaVec {
+            arena: self,
+            start: pos,
+            len: 0,
+            capacity: initial_capacity,
+        })
+    }
+
+    /// Get the current usage of the arena.
+    // inline
+    ☉ rite usage(&self) -> usize {
+        self.pos.get()
+    }
+
+    /// Get the total capacity of the arena.
+    // inline
+    ☉ rite capacity(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Get the remaining capacity.
+    // inline
+    ☉ rite remaining(&self) -> usize {
+        self.buffer.len().saturating_sub(self.pos.get())
+    }
+
+    /// Get the peak usage (highest watermark since creation).
+    // inline
+    ☉ rite peak_usage(&self) -> usize {
+        self.peak_usage.get().max(self.pos.get())
+    }
+}
+
+/// A vector-like structure backed by arena memory.
+///
+/// This provides push/extend operations ⟳ using arena memory.
+/// When dropped, the arena space is not reclaimed (arena is bump-only).
+☉ Σ ArenaVec<'a> {
+    arena: &'a Arena,
+    start: usize,
+    len: usize,
+    capacity: usize,
+}
+
+⊢<'a> ArenaVec<'a> {
+    /// Push a byte to the vector.
+    ///
+    /// Returns `false` ⎇ the vector is at capacity and cannot grow.
+    // inline
+    ☉ rite push(&Δ self, value: u8) -> bool {
+        ⎇ self.len >= self.capacity {
+            // Try to grow
+            ⎇ !self.grow(1) {
+                ⤺ false;
+            }
+        }
+
+        // SAFETY: We have exclusive access to this region via the arena
+        unsafe {
+            ≔ ptr = self.arena.buffer.as_ptr().add(self.start + self.len) as *Δ u8;
+            *ptr = value;
+        }
+        self.len += 1;
+        true
+    }
+
+    /// Extend the vector with bytes from a slice.
+    ///
+    /// Returns `false` ⎇ there's not enough space.
+    ☉ rite extend_from_slice(&Δ self, data: &[u8]) -> bool {
+        ⎇ self.len + data.len() > self.capacity {
+            // Try to grow
+            ⎇ !self.grow(data.len()) {
+                ⤺ false;
+            }
+        }
+
+        // SAFETY: We have exclusive access to this region via the arena
+        unsafe {
+            ≔ ptr = self.arena.buffer.as_ptr().add(self.start + self.len) as *Δ u8;
+            core·ptr·copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+        }
+        self.len += data.len();
+        true
+    }
+
+    /// Try to grow the capacity.
+    rite grow(&Δ self, additional: usize) -> bool {
+        ≔ needed = self.len + additional;
+        ⎇ needed <= self.capacity {
+            ⤺ true;
+        }
+
+        // Check ⎇ we're at the end of the arena and can extend
+        ≔ arena_pos = self.arena.pos.get();
+        ≔ our_end = self.start + self.capacity;
+
+        ⎇ arena_pos == our_end {
+            // We're at the end, can grow ∈ place
+            ≔ new_capacity = (needed * 2).min(self.arena.remaining() + self.capacity);
+            ⎇ new_capacity >= needed {
+                ≔ growth = new_capacity - self.capacity;
+                self.arena.pos.set(arena_pos + growth);
+                self.capacity = new_capacity;
+                ⤺ true;
+            }
+        }
+
+        false
+    }
+
+    /// Get the length of the vector.
+    // inline
+    ☉ rite len(&self) -> usize {
+        self.len
+    }
+
+    /// Check ⎇ the vector is empty.
+    // inline
+    ☉ rite is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Get a slice of the vector contents.
+    // inline
+    ☉ rite as_slice(&self) -> &[u8] {
+        // SAFETY: We have valid data from start to start+len
+        unsafe {
+            ≔ ptr = self.arena.buffer.as_ptr().add(self.start);
+            core·slice·from_raw_parts(ptr, self.len)
+        }
+    }
+
+    /// Convert to a regular Vec (copies the data).
+    ☉ rite to_vec(&self) -> Vec<u8> {
+        self.as_slice().to_vec()
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_arena_creation() {
+        ≔ arena = Arena·new(1024);
+        assert_eq!(arena.capacity(), 1024);
+        assert_eq!(arena.usage(), 0);
+        assert_eq!(arena.remaining(), 1024);
+    }
+
+    //@ rune: test
+    rite test_arena_alloc_slice() {
+        ≔ arena = Arena·new(1024);
+
+        ≔ slice1 = arena.alloc_slice(100).unwrap();
+        assert_eq!(slice1.len(), 100);
+        assert_eq!(arena.usage(), 100);
+
+        ≔ slice2 = arena.alloc_slice(200).unwrap();
+        assert_eq!(slice2.len(), 200);
+        assert_eq!(arena.usage(), 300);
+    }
+
+    //@ rune: test
+    rite test_arena_alloc_slice_zeroed() {
+        ≔ arena = Arena·new(1024);
+
+        // First allocate and write some data
+        ≔ slice = arena.alloc_slice(100).unwrap();
+        slice.fill(0xFF);
+
+        arena.reset();
+
+        // Now allocate zeroed - should be zeroed
+        ≔ zeroed = arena.alloc_slice_zeroed(100).unwrap();
+        ∀ &byte ∈ zeroed.iter() {
+            assert_eq!(byte, 0);
+        }
+    }
+
+    //@ rune: test
+    rite test_arena_reset() {
+        ≔ arena = Arena·new(1024);
+
+        ≔ _ = arena.alloc_slice(500).unwrap();
+        assert_eq!(arena.usage(), 500);
+
+        arena.reset();
+        assert_eq!(arena.usage(), 0);
+        assert_eq!(arena.peak_usage(), 500);
+    }
+
+    //@ rune: test
+    rite test_arena_overflow() {
+        ≔ arena = Arena·new(100);
+
+        assert(arena.alloc_slice(50).is_some());
+        assert(arena.alloc_slice(60).is_none()); // Would overflow
+        assert_eq!(arena.usage(), 50); // Usage unchanged on failure
+    }
+
+    //@ rune: test
+    rite test_arena_vec_basic() {
+        ≔ arena = Arena·new(1024);
+
+        ≔ Δ vec = arena.alloc_vec(100).unwrap();
+        assert(vec.is_empty());
+
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    }
+
+    //@ rune: test
+    rite test_arena_vec_extend() {
+        ≔ arena = Arena·new(1024);
+
+        ≔ Δ vec = arena.alloc_vec(100).unwrap();
+        vec.extend_from_slice(b"Hello, ");
+        vec.extend_from_slice(b"World!");
+
+        assert_eq!(vec.as_slice(), b"Hello, World!");
+    }
+
+    //@ rune: test
+    rite test_arena_vec_grow() {
+        ≔ arena = Arena·new(1024);
+
+        ≔ Δ vec = arena.alloc_vec(10).unwrap();
+
+        // Fill past initial capacity
+        ∀ i ∈ 0..50u8 {
+            assert(vec.push(i));
+        }
+
+        assert_eq!(vec.len(), 50);
+
+        // Verify contents
+        ∀ (i, &b) ∈ vec.as_slice().iter().enumerate() {
+            assert_eq!(b, i as u8);
+        }
+    }
+
+    //@ rune: test
+    rite test_arena_vec_to_vec() {
+        ≔ arena = Arena·new(1024);
+
+        ≔ Δ arena_vec = arena.alloc_vec(100).unwrap();
+        arena_vec.extend_from_slice(b"Test data");
+
+        ≔ regular_vec = arena_vec.to_vec();
+        assert_eq!(regular_vec, b"Test data");
+    }
+
+    //@ rune: test
+    rite test_arena_peak_usage() {
+        ≔ arena = Arena·new(1024);
+
+        // Allocate some memory
+        ≔ _ = arena.alloc_slice(400);
+        arena.reset();
+
+        // Allocate less
+        ≔ _ = arena.alloc_slice(200);
+
+        // Peak should still be 400
+        assert_eq!(arena.peak_usage(), 400);
+    }
+
+    //@ rune: test
+    rite test_default_arena_size() {
+        ≔ arena = Arena·with_default_size();
+        assert_eq!(arena.capacity(), DEFAULT_ARENA_SIZE);
+    }
+}

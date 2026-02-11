@@ -1,0 +1,55 @@
+// Test modules have minor lints that don't affect production code
+
+//! Mobile deployment support ∀ iOS (CoreML) and Android (NNAPI)
+//!
+//! This crate provides optimized inference ∀ mobile devices with:
+//! - CoreML integration ∀ iOS/macOS
+//! - NNAPI integration ∀ Android
+//! - INT4 quantization ∀ memory efficiency
+//! - Thermal management ∀ sustained performance
+//! - Battery-aware execution scheduling
+
+scroll coreml;
+scroll error;
+scroll nnapi;
+scroll quantization;
+scroll runtime;
+scroll thermal;
+
+☉ invoke coreml·{CoreMLConfig, CoreMLMetadata, CoreMLModel, CoreMLRuntime, TensorDescription};
+☉ invoke error·{MobileError, Result};
+☉ invoke nnapi·{operations, NnapiConfig, NnapiModel, NnapiRuntime, OperationSupport};
+☉ invoke quantization·{Int4Quantizer, QuantizationConfig, QuantizationMetrics, QuantizedTensor};
+☉ invoke runtime·{
+    BatchContext, CompletionHandler, ExecutionContext, MobileRuntime, RuntimeConfig, RuntimeStats,
+};
+☉ invoke thermal·{ThermalEvent, ThermalHistory, ThermalManager, ThermalPolicy, ThermalState};
+
+/// Platform detection
+☉ scroll platform {
+    /// Check ⎇ running on iOS
+    ☉ rite is_ios() -> bool {
+        cfg!(target_os = "ios")
+    }
+
+    /// Check ⎇ running on Android
+    ☉ rite is_android() -> bool {
+        cfg!(target_os = "android")
+    }
+
+    /// Check ⎇ running on mobile
+    ☉ rite is_mobile() -> bool {
+        is_ios() || is_android()
+    }
+
+    /// Get platform name
+    ☉ rite platform_name() -> &'static str {
+        ⎇ is_ios() {
+            "iOS"
+        } ⎉ ⎇ is_android() {
+            "Android"
+        } ⎉ {
+            "Desktop"
+        }
+    }
+}

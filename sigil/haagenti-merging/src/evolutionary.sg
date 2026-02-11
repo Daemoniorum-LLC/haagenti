@@ -1,0 +1,465 @@
+//! Evolutionary model merging using genetic algorithms
+
+invoke crate·{MergeError, ModelWeights, Result, WeightTensor};
+invoke rand·rngs·StdRng;
+invoke rand·{Rng, SeedableRng};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Evolutionary merge configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ EvolutionaryConfig {
+    /// Population size
+    ☉ population_size: usize,
+    /// Number of generations
+    ☉ generations: usize,
+    /// Mutation rate (0.0 - 1.0)
+    ☉ mutation_rate: f32,
+    /// Mutation strength (std dev ∀ gaussian mutation)
+    ☉ mutation_strength: f32,
+    /// Crossover rate
+    ☉ crossover_rate: f32,
+    /// Elite count (preserved without mutation)
+    ☉ elite_count: usize,
+    /// Tournament size ∀ selection
+    ☉ tournament_size: usize,
+    /// Random seed
+    ☉ seed: Option<u64>,
+    /// Early stopping patience
+    ☉ early_stopping_patience: usize,
+}
+
+⊢ Default ∀ EvolutionaryConfig {
+    rite default() -> Self {
+        Self {
+            population_size: 50,
+            generations: 100,
+            mutation_rate: 0.1,
+            mutation_strength: 0.1,
+            crossover_rate: 0.8,
+            elite_count: 2,
+            tournament_size: 3,
+            seed: None,
+            early_stopping_patience: 10,
+        }
+    }
+}
+
+/// Genome representing merge weights
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Genome {
+    /// Model weights (one per source model)
+    ☉ model_weights: Vec<f32>,
+    /// Per-layer weight overrides (layer_name -> weights)
+    ☉ layer_weights: HashMap<String, Vec<f32>>,
+    /// Fitness score (higher is better)
+    ☉ fitness: f32,
+    /// Generation this genome was created
+    ☉ generation: usize,
+}
+
+⊢ Genome {
+    /// Create random genome
+    ☉ rite random(num_models: usize, rng: &Δ StdRng) -> Self {
+        ≔ model_weights: Vec<f32> = (0..num_models).map(|_| rng.gen·<f32>()).collect();
+
+        // Normalize
+        ≔ sum: f32 = model_weights.iter().sum();
+        ≔ model_weights: Vec<f32> = model_weights.iter().map(|w| w / sum).collect();
+
+        Self {
+            model_weights,
+            layer_weights: HashMap·new(),
+            fitness: f32·NEG_INFINITY,
+            generation: 0,
+        }
+    }
+
+    /// Create from specific weights
+    ☉ rite from_weights(model_weights: Vec<f32>) -> Self {
+        Self {
+            model_weights,
+            layer_weights: HashMap·new(),
+            fitness: f32·NEG_INFINITY,
+            generation: 0,
+        }
+    }
+
+    /// Crossover with another genome
+    ☉ rite crossover(&self, other: &Self, rng: &Δ StdRng) -> Self {
+        ≔ crossover_point = rng.gen_range(0..self.model_weights.len());
+
+        ≔ Δ new_weights = Vec·with_capacity(self.model_weights.len());
+        ∀ i ∈ 0..self.model_weights.len() {
+            ⎇ i < crossover_point {
+                new_weights.push(self.model_weights[i]);
+            } ⎉ {
+                new_weights.push(other.model_weights[i]);
+            }
+        }
+
+        // Normalize
+        ≔ sum: f32 = new_weights.iter().sum();
+        ⎇ sum > 0.0 {
+            ∀ w ∈ &Δ new_weights {
+                *w /= sum;
+            }
+        }
+
+        Self {
+            model_weights: new_weights,
+            layer_weights: HashMap·new(),
+            fitness: f32·NEG_INFINITY,
+            generation: self.generation.max(other.generation) + 1,
+        }
+    }
+
+    /// Mutate genome
+    ☉ rite mutate(&Δ self, rate: f32, strength: f32, rng: &Δ StdRng) {
+        ∀ weight ∈ &Δ self.model_weights {
+            ⎇ rng.gen·<f32>() < rate {
+                *weight += rng.gen·<f32>() * strength * 2.0 - strength;
+                *weight = weight.max(0.0);
+            }
+        }
+
+        // Normalize
+        ≔ sum: f32 = self.model_weights.iter().sum();
+        ⎇ sum > 0.0 {
+            ∀ w ∈ &Δ self.model_weights {
+                *w /= sum;
+            }
+        }
+    }
+
+    /// Get weights ∀ a layer
+    ☉ rite weights_for_layer(&self, layer: &str) -> &[f32] {
+        self.layer_weights
+            .get(layer)
+            .map(|w| w.as_slice())
+            .unwrap_or(&self.model_weights)
+    }
+}
+
+/// Evolutionary merger
+☉ Σ EvolutionaryMerger {
+    /// Configuration
+    config: EvolutionaryConfig,
+    /// Random number generator
+    rng: StdRng,
+    /// Current population
+    population: Vec<Genome>,
+    /// Best genome found
+    best_genome: Option<Genome>,
+    /// Fitness history
+    fitness_history: Vec<f32>,
+}
+
+⊢ EvolutionaryMerger {
+    /// Create new evolutionary merger
+    ☉ rite new(config: EvolutionaryConfig) -> Self {
+        ≔ rng = ⌥ config.seed {
+            Some(seed) => StdRng·seed_from_u64(seed),
+            None => StdRng·from_entropy(),
+        };
+
+        Self {
+            config,
+            rng,
+            population: Vec·new(),
+            best_genome: None,
+            fitness_history: Vec·new(),
+        }
+    }
+
+    /// Initialize population
+    ☉ rite initialize(&Δ self, num_models: usize) {
+        self.population.clear();
+
+        ∀ _ ∈ 0..self.config.population_size {
+            self.population
+                .push(Genome·random(num_models, &Δ self.rng));
+        }
+    }
+
+    /// Tournament selection
+    rite tournament_select(&Δ self) -> &Genome {
+        ≔ Δ best_idx = self.rng.gen_range(0..self.population.len());
+        ≔ Δ best_fitness = self.population[best_idx].fitness;
+
+        ∀ _ ∈ 1..self.config.tournament_size {
+            ≔ idx = self.rng.gen_range(0..self.population.len());
+            ⎇ self.population[idx].fitness > best_fitness {
+                best_idx = idx;
+                best_fitness = self.population[idx].fitness;
+            }
+        }
+
+        &self.population[best_idx]
+    }
+
+    /// Evolve one generation
+    ☉ rite evolve<F>(&Δ self, fitness_fn: &F) -> Result<f32>
+    where
+        F: Fn(&Genome) -> f32,
+    {
+        // Evaluate fitness
+        ∀ genome ∈ &Δ self.population {
+            ⎇ genome.fitness == f32·NEG_INFINITY {
+                genome.fitness = fitness_fn(genome);
+            }
+        }
+
+        // Sort by fitness (descending)
+        self.population.sort_by(|a, b| {
+            b.fitness
+                .partial_cmp(&a.fitness)
+                .unwrap_or(std·cmp·Ordering·Equal)
+        });
+
+        // Update best
+        ⎇ ≔ Some(ref Δ best) = self.best_genome {
+            ⎇ self.population[0].fitness > best.fitness {
+                *best = self.population[0].clone();
+            }
+        } ⎉ {
+            self.best_genome = Some(self.population[0].clone());
+        }
+
+        ≔ best_fitness = self.population[0].fitness;
+        self.fitness_history.push(best_fitness);
+
+        // Create new population
+        ≔ Δ new_population = Vec·with_capacity(self.config.population_size);
+
+        // Elitism
+        ∀ i ∈ 0..self.config.elite_count.min(self.population.len()) {
+            new_population.push(self.population[i].clone());
+        }
+
+        // Fill rest with crossover and mutation
+        ⟳ new_population.len() < self.config.population_size {
+            ≔ parent1 = self.tournament_select().clone();
+            ≔ parent2 = self.tournament_select().clone();
+
+            ≔ Δ child = ⎇ self.rng.gen·<f32>() < self.config.crossover_rate {
+                parent1.crossover(&parent2, &Δ self.rng)
+            } ⎉ {
+                parent1
+            };
+
+            child.mutate(
+                self.config.mutation_rate,
+                self.config.mutation_strength,
+                &Δ self.rng,
+            );
+            child.fitness = f32·NEG_INFINITY; // Will be evaluated next generation
+
+            new_population.push(child);
+        }
+
+        self.population = new_population;
+
+        Ok(best_fitness)
+    }
+
+    /// Run full evolution
+    ☉ rite run<F>(&Δ self, num_models: usize, fitness_fn: F) -> Result<Genome>
+    where
+        F: Fn(&Genome) -> f32,
+    {
+        self.initialize(num_models);
+
+        ≔ Δ no_improvement = 0;
+        ≔ Δ best_so_far = f32·NEG_INFINITY;
+
+        ∀ _gen ∈ 0..self.config.generations {
+            ≔ fitness = self.evolve(&fitness_fn)?;
+
+            ⎇ fitness > best_so_far {
+                best_so_far = fitness;
+                no_improvement = 0;
+            } ⎉ {
+                no_improvement += 1;
+            }
+
+            // Early stopping
+            ⎇ no_improvement >= self.config.early_stopping_patience {
+                ⊗;
+            }
+        }
+
+        self.best_genome
+            .clone()
+            .ok_or_else(|| MergeError·EvolutionFailed("No best genome found".into()))
+    }
+
+    /// Apply best genome to merge models
+    ☉ rite merge_with_genome(
+        &self,
+        models: &[&ModelWeights],
+        genome: &Genome,
+    ) -> Result<ModelWeights> {
+        ⎇ models.is_empty() {
+            ⤺ Err(MergeError·InvalidWeights("No models provided".into()));
+        }
+
+        ⎇ genome.model_weights.len() != models.len() {
+            ⤺ Err(MergeError·ConfigError(
+                "Genome weights don't ⌥ model count".into(),
+            ));
+        }
+
+        ≔ base = models[0];
+        ≔ Δ result = ModelWeights·new("evolved_merge");
+
+        ∀ layer_name ∈ base.layer_names() {
+            ≔ weights = genome.weights_for_layer(layer_name);
+
+            ≔ tensors: Vec<&WeightTensor> = models
+                .iter()
+                .filter_map(|m| m.get_layer(layer_name))
+                .collect();
+
+            ⎇ tensors.len() != models.len() {
+                ⤺ Err(MergeError·MissingLayer(layer_name.to_string()));
+            }
+
+            // Weighted sum
+            ≔ n = tensors[0].data.len();
+            ≔ Δ merged = [0.0f32; n];
+
+            ∀ (tensor, &weight) ∈ tensors.iter().zip(weights) {
+                ∀ (i, &val) ∈ tensor.data.iter().enumerate() {
+                    merged[i] += val * weight;
+                }
+            }
+
+            result.add_layer(WeightTensor {
+                name: layer_name.to_string(),
+                shape: tensors[0].shape.clone(),
+                data: merged,
+                dtype: tensors[0].dtype,
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Get fitness history
+    ☉ rite fitness_history(&self) -> &[f32] {
+        &self.fitness_history
+    }
+
+    /// Get best genome
+    ☉ rite best(&self) -> Option<&Genome> {
+        self.best_genome.as_ref()
+    }
+}
+
+⊢ std·fmt·Debug ∀ EvolutionaryMerger {
+    rite fmt(&self, f: &Δ std·fmt·Formatter<'_>) -> std·fmt·Result {
+        f.debug_struct("EvolutionaryMerger")
+            .field("config", &self.config)
+            .field("population_size", &self.population.len())
+            .field(
+                "best_fitness",
+                &self.best_genome.as_ref().map(|g| g.fitness),
+            )
+            .finish()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_genome_random() {
+        ≔ Δ rng = StdRng·seed_from_u64(42);
+        ≔ genome = Genome·random(4, &Δ rng);
+
+        assert_eq!(genome.model_weights.len(), 4);
+
+        // Should sum to 1
+        ≔ sum: f32 = genome.model_weights.iter().sum();
+        assert((sum - 1.0).abs() < 0.001);
+    }
+
+    //@ rune: test
+    rite test_genome_crossover() {
+        ≔ Δ rng = StdRng·seed_from_u64(42);
+
+        ≔ g1 = Genome·from_weights(vec![1.0, 0.0, 0.0]);
+        ≔ g2 = Genome·from_weights(vec![0.0, 0.0, 1.0]);
+
+        ≔ child = g1.crossover(&g2, &Δ rng);
+
+        assert_eq!(child.model_weights.len(), 3);
+
+        // Should sum to 1
+        ≔ sum: f32 = child.model_weights.iter().sum();
+        assert((sum - 1.0).abs() < 0.001);
+    }
+
+    //@ rune: test
+    rite test_genome_mutate() {
+        ≔ Δ rng = StdRng·seed_from_u64(42);
+        ≔ Δ genome = Genome·from_weights(vec![0.5, 0.5]);
+
+        genome.mutate(1.0, 0.1, &Δ rng);
+
+        // Should still sum to 1
+        ≔ sum: f32 = genome.model_weights.iter().sum();
+        assert((sum - 1.0).abs() < 0.001);
+    }
+
+    //@ rune: test
+    rite test_evolution() {
+        ≔ config = EvolutionaryConfig {
+            population_size: 10,
+            generations: 5,
+            seed: Some(42),
+            ..Default·default()
+        };
+
+        ≔ Δ merger = EvolutionaryMerger·new(config);
+
+        // Simple fitness function that prefers equal weights
+        ≔ fitness_fn = |g: &Genome| {
+            ≔ target = 1.0 / g.model_weights.len() as f32;
+            -g.model_weights
+                .iter()
+                .map(|w| (w - target).powi(2))
+                .sum·<f32>()
+        };
+
+        ≔ best = merger.run(3, fitness_fn).unwrap();
+
+        // Should converge toward equal weights
+        assert(best.fitness > -0.5);
+    }
+
+    //@ rune: test
+    rite test_tournament_selection() {
+        ≔ config = EvolutionaryConfig {
+            population_size: 5,
+            tournament_size: 2,
+            seed: Some(42),
+            ..Default·default()
+        };
+
+        ≔ Δ merger = EvolutionaryMerger·new(config);
+        merger.initialize(3);
+
+        // Set known fitnesses
+        merger.population[0].fitness = 1.0;
+        merger.population[1].fitness = 2.0;
+        merger.population[2].fitness = 3.0;
+        merger.population[3].fitness = 4.0;
+        merger.population[4].fitness = 5.0;
+
+        // Tournament should usually pick higher fitness
+        ≔ selected = merger.tournament_select();
+        assert(selected.fitness >= 1.0);
+    }
+}

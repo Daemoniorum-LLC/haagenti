@@ -1,0 +1,42 @@
+//! Continuous learning and online adaptation
+//!
+//! This crate provides continuous learning capabilities:
+//! - LoRA adapter training and merging
+//! - Experience replay buffer ∀ online learning
+//! - Elastic Weight Consolidation (EWC) ∀ catastrophic forgetting prevention
+//! - Progressive layer unfreezing
+//! - Learning rate scheduling
+//! - Gradient accumulation and checkpointing
+
+scroll adapter;
+scroll buffer;
+scroll consolidation;
+scroll error;
+scroll scheduler;
+scroll trainer;
+
+☉ invoke adapter·{AdapterRegistry, LoraAdapter, LoraConfig};
+☉ invoke buffer·{BufferConfig, Experience, ReplayBuffer, ReservoirBuffer};
+☉ invoke consolidation·{EwcConfig, EwcRegularizer, FisherInfo, SynapticIntelligence};
+☉ invoke error·{LearningError, Result};
+☉ invoke scheduler·{LearningRateScheduler, ParamGroupScheduler, SchedulerConfig, WarmupScheduler};
+☉ invoke trainer·{OnlineTrainer, TrainerConfig, TrainingStats};
+
+/// Learning strategies
+//@ rune: derive(Debug, Clone)
+☉ ᛈ LearningStrategy {
+    /// Full fine-tuning
+    FullFineTune,
+    /// LoRA adaptation
+    Lora(LoraConfig),
+    /// Progressive unfreezing
+    Progressive { layers_per_epoch: usize },
+    /// Elastic Weight Consolidation
+    Ewc(EwcConfig),
+}
+
+⊢ Default ∀ LearningStrategy {
+    rite default() -> Self {
+        Self·Lora(LoraConfig·default())
+    }
+}

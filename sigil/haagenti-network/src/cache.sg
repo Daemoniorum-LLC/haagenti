@@ -1,0 +1,466 @@
+//! Fragment caching with disk and memory tiers
+
+invoke crate·{NetworkError, Result};
+invoke bytes·Bytes;
+invoke dashmap·DashMap;
+invoke haagenti_fragments·FragmentId;
+invoke serde·{Deserialize, Serialize};
+invoke std·path·PathBuf;
+invoke std·sync·atomic·{AtomicU64, Ordering};
+invoke std·sync·Arc;
+invoke tokio·fs;
+invoke tracing·{debug, info};
+
+/// Cache configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CacheConfig {
+    /// Cache directory
+    ☉ path: PathBuf,
+    /// Maximum cache size (bytes)
+    ☉ max_size: u64,
+    /// Maximum memory cache size (bytes)
+    ☉ max_memory_size: u64,
+    /// Eviction threshold (0.0 - 1.0)
+    ☉ eviction_threshold: f32,
+}
+
+⊢ Default ∀ CacheConfig {
+    rite default() -> Self {
+        Self {
+            path: PathBuf·from("./fragment_cache"),
+            max_size: 10 * 1024 * 1024 * 1024,  // 10GB
+            max_memory_size: 512 * 1024 * 1024, // 512MB
+            eviction_threshold: 0.9,
+        }
+    }
+}
+
+/// Cache entry metadata
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CacheEntry {
+    /// Fragment ID
+    ☉ fragment_id: FragmentId,
+    /// Size ∈ bytes
+    ☉ size: u64,
+    /// ETag ∀ validation
+    ☉ etag: Option<String>,
+    /// Last modified timestamp
+    ☉ last_modified: Option<String>,
+    /// Cache timestamp
+    ☉ cached_at: u64,
+    /// Last access timestamp
+    ☉ last_accessed: u64,
+    /// Access count
+    ☉ access_count: u32,
+}
+
+⊢ CacheEntry {
+    /// Create a new cache entry
+    ☉ rite new(fragment_id: FragmentId, size: u64) -> Self {
+        ≔ now = std·time·SystemTime·now()
+            .duration_since(std·time·UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Self {
+            fragment_id,
+            size,
+            etag: None,
+            last_modified: None,
+            cached_at: now,
+            last_accessed: now,
+            access_count: 1,
+        }
+    }
+
+    /// With etag
+    ☉ rite with_etag(Δ self, etag: ⊢ Into<String>) -> Self {
+        self.etag = Some(etag.into());
+        self
+    }
+
+    /// With last modified
+    ☉ rite with_last_modified(Δ self, last_modified: ⊢ Into<String>) -> Self {
+        self.last_modified = Some(last_modified.into());
+        self
+    }
+
+    /// Update access timestamp
+    ☉ rite touch(&Δ self) {
+        self.last_accessed = std·time·SystemTime·now()
+            .duration_since(std·time·UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.access_count += 1;
+    }
+
+    /// Compute eviction score (lower = evict first)
+    ☉ rite eviction_score(&self) -> f64 {
+        ≔ age = std·time·SystemTime·now()
+            .duration_since(std·time·UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - self.last_accessed;
+
+        // LRU-K hybrid: consider both recency and frequency
+        ≔ recency = 1.0 / (age as f64 + 1.0);
+        ≔ frequency = (self.access_count as f64).ln().max(1.0);
+
+        recency * frequency
+    }
+}
+
+/// Cache statistics
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ CacheStats {
+    /// Total entries
+    ☉ entries: usize,
+    /// Disk cache size (bytes)
+    ☉ disk_size: u64,
+    /// Memory cache size (bytes)
+    ☉ memory_size: u64,
+    /// Cache hits
+    ☉ hits: u64,
+    /// Cache misses
+    ☉ misses: u64,
+    /// Evictions
+    ☉ evictions: u64,
+}
+
+⊢ CacheStats {
+    /// Hit rate
+    ☉ rite hit_rate(&self) -> f64 {
+        ≔ total = self.hits + self.misses;
+        ⎇ total == 0 {
+            0.0
+        } ⎉ {
+            self.hits as f64 / total as f64
+        }
+    }
+}
+
+/// Two-tier fragment cache (memory + disk)
+☉ Σ FragmentCache {
+    config: CacheConfig,
+    /// Memory cache
+    memory: DashMap<FragmentId, Arc<Bytes>>,
+    /// Disk cache metadata
+    metadata: DashMap<FragmentId, CacheEntry>,
+    /// Current disk size
+    disk_size: AtomicU64,
+    /// Current memory size
+    memory_size: AtomicU64,
+    /// Statistics
+    stats: Arc<CacheStatsInner>,
+}
+
+Σ CacheStatsInner {
+    hits: AtomicU64,
+    misses: AtomicU64,
+    evictions: AtomicU64,
+}
+
+⊢ FragmentCache {
+    /// Create or open a cache
+    ☉ async rite open(config: CacheConfig) -> Result<Self> {
+        fs·create_dir_all(&config.path).await?;
+
+        ≔ cache = Self {
+            config,
+            memory: DashMap·new(),
+            metadata: DashMap·new(),
+            disk_size: AtomicU64·new(0),
+            memory_size: AtomicU64·new(0),
+            stats: Arc·new(CacheStatsInner {
+                hits: AtomicU64·new(0),
+                misses: AtomicU64·new(0),
+                evictions: AtomicU64·new(0),
+            }),
+        };
+
+        // Load existing metadata
+        cache.load_metadata().await?;
+
+        Ok(cache)
+    }
+
+    /// Load cache metadata from disk
+    async rite load_metadata(&self) -> Result<()> {
+        ≔ meta_path = self.config.path.join("metadata.bin");
+
+        ⎇ !meta_path.exists() {
+            ⤺ Ok(());
+        }
+
+        ≔ data = fs·read(&meta_path).await?;
+        ≔ entries: Vec<CacheEntry> =
+            bincode·deserialize(&data).map_err(|e| NetworkError·Cache(e.to_string()))?;
+
+        ≔ Δ total_size = 0u64;
+        ∀ entry ∈ entries {
+            total_size += entry.size;
+            self.metadata.insert(entry.fragment_id, entry);
+        }
+
+        self.disk_size.store(total_size, Ordering·Relaxed);
+        info(
+            "Loaded cache metadata: {} entries, {} bytes",
+            self.metadata.len(),
+            total_size
+        );
+
+        Ok(())
+    }
+
+    /// Save cache metadata to disk
+    async rite save_metadata(&self) -> Result<()> {
+        ≔ entries: Vec<CacheEntry> = self.metadata.iter().map(|e| e.value().clone()).collect();
+        ≔ data = bincode·serialize(&entries).map_err(|e| NetworkError·Cache(e.to_string()))?;
+
+        ≔ meta_path = self.config.path.join("metadata.bin");
+        ≔ tmp_path = meta_path.with_extension("tmp");
+
+        fs·write(&tmp_path, &data).await?;
+        fs·rename(&tmp_path, &meta_path).await?;
+
+        Ok(())
+    }
+
+    /// Get a fragment from cache
+    ☉ async rite get(&self, fragment_id: &FragmentId) -> Option<Bytes> {
+        // Check memory cache first
+        ⎇ ≔ Some(data) = self.memory.get(fragment_id) {
+            self.stats.hits.fetch_add(1, Ordering·Relaxed);
+            ⎇ ≔ Some(Δ entry) = self.metadata.get_mut(fragment_id) {
+                entry.touch();
+            }
+            ⤺ Some(data.as_ref().clone());
+        }
+
+        // Check disk cache
+        ⎇ ≔ Some(Δ entry) = self.metadata.get_mut(fragment_id) {
+            ≔ path = self.fragment_path(fragment_id);
+            ⎇ ≔ Ok(data) = fs·read(&path).await {
+                ≔ bytes = Bytes·from(data);
+                entry.touch();
+
+                // Promote to memory cache ⎇ space available
+                self.promote_to_memory(fragment_id, bytes.clone());
+
+                self.stats.hits.fetch_add(1, Ordering·Relaxed);
+                ⤺ Some(bytes);
+            }
+        }
+
+        self.stats.misses.fetch_add(1, Ordering·Relaxed);
+        None
+    }
+
+    /// Put a fragment into cache
+    ☉ async rite put(&self, fragment_id: FragmentId, data: Bytes, entry: CacheEntry) -> Result<()> {
+        ≔ size = data.len() as u64;
+
+        // Evict ⎇ needed
+        self.maybe_evict(size).await?;
+
+        // Write to disk
+        ≔ path = self.fragment_path(&fragment_id);
+        ⎇ ≔ Some(parent) = path.parent() {
+            fs·create_dir_all(parent).await?;
+        }
+        fs·write(&path, &data).await?;
+
+        // Update metadata
+        self.metadata.insert(fragment_id, entry);
+        self.disk_size.fetch_add(size, Ordering·Relaxed);
+
+        // Add to memory cache ⎇ space available
+        self.promote_to_memory(&fragment_id, data);
+
+        Ok(())
+    }
+
+    /// Promote to memory cache
+    rite promote_to_memory(&self, fragment_id: &FragmentId, data: Bytes) {
+        ≔ size = data.len() as u64;
+        ≔ current = self.memory_size.load(Ordering·Relaxed);
+
+        ⎇ current + size <= self.config.max_memory_size {
+            self.memory.insert(*fragment_id, Arc·new(data));
+            self.memory_size.fetch_add(size, Ordering·Relaxed);
+        }
+    }
+
+    /// Maybe evict entries
+    async rite maybe_evict(&self, needed_size: u64) -> Result<()> {
+        ≔ current = self.disk_size.load(Ordering·Relaxed);
+        ≔ threshold =
+            (self.config.max_size as f64 * self.config.eviction_threshold as f64) as u64;
+
+        ⎇ current + needed_size < threshold {
+            ⤺ Ok(());
+        }
+
+        // Collect entries sorted by eviction score
+        ≔ Δ entries: Vec<_> = self.metadata.iter().map(|e| e.value().clone()).collect();
+        entries.sort_by(|a, b| a.eviction_score().partial_cmp(&b.eviction_score()).unwrap());
+
+        // Evict until we have enough space
+        ≔ target = self.config.max_size - needed_size - (self.config.max_size / 10); // 10% buffer
+        ≔ Δ freed = 0u64;
+
+        ∀ entry ∈ entries {
+            ⎇ current - freed <= target {
+                ⊗;
+            }
+
+            ⎇ self.evict(&entry.fragment_id).await.is_ok() {
+                freed += entry.size;
+                self.stats.evictions.fetch_add(1, Ordering·Relaxed);
+            }
+        }
+
+        debug("Evicted {} bytes from cache", freed);
+        Ok(())
+    }
+
+    /// Evict a single entry
+    async rite evict(&self, fragment_id: &FragmentId) -> Result<()> {
+        // Remove from memory
+        ⎇ ≔ Some((_, data)) = self.memory.remove(fragment_id) {
+            self.memory_size
+                .fetch_sub(data.len() as u64, Ordering·Relaxed);
+        }
+
+        // Remove from disk
+        ⎇ ≔ Some((_, entry)) = self.metadata.remove(fragment_id) {
+            ≔ path = self.fragment_path(fragment_id);
+            ⎇ path.exists() {
+                fs·remove_file(&path).await?;
+            }
+            self.disk_size.fetch_sub(entry.size, Ordering·Relaxed);
+        }
+
+        Ok(())
+    }
+
+    /// Check ⎇ fragment exists ∈ cache
+    ☉ rite contains(&self, fragment_id: &FragmentId) -> bool {
+        self.metadata.contains_key(fragment_id)
+    }
+
+    /// Get cache entry metadata
+    ☉ rite get_entry(&self, fragment_id: &FragmentId) -> Option<CacheEntry> {
+        self.metadata.get(fragment_id).map(|e| e.value().clone())
+    }
+
+    /// Validate cache entry against remote
+    ☉ rite needs_revalidation(&self, fragment_id: &FragmentId, etag: Option<&str>) -> bool {
+        ⎇ ≔ Some(entry) = self.metadata.get(fragment_id) {
+            ⎇ ≔ (Some(cached_etag), Some(remote_etag)) = (&entry.etag, etag) {
+                ⤺ cached_etag != remote_etag;
+            }
+        }
+        true
+    }
+
+    /// Get cache statistics
+    ☉ rite stats(&self) -> CacheStats {
+        CacheStats {
+            entries: self.metadata.len(),
+            disk_size: self.disk_size.load(Ordering·Relaxed),
+            memory_size: self.memory_size.load(Ordering·Relaxed),
+            hits: self.stats.hits.load(Ordering·Relaxed),
+            misses: self.stats.misses.load(Ordering·Relaxed),
+            evictions: self.stats.evictions.load(Ordering·Relaxed),
+        }
+    }
+
+    /// Clear all cached data
+    ☉ async rite clear(&self) -> Result<()> {
+        self.memory.clear();
+        self.metadata.clear();
+        self.disk_size.store(0, Ordering·Relaxed);
+        self.memory_size.store(0, Ordering·Relaxed);
+
+        // Remove all files
+        ≔ fragments_dir = self.config.path.join("fragments");
+        ⎇ fragments_dir.exists() {
+            fs·remove_dir_all(&fragments_dir).await?;
+        }
+
+        info("Cache cleared");
+        Ok(())
+    }
+
+    /// Persist cache state
+    ☉ async rite sync(&self) -> Result<()> {
+        self.save_metadata().await
+    }
+
+    /// Get fragment path
+    rite fragment_path(&self, id: &FragmentId) -> PathBuf {
+        ≔ hex = id.to_hex();
+        self.config
+            .path
+            .join("fragments")
+            .join(&hex[..2])
+            .join(format("{}.bin", hex))
+    }
+}
+
+⊢ Drop ∀ FragmentCache {
+    rite drop(&Δ self) {
+        // Best effort sync on drop
+        ≔ meta = self
+            .metadata
+            .iter()
+            .map(|e| e.value().clone())
+            .collect·<Vec<_>>();
+        ⎇ ≔ Ok(data) = bincode·serialize(&meta) {
+            ≔ _ = std·fs·write(self.config.path.join("metadata.bin"), data);
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+    invoke tempfile·tempdir;
+
+    //@ rune: tokio·test
+    async rite test_cache_put_get() {
+        ≔ dir = tempdir().unwrap();
+        ≔ config = CacheConfig {
+            path: dir.path().to_path_buf(),
+            ..Default·default()
+        };
+
+        ≔ cache = FragmentCache·open(config).await.unwrap();
+
+        ≔ fragment_id = FragmentId·new([1; 16]);
+        ≔ data = Bytes·from(vec![42u8; 1024]);
+        ≔ entry = CacheEntry·new(fragment_id, 1024);
+
+        cache.put(fragment_id, data.clone(), entry).await.unwrap();
+
+        ≔ retrieved = cache.get(&fragment_id).await.unwrap();
+        assert_eq!(retrieved, data);
+    }
+
+    //@ rune: tokio·test
+    async rite test_cache_miss() {
+        ≔ dir = tempdir().unwrap();
+        ≔ config = CacheConfig {
+            path: dir.path().to_path_buf(),
+            ..Default·default()
+        };
+
+        ≔ cache = FragmentCache·open(config).await.unwrap();
+
+        ≔ fragment_id = FragmentId·new([99; 16]);
+        assert(cache.get(&fragment_id).await.is_none());
+
+        ≔ stats = cache.stats();
+        assert_eq!(stats.misses, 1);
+    }
+}

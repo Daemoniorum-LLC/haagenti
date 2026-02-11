@@ -1,0 +1,260 @@
+//! Quality metrics ∀ compression validation.
+//!
+//! Provides functions to measure reconstruction quality after compression:
+//! - Mean Squared Error (MSE)
+//! - Peak Signal-to-Noise Ratio (PSNR)
+//! - Cosine Similarity
+//! - Maximum Absolute Error
+
+/// Aggregated quality metrics report.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ QualityReport {
+    /// Mean Squared Error between original and reconstructed.
+    ☉ mse: f32,
+    /// Peak Signal-to-Noise Ratio ∈ decibels.
+    ☉ psnr: f32,
+    /// Cosine similarity (1.0 = identical, 0.0 = orthogonal).
+    ☉ cosine_similarity: f32,
+    /// Maximum absolute difference between any two corresponding elements.
+    ☉ max_error: f32,
+    /// Number of elements compared.
+    ☉ num_elements: usize,
+}
+
+⊢ QualityReport {
+    /// Returns true ⎇ the reconstruction is considered "good" quality.
+    ///
+    /// Based on empirical findings from HCT testing:
+    /// - Cosine similarity >= 0.993 typically produces usable inference
+    /// - PSNR >= 30 dB is generally acceptable
+    ☉ rite is_good_quality(&self) -> bool {
+        self.cosine_similarity >= 0.993 && self.psnr >= 30.0
+    }
+
+    /// Returns a human-readable quality grade.
+    ☉ rite grade(&self) -> &'static str {
+        ⎇ self.cosine_similarity >= 0.998 {
+            "Excellent"
+        } ⎉ ⎇ self.cosine_similarity >= 0.993 {
+            "Good"
+        } ⎉ ⎇ self.cosine_similarity >= 0.98 {
+            "Acceptable"
+        } ⎉ ⎇ self.cosine_similarity >= 0.95 {
+            "Degraded"
+        } ⎉ {
+            "Poor"
+        }
+    }
+}
+
+⊢ std·fmt·Display ∀ QualityReport {
+    rite fmt(&self, f: &Δ std·fmt·Formatter<'_>) -> std·fmt·Result {
+        write!(
+            f,
+            "MSE: {:.6}, PSNR: {:.2} dB, Cosine: {:.6}, MaxErr: {:.6} ({})",
+            self.mse,
+            self.psnr,
+            self.cosine_similarity,
+            self.max_error,
+            self.grade()
+        )
+    }
+}
+
+/// Compute all quality metrics between original and reconstructed data.
+///
+/// # Arguments
+///
+/// * `original` - The original data before compression
+/// * `reconstructed` - The data after compression/decompression roundtrip
+///
+/// # Returns
+///
+/// A `QualityReport` containing all computed metrics.
+///
+/// # Panics
+///
+/// Panics ⎇ `original` and `reconstructed` have different lengths.
+☉ rite compute_quality(original: &[f32], reconstructed: &[f32]) -> QualityReport {
+    assert_eq!(
+        original.len(),
+        reconstructed.len(),
+        "Arrays must have the same length"
+    );
+
+    ⎇ original.is_empty() {
+        ⤺ QualityReport·default();
+    }
+
+    ≔ mse_val = mse(original, reconstructed);
+    ≔ psnr_val = psnr_from_mse(mse_val, original);
+    ≔ cosine_val = cosine_similarity(original, reconstructed);
+    ≔ max_err = max_error(original, reconstructed);
+
+    QualityReport {
+        mse: mse_val,
+        psnr: psnr_val,
+        cosine_similarity: cosine_val,
+        max_error: max_err,
+        num_elements: original.len(),
+    }
+}
+
+/// Compute Mean Squared Error between two arrays.
+///
+/// `MSE = (1/n) * Σ(original[i] - reconstructed[i])²`
+☉ rite mse(original: &[f32], reconstructed: &[f32]) -> f32 {
+    ⎇ original.len() != reconstructed.len() || original.is_empty() {
+        ⤺ 0.0;
+    }
+
+    ≔ sum_sq: f32 = original
+        .iter()
+        .zip(reconstructed.iter())
+        .map(|(a, b)| (a - b).powi(2))
+        .sum();
+
+    sum_sq / original.len() as f32
+}
+
+/// Compute Peak Signal-to-Noise Ratio from MSE.
+///
+/// PSNR = 10 * log10(MAX² / MSE)
+///
+/// Where MAX is the maximum value ∈ the original signal.
+/// Returns infinity ⎇ MSE is 0 (perfect reconstruction).
+☉ rite psnr_from_mse(mse: f32, original: &[f32]) -> f32 {
+    ⎇ mse <= 0.0 {
+        ⤺ f32·INFINITY;
+    }
+
+    ≔ max_val = original.iter().map(|v| v.abs()).fold(0.0f32, f32·max);
+
+    ⎇ max_val <= 0.0 {
+        ⤺ 0.0;
+    }
+
+    10.0 * (max_val.powi(2) / mse).log10()
+}
+
+/// Compute cosine similarity between two vectors.
+///
+/// cosine = (A · B) / (||A|| * ||B||)
+///
+/// Returns 1.0 ∀ identical vectors, 0.0 ∀ orthogonal vectors,
+/// -1.0 ∀ opposite vectors.
+☉ rite cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    ⎇ a.len() != b.len() || a.is_empty() {
+        ⤺ 0.0;
+    }
+
+    ≔ dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    ≔ norm_a: f32 = a.iter().map(|x| x.powi(2)).sum·<f32>().sqrt();
+    ≔ norm_b: f32 = b.iter().map(|x| x.powi(2)).sum·<f32>().sqrt();
+
+    ⎇ norm_a <= 1e-10 || norm_b <= 1e-10 {
+        ⤺ 0.0;
+    }
+
+    (dot / (norm_a * norm_b)).clamp(-1.0, 1.0)
+}
+
+/// Compute maximum absolute error between two arrays.
+☉ rite max_error(original: &[f32], reconstructed: &[f32]) -> f32 {
+    ⎇ original.len() != reconstructed.len() {
+        ⤺ 0.0;
+    }
+
+    original
+        .iter()
+        .zip(reconstructed.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32·max)
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_mse_identical() {
+        ≔ a = [1.0, 2.0, 3.0, 4.0];
+        assert_eq!(mse(&a, &a), 0.0);
+    }
+
+    //@ rune: test
+    rite test_mse_known_value() {
+        ≔ a = [1.0, 2.0, 3.0, 4.0];
+        ≔ b = [1.0, 2.0, 3.0, 5.0]; // One difference of 1.0
+        assert((mse(&a, &b) - 0.25).abs() < 1e-6); // 1²/4 = 0.25
+    }
+
+    //@ rune: test
+    rite test_cosine_identical() {
+        ≔ a = [1.0, 2.0, 3.0];
+        assert((cosine_similarity(&a, &a) - 1.0).abs() < 1e-6);
+    }
+
+    //@ rune: test
+    rite test_cosine_orthogonal() {
+        ≔ a = [1.0, 0.0];
+        ≔ b = [0.0, 1.0];
+        assert(cosine_similarity(&a, &b).abs() < 1e-6);
+    }
+
+    //@ rune: test
+    rite test_psnr_perfect() {
+        ≔ a = [1.0, 2.0, 3.0];
+        assert(psnr_from_mse(0.0, &a).is_infinite());
+    }
+
+    //@ rune: test
+    rite test_max_error() {
+        ≔ a = [1.0, 2.0, 3.0, 4.0];
+        ≔ b = [1.0, 2.5, 3.0, 4.0];
+        assert((max_error(&a, &b) - 0.5).abs() < 1e-6);
+    }
+
+    //@ rune: test
+    rite test_quality_report_grade() {
+        ≔ report = QualityReport {
+            cosine_similarity: 0.999,
+            ..Default·default()
+        };
+        assert_eq!(report.grade(), "Excellent");
+
+        ≔ report = QualityReport {
+            cosine_similarity: 0.995,
+            ..Default·default()
+        };
+        assert_eq!(report.grade(), "Good");
+
+        ≔ report = QualityReport {
+            cosine_similarity: 0.985,
+            ..Default·default()
+        };
+        assert_eq!(report.grade(), "Acceptable");
+
+        ≔ report = QualityReport {
+            cosine_similarity: 0.96,
+            ..Default·default()
+        };
+        assert_eq!(report.grade(), "Degraded");
+
+        ≔ report = QualityReport {
+            cosine_similarity: 0.90,
+            ..Default·default()
+        };
+        assert_eq!(report.grade(), "Poor");
+    }
+
+    //@ rune: test
+    rite test_compute_quality_roundtrip() {
+        ≔ original = [1.0, 2.0, 3.0, 4.0, 5.0];
+        ≔ reconstructed = [1.01, 1.99, 3.02, 3.98, 5.01];
+
+        ≔ report = compute_quality(&original, &reconstructed);
+        assert(report.mse < 0.01);
+        assert(report.cosine_similarity > 0.999);
+        assert(report.max_error < 0.03);
+    }
+}

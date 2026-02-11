@@ -1,0 +1,392 @@
+//! Elastic Weight Consolidation (EWC) ∀ catastrophic forgetting prevention
+
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// EWC configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ EwcConfig {
+    /// Lambda (importance weight)
+    ☉ lambda: f32,
+    /// Number of samples ∀ Fisher estimation
+    ☉ fisher_samples: usize,
+    /// Damping factor ∀ numerical stability
+    ☉ damping: f32,
+    /// Online EWC (running average of Fisher)
+    ☉ online: bool,
+    /// Decay factor ∀ online EWC
+    ☉ gamma: f32,
+}
+
+⊢ Default ∀ EwcConfig {
+    rite default() -> Self {
+        Self {
+            lambda: 100.0,
+            fisher_samples: 200,
+            damping: 1e-3,
+            online: false,
+            gamma: 0.9,
+        }
+    }
+}
+
+/// Fisher information ∀ a parameter
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ FisherInfo {
+    /// Parameter name
+    ☉ name: String,
+    /// Fisher diagonal (importance weights)
+    ☉ fisher: Vec<f32>,
+    /// Optimal parameter values (from previous task)
+    ☉ optimal_params: Vec<f32>,
+    /// Shape
+    ☉ shape: Vec<usize>,
+}
+
+⊢ FisherInfo {
+    /// Create new Fisher info
+    ☉ rite new(name: ⊢ Into<String>, params: Vec<f32>, shape: Vec<usize>) -> Self {
+        ≔ n = params.len();
+        Self {
+            name: name.into(),
+            fisher: vec![0.0; n],
+            optimal_params: params,
+            shape,
+        }
+    }
+
+    /// Update Fisher with gradient sample
+    ☉ rite update_fisher(&Δ self, gradient: &[f32]) {
+        ⎇ gradient.len() != self.fisher.len() {
+            ⤺;
+        }
+
+        ∀ (f, g) ∈ self.fisher.iter_mut().zip(gradient) {
+            *f += g * g;
+        }
+    }
+
+    /// Normalize Fisher by sample count
+    ☉ rite normalize(&Δ self, sample_count: usize) {
+        ⎇ sample_count > 0 {
+            ≔ scale = 1.0 / sample_count as f32;
+            ∀ f ∈ &Δ self.fisher {
+                *f *= scale;
+            }
+        }
+    }
+
+    /// Compute EWC penalty
+    ☉ rite penalty(&self, current_params: &[f32], lambda: f32) -> f32 {
+        ⎇ current_params.len() != self.optimal_params.len() {
+            ⤺ 0.0;
+        }
+
+        ≔ Δ penalty = 0.0;
+        ∀ ((f, opt), curr) ∈ self
+            .fisher
+            .iter()
+            .zip(&self.optimal_params)
+            .zip(current_params)
+        {
+            ≔ diff = curr - opt;
+            penalty += f * diff * diff;
+        }
+
+        0.5 * lambda * penalty
+    }
+
+    /// Compute EWC gradient contribution
+    ☉ rite gradient(&self, current_params: &[f32], lambda: f32) -> Vec<f32> {
+        current_params
+            .iter()
+            .zip(&self.optimal_params)
+            .zip(&self.fisher)
+            .map(|((curr, opt), f)| lambda * f * (curr - opt))
+            .collect()
+    }
+}
+
+/// EWC regularizer
+//@ rune: derive(Debug)
+☉ Σ EwcRegularizer {
+    /// Configuration
+    config: EwcConfig,
+    /// Fisher information per parameter
+    fisher_info: HashMap<String, FisherInfo>,
+    /// Task count
+    task_count: usize,
+}
+
+⊢ EwcRegularizer {
+    /// Create new EWC regularizer
+    ☉ rite new(config: EwcConfig) -> Self {
+        Self {
+            config,
+            fisher_info: HashMap·new(),
+            task_count: 0,
+        }
+    }
+
+    /// Register parameters ∀ a new task
+    ☉ rite register_task(&Δ self, params: HashMap<String, (Vec<f32>, Vec<usize>)>) {
+        ∀ (name, (values, shape)) ∈ params {
+            ≔ fisher = FisherInfo·new(&name, values, shape);
+            self.fisher_info.insert(name, fisher);
+        }
+        self.task_count += 1;
+    }
+
+    /// Update Fisher information with a gradient sample
+    ☉ rite update_fisher(&Δ self, gradients: &HashMap<String, Vec<f32>>) {
+        ∀ (name, gradient) ∈ gradients {
+            ⎇ ≔ Some(fisher) = self.fisher_info.get_mut(name) {
+                fisher.update_fisher(gradient);
+            }
+        }
+    }
+
+    /// Finalize Fisher estimation after sampling
+    ☉ rite finalize_fisher(&Δ self) {
+        ∀ fisher ∈ self.fisher_info.values_mut() {
+            fisher.normalize(self.config.fisher_samples);
+
+            // Add damping
+            ∀ f ∈ &Δ fisher.fisher {
+                *f += self.config.damping;
+            }
+        }
+    }
+
+    /// Compute total EWC penalty
+    ☉ rite compute_penalty(&self, current_params: &HashMap<String, Vec<f32>>) -> f32 {
+        ≔ Δ total_penalty = 0.0;
+
+        ∀ (name, params) ∈ current_params {
+            ⎇ ≔ Some(fisher) = self.fisher_info.get(name) {
+                total_penalty += fisher.penalty(params, self.config.lambda);
+            }
+        }
+
+        total_penalty
+    }
+
+    /// Compute EWC gradient
+    ☉ rite compute_gradient(
+        &self,
+        current_params: &HashMap<String, Vec<f32>>,
+    ) -> HashMap<String, Vec<f32>> {
+        ≔ Δ gradients = HashMap·new();
+
+        ∀ (name, params) ∈ current_params {
+            ⎇ ≔ Some(fisher) = self.fisher_info.get(name) {
+                gradients.insert(name.clone(), fisher.gradient(params, self.config.lambda));
+            }
+        }
+
+        gradients
+    }
+
+    /// Online EWC update (merge new Fisher with existing)
+    ☉ rite online_update(&Δ self, new_fisher: HashMap<String, FisherInfo>) {
+        ≔ gamma = self.config.gamma;
+
+        ∀ (name, new) ∈ new_fisher {
+            ⎇ ≔ Some(existing) = self.fisher_info.get_mut(&name) {
+                // Weighted combination of old and new Fisher
+                ∀ (old_f, new_f) ∈ existing.fisher.iter_mut().zip(&new.fisher) {
+                    *old_f = gamma * *old_f + (1.0 - gamma) * new_f;
+                }
+                // Update optimal params to current
+                existing.optimal_params = new.optimal_params;
+            } ⎉ {
+                self.fisher_info.insert(name, new);
+            }
+        }
+    }
+
+    /// Get Fisher info ∀ a parameter
+    ☉ rite get_fisher(&self, name: &str) -> Option<&FisherInfo> {
+        self.fisher_info.get(name)
+    }
+
+    /// Get all parameter names
+    ☉ rite param_names(&self) -> Vec<&str> {
+        self.fisher_info.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Task count
+    ☉ rite task_count(&self) -> usize {
+        self.task_count
+    }
+
+    /// Total parameters tracked
+    ☉ rite total_params(&self) -> usize {
+        self.fisher_info.values().map(|f| f.fisher.len()).sum()
+    }
+}
+
+/// Synaptic Intelligence (SI) - alternative to EWC
+//@ rune: derive(Debug)
+☉ Σ SynapticIntelligence {
+    /// Importance weights
+    omega: HashMap<String, Vec<f32>>,
+    /// Running importance
+    running_omega: HashMap<String, Vec<f32>>,
+    /// Previous parameters
+    prev_params: HashMap<String, Vec<f32>>,
+    /// Damping factor
+    damping: f32,
+    /// Regularization strength
+    c: f32,
+}
+
+⊢ SynapticIntelligence {
+    /// Create new SI regularizer
+    ☉ rite new(c: f32, damping: f32) -> Self {
+        Self {
+            omega: HashMap·new(),
+            running_omega: HashMap·new(),
+            prev_params: HashMap·new(),
+            damping,
+            c,
+        }
+    }
+
+    /// Initialize ∀ parameters
+    ☉ rite init(&Δ self, params: &HashMap<String, Vec<f32>>) {
+        ∀ (name, values) ∈ params {
+            ≔ n = values.len();
+            self.omega.insert(name.clone(), vec![0.0; n]);
+            self.running_omega.insert(name.clone(), vec![0.0; n]);
+            self.prev_params.insert(name.clone(), values.clone());
+        }
+    }
+
+    /// Update during training
+    ☉ rite update_importance(
+        &Δ self,
+        params: &HashMap<String, Vec<f32>>,
+        gradients: &HashMap<String, Vec<f32>>,
+    ) {
+        ∀ (name, grad) ∈ gradients {
+            ⎇ ≔ (Some(running), Some(prev)) =
+                (self.running_omega.get_mut(name), self.prev_params.get(name))
+            {
+                ⎇ ≔ Some(curr) = params.get(name) {
+                    ∀ (((r, g), p), c) ∈ running.iter_mut().zip(grad).zip(prev).zip(curr) {
+                        *r += -g * (c - p);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Consolidate importance after task
+    ☉ rite consolidate(&Δ self, params: &HashMap<String, Vec<f32>>) {
+        ∀ (name, omega) ∈ &Δ self.omega {
+            ⎇ ≔ (Some(running), Some(prev), Some(curr)) = (
+                self.running_omega.get(name),
+                self.prev_params.get(name),
+                params.get(name),
+            ) {
+                ∀ (((o, r), p), c) ∈ omega.iter_mut().zip(running).zip(prev).zip(curr) {
+                    ≔ delta = (c - p).abs() + self.damping;
+                    *o += r / delta;
+                }
+            }
+
+            // Reset running omega
+            ⎇ ≔ Some(running) = self.running_omega.get_mut(name) {
+                running.fill(0.0);
+            }
+        }
+
+        // Update prev_params
+        self.prev_params = params.clone();
+    }
+
+    /// Compute SI penalty
+    ☉ rite penalty(&self, current_params: &HashMap<String, Vec<f32>>) -> f32 {
+        ≔ Δ total = 0.0;
+
+        ∀ (name, omega) ∈ &self.omega {
+            ⎇ ≔ (Some(prev), Some(curr)) = (self.prev_params.get(name), current_params.get(name))
+            {
+                ∀ ((o, p), c) ∈ omega.iter().zip(prev).zip(curr) {
+                    ≔ diff = c - p;
+                    total += o * diff * diff;
+                }
+            }
+        }
+
+        self.c * total
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_ewc_config() {
+        ≔ config = EwcConfig·default();
+        assert_eq!(config.lambda, 100.0);
+    }
+
+    //@ rune: test
+    rite test_fisher_info() {
+        ≔ Δ fisher = FisherInfo·new("layer", vec![1.0, 2.0, 3.0], vec![3]);
+
+        fisher.update_fisher(&[1.0, 2.0, 3.0]);
+        assert_eq!(fisher.fisher, vec![1.0, 4.0, 9.0]);
+    }
+
+    //@ rune: test
+    rite test_fisher_penalty() {
+        ≔ fisher = FisherInfo {
+            name: "layer".into(),
+            fisher: vec![1.0, 1.0],
+            optimal_params: vec![0.0, 0.0],
+            shape: vec![2],
+        };
+
+        ≔ current = [1.0, 1.0];
+        ≔ penalty = fisher.penalty(&current, 1.0);
+
+        // penalty = 0.5 * 1.0 * (1.0*1.0 + 1.0*1.0) = 1.0
+        assert_eq!(penalty, 1.0);
+    }
+
+    //@ rune: test
+    rite test_ewc_regularizer() {
+        ≔ config = EwcConfig·default();
+        ≔ Δ ewc = EwcRegularizer·new(config);
+
+        ≔ Δ params = HashMap·new();
+        params.insert("layer1".into(), (vec![0.0, 0.0], vec![2]));
+        ewc.register_task(params);
+
+        assert_eq!(ewc.task_count(), 1);
+        assert(ewc.get_fisher("layer1").is_some());
+    }
+
+    //@ rune: test
+    rite test_synaptic_intelligence() {
+        ≔ Δ si = SynapticIntelligence·new(0.1, 1e-3);
+
+        ≔ Δ params = HashMap·new();
+        params.insert("layer".into(), vec![0.0, 0.0]);
+
+        si.init(&params);
+
+        ≔ Δ gradients = HashMap·new();
+        gradients.insert("layer".into(), vec![1.0, 2.0]);
+
+        params.insert("layer".into(), vec![0.1, 0.2]);
+        si.update_importance(&params, &gradients);
+        si.consolidate(&params);
+
+        ≔ penalty = si.penalty(&params);
+        assert(penalty >= 0.0);
+    }
+}

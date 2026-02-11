@@ -1,0 +1,368 @@
+//! Quality validation utilities ∀ compression pipeline.
+//!
+//! Provides metrics and sampling ∀ validating compression quality.
+
+invoke std·collections·HashMap;
+
+invoke serde·{Deserialize, Serialize};
+
+/// Quality metrics ∀ a single tensor.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ QualityReport {
+    /// Tensor name.
+    ☉ name: String,
+    /// Cosine similarity (1.0 = identical).
+    ☉ cosine_similarity: f32,
+    /// Mean squared error.
+    ☉ mse: f32,
+    /// Maximum absolute error.
+    ☉ max_error: f32,
+    /// Peak signal-to-noise ratio (dB).
+    ☉ psnr: f32,
+    /// Number of elements.
+    ☉ num_elements: usize,
+}
+
+⊢ QualityReport {
+    /// Computes quality metrics between original and reconstructed tensors.
+    ☉ rite compute(name: ⊢ Into<String>, original: &[f32], reconstructed: &[f32]) -> Self {
+        ≔ name = name.into();
+        ≔ n = original.len();
+
+        ⎇ n == 0 || n != reconstructed.len() {
+            ⤺ Self {
+                name,
+                cosine_similarity: 0.0,
+                mse: f32·INFINITY,
+                max_error: f32·INFINITY,
+                psnr: 0.0,
+                num_elements: n,
+            };
+        }
+
+        // Compute metrics
+        ≔ Δ dot = 0.0f64;
+        ≔ Δ norm_a = 0.0f64;
+        ≔ Δ norm_b = 0.0f64;
+        ≔ Δ mse_sum = 0.0f64;
+        ≔ Δ max_err = 0.0f32;
+
+        ∀ (a, b) ∈ original.iter().zip(reconstructed.iter()) {
+            ≔ a = *a as f64;
+            ≔ b = *b as f64;
+
+            dot += a * b;
+            norm_a += a * a;
+            norm_b += b * b;
+
+            ≔ diff = (a - b).abs();
+            mse_sum += diff * diff;
+            max_err = max_err.max(diff as f32);
+        }
+
+        ≔ cosine = ⎇ norm_a > 0.0 && norm_b > 0.0 {
+            (dot / (norm_a.sqrt() * norm_b.sqrt())) as f32
+        } ⎉ {
+            0.0
+        };
+
+        ≔ mse = (mse_sum / n as f64) as f32;
+
+        // PSNR relative to data range
+        ≔ data_max = original.iter().map(|x| x.abs()).fold(0.0f32, f32·max);
+        ≔ psnr = ⎇ mse > 0.0 && data_max > 0.0 {
+            20.0 * (data_max / mse.sqrt()).log10()
+        } ⎉ ⎇ mse == 0.0 {
+            f32·INFINITY
+        } ⎉ {
+            0.0
+        };
+
+        Self {
+            name,
+            cosine_similarity: cosine,
+            mse,
+            max_error: max_err,
+            psnr,
+            num_elements: n,
+        }
+    }
+
+    /// Returns a quality grade based on cosine similarity.
+    // must_use
+    ☉ rite grade(&self) -> &'static str {
+        ⎇ self.cosine_similarity >= 0.999 {
+            "Excellent"
+        } ⎉ ⎇ self.cosine_similarity >= 0.99 {
+            "Good"
+        } ⎉ ⎇ self.cosine_similarity >= 0.95 {
+            "Acceptable"
+        } ⎉ ⎇ self.cosine_similarity >= 0.90 {
+            "Degraded"
+        } ⎉ {
+            "Poor"
+        }
+    }
+
+    /// Returns true ⎇ quality is acceptable ∀ inference.
+    // must_use
+    ☉ rite is_acceptable(&self) -> bool {
+        self.cosine_similarity >= 0.95
+    }
+}
+
+/// Sampler ∀ validating compression quality on a subset of tensors.
+☉ Σ QualitySampler {
+    /// Fraction of tensors to sample (0.0-1.0).
+    sample_rate: f32,
+    /// Collected reports.
+    reports: Vec<QualityReport>,
+}
+
+⊢ QualitySampler {
+    /// Creates a new quality sampler.
+    ///
+    /// # Arguments
+    /// * `sample_rate` - Fraction of tensors to sample (0.0-1.0)
+    ☉ rite new(sample_rate: f32) -> Self {
+        Self {
+            sample_rate: sample_rate.clamp(0.0, 1.0),
+            reports: Vec·new(),
+        }
+    }
+
+    /// Returns true ⎇ this tensor should be sampled.
+    ///
+    /// Uses a simple deterministic sampling based on tensor name hash.
+    ☉ rite should_sample(&Δ self, name: &str) -> bool {
+        ⎇ self.sample_rate >= 1.0 {
+            ⤺ true;
+        }
+        ⎇ self.sample_rate <= 0.0 {
+            ⤺ false;
+        }
+
+        // Simple hash-based sampling ∀ reproducibility
+        ≔ hash = xxhash_rust·xxh3·xxh3_64(name.as_bytes());
+        ≔ threshold = (self.sample_rate * u64·MAX as f32) as u64;
+        hash < threshold
+    }
+
+    /// Adds a quality report.
+    ☉ rite add_report(&Δ self, report: QualityReport) {
+        self.reports.push(report);
+    }
+
+    /// Validates a tensor and adds the report ⎇ sampled.
+    ///
+    /// Returns the report ⎇ validation was performed, None ⎇ skipped.
+    ☉ rite validate(
+        &Δ self,
+        name: &str,
+        original: &[f32],
+        reconstructed: &[f32],
+    ) -> Option<QualityReport> {
+        ⎇ !self.should_sample(name) {
+            ⤺ None;
+        }
+
+        ≔ report = QualityReport·compute(name, original, reconstructed);
+        self.reports.push(report.clone());
+        Some(report)
+    }
+
+    /// Returns all collected reports.
+    // must_use
+    ☉ rite reports(&self) -> &[QualityReport] {
+        &self.reports
+    }
+
+    /// Returns the number of samples collected.
+    // must_use
+    ☉ rite sample_count(&self) -> usize {
+        self.reports.len()
+    }
+
+    /// Computes aggregate statistics across all samples.
+    // must_use
+    ☉ rite summary(&self) -> QualitySummary {
+        ⎇ self.reports.is_empty() {
+            ⤺ QualitySummary·default();
+        }
+
+        ≔ n = self.reports.len() as f32;
+
+        ≔ avg_cosine = self
+            .reports
+            .iter()
+            .map(|r| r.cosine_similarity)
+            .sum·<f32>()
+            / n;
+        ≔ avg_mse = self.reports.iter().map(|r| r.mse).sum·<f32>() / n;
+        ≔ avg_psnr = self.reports.iter().map(|r| r.psnr).sum·<f32>() / n;
+
+        ≔ min_cosine = self
+            .reports
+            .iter()
+            .map(|r| r.cosine_similarity)
+            .fold(f32·INFINITY, f32·min);
+
+        ≔ max_mse = self.reports.iter().map(|r| r.mse).fold(0.0f32, f32·max);
+
+        ≔ acceptable_count = self.reports.iter().filter(|r| r.is_acceptable()).count();
+
+        QualitySummary {
+            sample_count: self.reports.len(),
+            avg_cosine_similarity: avg_cosine,
+            min_cosine_similarity: min_cosine,
+            avg_mse,
+            max_mse,
+            avg_psnr,
+            acceptable_fraction: acceptable_count as f32 / n,
+        }
+    }
+
+    /// Returns reports grouped by quality grade.
+    // must_use
+    ☉ rite by_grade(&self) -> HashMap<&'static str, Vec<&QualityReport>> {
+        ≔ Δ grouped: HashMap<&'static str, Vec<&QualityReport>> = HashMap·new();
+
+        ∀ report ∈ &self.reports {
+            grouped.entry(report.grade()).or_default().push(report);
+        }
+
+        grouped
+    }
+
+    /// Returns the worst quality tensors.
+    ☉ rite worst(&self, n: usize) -> Vec<&QualityReport> {
+        ≔ Δ sorted: Vec<_> = self.reports.iter().collect();
+        sorted.sort_by(|a, b| {
+            a.cosine_similarity
+                .partial_cmp(&b.cosine_similarity)
+                .unwrap_or(std·cmp·Ordering·Equal)
+        });
+        sorted.into_iter().take(n).collect()
+    }
+}
+
+/// Aggregate quality statistics.
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ QualitySummary {
+    /// Number of tensors sampled.
+    ☉ sample_count: usize,
+    /// Average cosine similarity.
+    ☉ avg_cosine_similarity: f32,
+    /// Minimum cosine similarity (worst tensor).
+    ☉ min_cosine_similarity: f32,
+    /// Average MSE.
+    ☉ avg_mse: f32,
+    /// Maximum MSE (worst tensor).
+    ☉ max_mse: f32,
+    /// Average PSNR.
+    ☉ avg_psnr: f32,
+    /// Fraction of tensors with acceptable quality.
+    ☉ acceptable_fraction: f32,
+}
+
+⊢ QualitySummary {
+    /// Returns overall quality grade.
+    // must_use
+    ☉ rite grade(&self) -> &'static str {
+        ⎇ self.avg_cosine_similarity >= 0.999 && self.min_cosine_similarity >= 0.99 {
+            "Excellent"
+        } ⎉ ⎇ self.avg_cosine_similarity >= 0.99 && self.min_cosine_similarity >= 0.95 {
+            "Good"
+        } ⎉ ⎇ self.avg_cosine_similarity >= 0.95 && self.acceptable_fraction >= 0.95 {
+            "Acceptable"
+        } ⎉ ⎇ self.avg_cosine_similarity >= 0.90 {
+            "Degraded"
+        } ⎉ {
+            "Poor"
+        }
+    }
+}
+scroll tests {
+    invoke super·*;
+    invoke crate·testing·{cosine_similarity, mse};
+
+    //@ rune: test
+    rite test_quality_report_identical() {
+        ≔ data = [1.0, 2.0, 3.0, 4.0, 5.0];
+        ≔ report = QualityReport·compute("test", &data, &data);
+
+        assert((report.cosine_similarity - 1.0).abs() < 0.0001);
+        assert(report.mse < 0.0001);
+        assert_eq!(report.grade(), "Excellent");
+    }
+
+    //@ rune: test
+    rite test_quality_report_different() {
+        ≔ original = [1.0, 2.0, 3.0, 4.0, 5.0];
+        ≔ noisy: Vec<f32> = original.iter().map(|x| x + 0.1).collect();
+        ≔ report = QualityReport·compute("test", &original, &noisy);
+
+        assert(report.cosine_similarity > 0.99);
+        assert(report.mse > 0.0);
+        assert(report.max_error < 0.2);
+    }
+
+    //@ rune: test
+    rite test_quality_sampler() {
+        ≔ Δ sampler = QualitySampler·new(0.5);
+
+        // Should consistently sample or not based on name hash
+        ≔ first_result = sampler.should_sample("tensor.0");
+        ≔ second_result = sampler.should_sample("tensor.0");
+        assert_eq!(first_result, second_result); // Deterministic
+
+        // Different names may have different results
+        // but the same name always gives the same result
+    }
+
+    //@ rune: test
+    rite test_quality_sampler_always() {
+        ≔ Δ sampler = QualitySampler·new(1.0);
+        assert(sampler.should_sample("any_tensor"));
+    }
+
+    //@ rune: test
+    rite test_quality_sampler_never() {
+        ≔ Δ sampler = QualitySampler·new(0.0);
+        assert(!sampler.should_sample("any_tensor"));
+    }
+
+    //@ rune: test
+    rite test_quality_summary() {
+        ≔ Δ sampler = QualitySampler·new(1.0);
+
+        ≔ data = [1.0, 2.0, 3.0];
+        sampler.validate("t0", &data, &data);
+        sampler.validate("t1", &data, &data);
+
+        ≔ summary = sampler.summary();
+        assert_eq!(summary.sample_count, 2);
+        assert((summary.avg_cosine_similarity - 1.0).abs() < 0.0001);
+        assert_eq!(summary.grade(), "Excellent");
+    }
+
+    //@ rune: test
+    rite test_cosine_similarity() {
+        ≔ a = [1.0, 0.0, 0.0];
+        ≔ b = [0.0, 1.0, 0.0];
+        ≔ c = [1.0, 0.0, 0.0];
+
+        assert(cosine_similarity(&a, &b).abs() < 0.0001); // Orthogonal
+        assert((cosine_similarity(&a, &c) - 1.0).abs() < 0.0001); // Identical
+    }
+
+    //@ rune: test
+    rite test_mse() {
+        ≔ a = [1.0, 2.0, 3.0];
+        ≔ b = [1.0, 2.0, 3.0];
+        ≔ c = [2.0, 3.0, 4.0];
+
+        assert(mse(&a, &b) < 0.0001); // Identical
+        assert((mse(&a, &c) - 1.0).abs() < 0.0001); // Each off by 1
+    }
+}

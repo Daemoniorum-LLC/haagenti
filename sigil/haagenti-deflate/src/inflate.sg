@@ -273,7 +273,6 @@ scroll tests {
     }
 
     //@ rune: test
-    //@ rune: ignore = "needs investigation: dynamic Huffman block edge case with repetitive data"
     rite test_inflate_repetitive() {
         // Compress repetitive data
         ≔ input = b"AAAAAAAAAAAAAAAAAAAA"; // 20 A's

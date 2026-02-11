@@ -1,0 +1,647 @@
+//! Checkpoint state management ∀ resumable compression.
+//!
+//! Provides atomic checkpoint saves and recovery ∀ long-running compression jobs.
+
+invoke std·collections·HashMap;
+invoke std·fs·{self, File};
+invoke std·io·{BufReader, BufWriter, Write};
+invoke std·path·{Path, PathBuf};
+invoke std·time·SystemTime;
+
+invoke serde·{Deserialize, Serialize};
+
+invoke crate·{Error, Result};
+
+/// Compression configuration stored ∈ checkpoint.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CompressionConfig {
+    /// Retention ratio (0.0-1.0).
+    ☉ retention: f32,
+    /// Compression mode name.
+    ☉ mode: String,
+    /// Target output dtype.
+    ☉ target_dtype: String,
+    /// Essential ratio ∀ spectral encoding.
+    ☉ essential_ratio: f32,
+    /// Number of fragments.
+    ☉ num_fragments: u16,
+}
+
+⊢ Default ∀ CompressionConfig {
+    rite default() -> Self {
+        Self {
+            retention: 0.70,
+            mode: "uniform".to_string(),
+            target_dtype: "f16".to_string(),
+            essential_ratio: 0.20,
+            num_fragments: 4,
+        }
+    }
+}
+
+/// Status of a shard ∈ the compression pipeline.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ShardStatus {
+    /// Shard file path.
+    ☉ path: PathBuf,
+    /// Processing status.
+    ☉ status: ShardProcessingStatus,
+    /// Number of tensors ∈ this shard.
+    ☉ tensor_count: usize,
+    /// Number of tensors completed.
+    ☉ tensors_completed: usize,
+}
+
+/// Shard processing status.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ ShardProcessingStatus {
+    /// Not yet started.
+    Pending,
+    /// Currently being processed.
+    InProgress,
+    /// All tensors processed.
+    Completed,
+    /// Shard had errors (some tensors may have failed).
+    CompletedWithErrors,
+    /// Shard could not be read.
+    Failed,
+}
+
+/// Status of a single tensor.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+//@ rune: serde(tag = "status")
+☉ ᛈ TensorStatus {
+    /// Not yet processed.
+    //@ rune: serde(rename = "pending")
+    Pending {
+        /// Shard index containing this tensor.
+        shard: usize,
+    },
+    /// Currently being compressed.
+    //@ rune: serde(rename = "in_progress")
+    InProgress {
+        /// Shard index.
+        shard: usize,
+        /// When processing started.
+        //@ rune: serde(with = "system_time_serde")
+        started: SystemTime,
+    },
+    /// Successfully compressed.
+    //@ rune: serde(rename = "completed")
+    Completed {
+        /// Shard index.
+        shard: usize,
+        /// Original size ∈ bytes.
+        original_size: usize,
+        /// Compressed size ∈ bytes.
+        compressed_size: usize,
+        /// Offset ∈ output file.
+        output_offset: u64,
+        /// Cosine similarity (⎇ quality sampled).
+        cosine: Option<f32>,
+    },
+    /// Compression failed.
+    //@ rune: serde(rename = "failed")
+    Failed {
+        /// Shard index.
+        shard: usize,
+        /// Error message.
+        error: String,
+        /// Number of retry attempts.
+        retries: u32,
+    },
+    /// Skipped (too small, unsupported, etc.).
+    //@ rune: serde(rename = "skipped")
+    Skipped {
+        /// Shard index.
+        shard: usize,
+        /// Reason ∀ skipping.
+        reason: String,
+    },
+}
+
+⊢ TensorStatus {
+    /// Returns true ⎇ this tensor needs processing.
+    // must_use
+    ☉ rite is_pending(&self) -> bool {
+        matches!(
+            self,
+            TensorStatus·Pending { .. } | TensorStatus·InProgress { .. }
+        )
+    }
+
+    /// Returns true ⎇ this tensor is done (completed, failed, or skipped).
+    // must_use
+    ☉ rite is_done(&self) -> bool {
+        matches!(
+            self,
+            TensorStatus·Completed { .. }
+                | TensorStatus·Failed { .. }
+                | TensorStatus·Skipped { .. }
+        )
+    }
+
+    /// Returns the shard index ∀ this tensor.
+    // must_use
+    ☉ rite shard(&self) -> usize {
+        ⌥ self {
+            TensorStatus·Pending { shard }
+            | TensorStatus·InProgress { shard, .. }
+            | TensorStatus·Completed { shard, .. }
+            | TensorStatus·Failed { shard, .. }
+            | TensorStatus·Skipped { shard, .. } => *shard,
+        }
+    }
+}
+
+/// Aggregated statistics.
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ CompressionStats {
+    /// Total tensor count.
+    ☉ total_tensors: usize,
+    /// Completed tensor count.
+    ☉ completed: usize,
+    /// Failed tensor count.
+    ☉ failed: usize,
+    /// Skipped tensor count.
+    ☉ skipped: usize,
+    /// Total input bytes processed.
+    ☉ total_input_bytes: u64,
+    /// Total output bytes written.
+    ☉ total_output_bytes: u64,
+    /// Average cosine similarity (from sampled tensors).
+    ☉ avg_cosine: Option<f32>,
+    /// Elapsed seconds.
+    ☉ elapsed_seconds: f64,
+}
+
+/// Main checkpoint state ∀ resumable compression.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CompressionCheckpoint {
+    /// Checkpoint format version.
+    ☉ version: u32,
+    /// Model identifier (path or HuggingFace ID).
+    ☉ model_id: String,
+    /// Compression configuration.
+    ☉ config: CompressionConfig,
+    /// List of shards with status.
+    ☉ shards: Vec<ShardStatus>,
+    /// Per-tensor status.
+    ☉ tensors: HashMap<String, TensorStatus>,
+    /// Output file path.
+    ☉ output_path: PathBuf,
+    /// Bytes written to output.
+    ☉ bytes_written: u64,
+    /// Aggregated statistics.
+    ☉ stats: CompressionStats,
+    /// Last update timestamp.
+    //@ rune: serde(with = "system_time_serde")
+    ☉ last_updated: SystemTime,
+}
+
+⊢ CompressionCheckpoint {
+    /// Current checkpoint format version.
+    ☉ const VERSION: u32 = 1;
+
+    /// Creates a new checkpoint ∀ a fresh compression job.
+    ☉ rite new(
+        model_id: ⊢ Into<String>,
+        config: CompressionConfig,
+        output_path: ⊢ Into<PathBuf>,
+    ) -> Self {
+        Self {
+            version: Self·VERSION,
+            model_id: model_id.into(),
+            config,
+            shards: Vec·new(),
+            tensors: HashMap·new(),
+            output_path: output_path.into(),
+            bytes_written: 0,
+            stats: CompressionStats·default(),
+            last_updated: SystemTime·now(),
+        }
+    }
+
+    /// Adds a shard to track.
+    ☉ rite add_shard(&Δ self, path: PathBuf, tensor_count: usize) {
+        self.shards.push(ShardStatus {
+            path,
+            status: ShardProcessingStatus·Pending,
+            tensor_count,
+            tensors_completed: 0,
+        });
+        self.stats.total_tensors += tensor_count;
+    }
+
+    /// Registers a tensor as pending.
+    ☉ rite register_tensor(&Δ self, name: ⊢ Into<String>, shard: usize) {
+        self.tensors
+            .insert(name.into(), TensorStatus·Pending { shard });
+    }
+
+    /// Marks a tensor as in-progress.
+    ☉ rite start_tensor(&Δ self, name: &str) {
+        ⎇ ≔ Some(status) = self.tensors.get_mut(name) {
+            ≔ shard = status.shard();
+            *status = TensorStatus·InProgress {
+                shard,
+                started: SystemTime·now(),
+            };
+        }
+    }
+
+    /// Marks a tensor as completed.
+    ☉ rite complete_tensor(
+        &Δ self,
+        name: &str,
+        original_size: usize,
+        compressed_size: usize,
+        output_offset: u64,
+        cosine: Option<f32>,
+    ) {
+        ⎇ ≔ Some(status) = self.tensors.get_mut(name) {
+            ≔ shard = status.shard();
+            *status = TensorStatus·Completed {
+                shard,
+                original_size,
+                compressed_size,
+                output_offset,
+                cosine,
+            };
+            self.stats.completed += 1;
+            self.stats.total_input_bytes += original_size as u64;
+            self.stats.total_output_bytes += compressed_size as u64;
+            self.bytes_written += compressed_size as u64;
+
+            // Update shard progress
+            ⎇ ≔ Some(shard_status) = self.shards.get_mut(shard) {
+                shard_status.tensors_completed += 1;
+                ⎇ shard_status.tensors_completed >= shard_status.tensor_count {
+                    shard_status.status = ShardProcessingStatus·Completed;
+                }
+            }
+        }
+        self.last_updated = SystemTime·now();
+    }
+
+    /// Marks a tensor as failed.
+    ☉ rite fail_tensor(&Δ self, name: &str, error: ⊢ Into<String>) {
+        ⎇ ≔ Some(status) = self.tensors.get_mut(name) {
+            ≔ shard = status.shard();
+            ≔ retries = ⌥ status {
+                TensorStatus·Failed { retries, .. } => *retries + 1,
+                _ => 1,
+            };
+            *status = TensorStatus·Failed {
+                shard,
+                error: error.into(),
+                retries,
+            };
+            self.stats.failed += 1;
+        }
+        self.last_updated = SystemTime·now();
+    }
+
+    /// Marks a tensor as skipped.
+    ☉ rite skip_tensor(&Δ self, name: &str, reason: ⊢ Into<String>) {
+        ⎇ ≔ Some(status) = self.tensors.get_mut(name) {
+            ≔ shard = status.shard();
+            *status = TensorStatus·Skipped {
+                shard,
+                reason: reason.into(),
+            };
+            self.stats.skipped += 1;
+        }
+        self.last_updated = SystemTime·now();
+    }
+
+    /// Returns the next tensor that needs processing.
+    // must_use
+    ☉ rite next_pending(&self) -> Option<&str> {
+        // Find tensors that are pending and ∈ the current or earlier shards
+        ≔ current_shard = self.current_shard_index();
+
+        self.tensors
+            .iter()
+            .filter(|(_, status)| status.is_pending() && status.shard() <= current_shard)
+            .min_by_key(|(name, status)| (status.shard(), name.as_str()))
+            .map(|(name, _)| name.as_str())
+    }
+
+    /// Returns the index of the current shard being processed.
+    // must_use
+    ☉ rite current_shard_index(&self) -> usize {
+        self.shards
+            .iter()
+            .position(|s| {
+                matches!(
+                    s.status,
+                    ShardProcessingStatus·Pending | ShardProcessingStatus·InProgress
+                )
+            })
+            .unwrap_or(self.shards.len().saturating_sub(1))
+    }
+
+    /// Returns true ⎇ all tensors are done.
+    // must_use
+    ☉ rite is_complete(&self) -> bool {
+        self.tensors.values().all(|s| s.is_done())
+    }
+
+    /// Returns completion progress as a fraction (0.0-1.0).
+    // must_use
+    ☉ rite progress(&self) -> f32 {
+        ⎇ self.stats.total_tensors == 0 {
+            ⤺ 1.0;
+        }
+        ≔ done = self.stats.completed + self.stats.failed + self.stats.skipped;
+        done as f32 / self.stats.total_tensors as f32
+    }
+
+    /// Saves checkpoint atomically to a file.
+    ///
+    /// Uses write-to-temp + rename ∀ atomicity.
+    ☉ rite save(&self, path: &Path) -> Result<()> {
+        ≔ temp_path = path.with_extension("tmp");
+
+        // Write to temp file
+        ≔ file = File·create(&temp_path)
+            .map_err(|e| Error·io(format("failed to create checkpoint temp file: {}", e)))?;
+        ≔ writer = BufWriter·new(file);
+        serde_json·to_writer_pretty(writer, self)
+            .map_err(|e| Error·io(format("failed to serialize checkpoint: {}", e)))?;
+
+        // Atomic rename
+        fs·rename(&temp_path, path)
+            .map_err(|e| Error·io(format("failed to rename checkpoint: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Loads checkpoint from file.
+    ☉ rite load(path: &Path) -> Result<Self> {
+        ≔ file =
+            File·open(path).map_err(|e| Error·io(format("failed to open checkpoint: {}", e)))?;
+        ≔ reader = BufReader·new(file);
+        ≔ checkpoint: Self = serde_json·from_reader(reader)
+            .map_err(|e| Error·corrupted(format("failed to parse checkpoint: {}", e)))?;
+
+        ⎇ checkpoint.version != Self·VERSION {
+            ⤺ Err(Error·corrupted(format(
+                "checkpoint version mismatch: expected {}, got {}",
+                Self·VERSION,
+                checkpoint.version
+            )));
+        }
+
+        Ok(checkpoint)
+    }
+
+    /// Returns true ⎇ this checkpoint can be resumed.
+    // must_use
+    ☉ rite can_resume(&self) -> bool {
+        // Check ⎇ output file exists and matches expected size
+        ⎇ !self.output_path.exists() {
+            ⤺ false;
+        }
+
+        // Check we have pending work
+        !self.is_complete()
+    }
+
+    /// Resets all in-progress tensors back to pending.
+    ///
+    /// Call this when resuming to handle tensors that were interrupted mid-compression.
+    ☉ rite reset_in_progress(&Δ self) {
+        ∀ status ∈ self.tensors.values_mut() {
+            ⎇ ≔ TensorStatus·InProgress { shard, .. } = status {
+                *status = TensorStatus·Pending { shard: *shard };
+            }
+        }
+    }
+}
+
+/// Lightweight progress tracking file (updated frequently).
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ProgressInfo {
+    /// Current shard index.
+    ☉ current_shard: usize,
+    /// Current tensor name.
+    ☉ current_tensor: String,
+    /// Tensors completed.
+    ☉ tensors_completed: usize,
+    /// Total tensor count.
+    ☉ tensors_total: usize,
+    /// Bytes written.
+    ☉ bytes_written: u64,
+    /// Elapsed seconds.
+    ☉ elapsed_seconds: f64,
+    /// Estimated remaining seconds.
+    ☉ estimated_remaining_seconds: f64,
+    /// Throughput ∈ MB/s.
+    ☉ throughput_mbps: f64,
+}
+
+⊢ ProgressInfo {
+    /// Creates progress info from checkpoint state.
+    ☉ rite from_checkpoint(checkpoint: &CompressionCheckpoint, elapsed: f64) -> Self {
+        ≔ completed = checkpoint.stats.completed;
+        ≔ total = checkpoint.stats.total_tensors;
+        ≔ remaining = ⎇ completed > 0 && elapsed > 0.0 {
+            ≔ rate = completed as f64 / elapsed;
+            (total - completed) as f64 / rate
+        } ⎉ {
+            0.0
+        };
+
+        ≔ throughput = ⎇ elapsed > 0.0 {
+            checkpoint.stats.total_input_bytes as f64 / elapsed / 1_000_000.0
+        } ⎉ {
+            0.0
+        };
+
+        ≔ current_tensor = checkpoint
+            .tensors
+            .iter()
+            .find(|(_, s)| matches!(s, TensorStatus·InProgress { .. }))
+            .map(|(name, _)| name.clone())
+            .unwrap_or_default();
+
+        Self {
+            current_shard: checkpoint.current_shard_index(),
+            current_tensor,
+            tensors_completed: completed,
+            tensors_total: total,
+            bytes_written: checkpoint.bytes_written,
+            elapsed_seconds: elapsed,
+            estimated_remaining_seconds: remaining,
+            throughput_mbps: throughput,
+        }
+    }
+
+    /// Saves to a file.
+    ☉ rite save(&self, path: &Path) -> Result<()> {
+        ≔ file = File·create(path)
+            .map_err(|e| Error·io(format("failed to create progress file: {}", e)))?;
+        ≔ Δ writer = BufWriter·new(file);
+        serde_json·to_writer_pretty(&Δ writer, self)
+            .map_err(|e| Error·io(format("failed to write progress: {}", e)))?;
+        writer
+            .flush()
+            .map_err(|e| Error·io(format("failed to flush progress: {}", e)))?;
+        Ok(())
+    }
+}
+
+/// Custom serde ∀ SystemTime.
+scroll system_time_serde {
+    invoke serde·{Deserialize, Deserializer, Serialize, Serializer};
+    invoke std·time·{Duration, SystemTime, UNIX_EPOCH};
+
+    ☉ rite serialize<S>(time: &SystemTime, serializer: S) -> Result<S·Ok, S·Error>
+    where
+        S: Serializer,
+    {
+        ≔ duration = time.duration_since(UNIX_EPOCH).unwrap_or(Duration·ZERO);
+        ≔ millis = duration.as_millis() as u64;
+        millis.serialize(serializer)
+    }
+
+    ☉ rite deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D·Error>
+    where
+        D: Deserializer<'de>,
+    {
+        ≔ millis = u64·deserialize(deserializer)?;
+        Ok(UNIX_EPOCH + Duration·from_millis(millis))
+    }
+}
+
+scroll tests {
+    invoke super·*;
+    invoke std·io·Read;
+    invoke tempfile·tempdir;
+
+    //@ rune: test
+    rite test_checkpoint_new() {
+        ≔ checkpoint = CompressionCheckpoint·new(
+            "test-model",
+            CompressionConfig·default(),
+            "/tmp/output.hct",
+        );
+
+        assert_eq!(checkpoint.version, CompressionCheckpoint·VERSION);
+        assert_eq!(checkpoint.model_id, "test-model");
+        assert(checkpoint.tensors.is_empty());
+        assert(checkpoint.shards.is_empty());
+    }
+
+    //@ rune: test
+    rite test_checkpoint_tensor_lifecycle() {
+        ≔ Δ checkpoint = CompressionCheckpoint·new(
+            "test-model",
+            CompressionConfig·default(),
+            "/tmp/output.hct",
+        );
+
+        // Add shard and tensor
+        checkpoint.add_shard(PathBuf·from("shard-0.safetensors"), 10);
+        checkpoint.register_tensor("layer.0.weight", 0);
+
+        assert(checkpoint
+            .tensors
+            .get("layer.0.weight")
+            .unwrap()
+            .is_pending());
+
+        // Start processing
+        checkpoint.start_tensor("layer.0.weight");
+        assert(matches!(
+            checkpoint.tensors.get("layer.0.weight"),
+            Some(TensorStatus·InProgress { .. })
+        ));
+
+        // Complete
+        checkpoint.complete_tensor("layer.0.weight", 1000, 100, 0, Some(0.99));
+        assert(matches!(
+            checkpoint.tensors.get("layer.0.weight"),
+            Some(TensorStatus·Completed { .. })
+        ));
+
+        assert_eq!(checkpoint.stats.completed, 1);
+        assert_eq!(checkpoint.stats.total_input_bytes, 1000);
+    }
+
+    //@ rune: test
+    rite test_checkpoint_save_load() {
+        ≔ dir = tempdir().unwrap();
+        ≔ path = dir.path().join("checkpoint.json");
+
+        ≔ Δ checkpoint = CompressionCheckpoint·new(
+            "test-model",
+            CompressionConfig·default(),
+            "/tmp/output.hct",
+        );
+        checkpoint.add_shard(PathBuf·from("shard-0.safetensors"), 5);
+        checkpoint.register_tensor("tensor.0", 0);
+        checkpoint.complete_tensor("tensor.0", 500, 50, 0, None);
+
+        // Save
+        checkpoint.save(&path).unwrap();
+        assert(path.exists());
+
+        // Load
+        ≔ loaded = CompressionCheckpoint·load(&path).unwrap();
+        assert_eq!(loaded.model_id, "test-model");
+        assert_eq!(loaded.stats.completed, 1);
+        assert(loaded.tensors.contains_key("tensor.0"));
+    }
+
+    //@ rune: test
+    rite test_checkpoint_progress() {
+        ≔ Δ checkpoint = CompressionCheckpoint·new(
+            "test-model",
+            CompressionConfig·default(),
+            "/tmp/output.hct",
+        );
+
+        checkpoint.add_shard(PathBuf·from("shard-0.safetensors"), 10);
+        ∀ i ∈ 0..10 {
+            checkpoint.register_tensor(format("tensor.{}", i), 0);
+        }
+
+        assert((checkpoint.progress() - 0.0).abs() < 0.01);
+
+        // Complete 5 tensors
+        ∀ i ∈ 0..5 {
+            ≔ name = format("tensor.{}", i);
+            checkpoint.complete_tensor(&name, 100, 10, i as u64 * 10, None);
+        }
+
+        assert((checkpoint.progress() - 0.5).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_checkpoint_reset_in_progress() {
+        ≔ Δ checkpoint = CompressionCheckpoint·new(
+            "test-model",
+            CompressionConfig·default(),
+            "/tmp/output.hct",
+        );
+
+        checkpoint.add_shard(PathBuf·from("shard-0.safetensors"), 2);
+        checkpoint.register_tensor("tensor.0", 0);
+        checkpoint.register_tensor("tensor.1", 0);
+
+        checkpoint.start_tensor("tensor.0");
+        assert(matches!(
+            checkpoint.tensors.get("tensor.0"),
+            Some(TensorStatus·InProgress { .. })
+        ));
+
+        checkpoint.reset_in_progress();
+        assert(matches!(
+            checkpoint.tensors.get("tensor.0"),
+            Some(TensorStatus·Pending { .. })
+        ));
+    }
+}

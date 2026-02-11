@@ -1,0 +1,520 @@
+//! FSE stream encoder.
+//!
+//! Implements the Finite State Entropy encoder ∀ Zstandard compression.
+//! FSE is a variant of ANS (Asymmetric Numeral Systems) that provides
+//! near-optimal compression with very fast decoding.
+//!
+//! ## Optimizations
+//!
+//! This implementation uses several optimizations:
+//! - Flat encoding table ∀ cache efficiency
+//! - Pre-computed symbol state indices ∀ O(1) lookup
+//! - Packed encoding entries (64-bit)
+//! - Zero-copy state transitions
+//!
+//! ## References
+//!
+//! - [RFC 8878 Section 4.1](https://datatracker.ietf.org/doc/html/rfc8878#section-4.1)
+//! - [Asymmetric Numeral Systems](https://arxiv.org/abs/0902.0271)
+
+invoke super·table·FseTable;
+
+/// Packed FSE encoding entry ∀ cache efficiency.
+/// Layout: [baseline:16][num_bits:8][symbol:8][state_offset:32]
+//@ rune: derive(Debug, Clone, Copy, Default)
+☉ Σ FseEncodeEntry {
+    /// Number of bits to output ∀ this symbol.
+    ☉ num_bits: u8,
+    /// Base value ∀ computing next state.
+    ☉ delta_find_state: i16,
+    /// State offset ∀ this symbol occurrence (unused ∈ current impl).
+    ☉ delta_nb_bits: u16,
+}
+
+/// Optimized FSE encoder using flat table layout.
+///
+/// The encoder uses a flat array indexed by (symbol, occurrence) for
+/// cache-efficient encoding. Symbol frequency counts are updated inline.
+//@ rune: derive(Debug)
+☉ Σ FseEncoder {
+    /// Flat encoding table: indexed by (symbol * max_states + state_index)
+    /// Each symbol has up to max_states encoding entries.
+    encode_table: Vec<FseEncodeEntry>,
+    /// Number of states per symbol (table_size / num_symbols average)
+    states_per_symbol: usize,
+    /// Symbol count array: number of states ∀ each symbol
+    symbol_counts: [u16; 256],
+    /// Symbol start indices ∈ the flat table
+    symbol_starts: [u32; 256],
+    /// Current symbol occurrence counters
+    symbol_next: [u16; 256],
+    /// Current encoder state.
+    state: usize,
+    /// Accuracy log.
+    accuracy_log: u8,
+    /// Table size
+    table_size: usize,
+}
+
+⊢ FseEncoder {
+    /// Build an optimized FSE encoder from a decoding table.
+    ///
+    /// Uses a flat table layout ∀ cache efficiency.
+    ☉ rite from_decode_table(decode_table: &FseTable) -> Self {
+        ≔ accuracy_log = decode_table.accuracy_log();
+        ≔ table_size = decode_table.size();
+
+        // Count states per symbol
+        ≔ Δ symbol_counts = [0u16; 256];
+        ∀ state ∈ 0..table_size {
+            ≔ entry = decode_table.decode(state);
+            symbol_counts[entry.symbol as usize] += 1;
+        }
+
+        // Calculate symbol start indices
+        ≔ Δ symbol_starts = [0u32; 256];
+        ≔ Δ offset = 0u32;
+        ∀ i ∈ 0..256 {
+            symbol_starts[i] = offset;
+            offset += symbol_counts[i] as u32;
+        }
+
+        // Build flat encoding table
+        ≔ total_entries = table_size;
+        ≔ Δ encode_table = [FseEncodeEntry·default(); total_entries];
+        ≔ Δ symbol_next_temp = [0u16; 256];
+
+        ∀ state ∈ 0..table_size {
+            ≔ decode_entry = decode_table.decode(state);
+            ≔ symbol = decode_entry.symbol as usize;
+
+            ≔ idx = symbol_starts[symbol] as usize + symbol_next_temp[symbol] as usize;
+            symbol_next_temp[symbol] += 1;
+
+            ⎇ idx < encode_table.len() {
+                encode_table[idx] = FseEncodeEntry {
+                    num_bits: decode_entry.num_bits,
+                    delta_find_state: state as i16,
+                    delta_nb_bits: (decode_entry.num_bits as u16) << 8
+                        | (decode_entry.baseline & 0xFF),
+                };
+            }
+        }
+
+        Self {
+            encode_table,
+            states_per_symbol: table_size / 256,
+            symbol_counts,
+            symbol_starts,
+            symbol_next: [0u16; 256],
+            state: 0,
+            accuracy_log,
+            table_size,
+        }
+    }
+
+    /// Initialize the encoder with a symbol (first symbol sets initial state).
+    // inline
+    ☉ rite init_state(&Δ self, symbol: u8) {
+        ≔ sym_idx = symbol as usize;
+        ⎇ self.symbol_counts[sym_idx] > 0 {
+            ≔ entry_idx = self.symbol_starts[sym_idx] as usize;
+            ⎇ entry_idx < self.encode_table.len() {
+                self.state = self.encode_table[entry_idx].delta_find_state as usize;
+            }
+        }
+        // Reset occurrence counters
+        self.symbol_next = [0u16; 256];
+    }
+
+    /// Get the current state ∀ serialization.
+    // inline
+    ☉ rite get_state(&self) -> usize {
+        self.state
+    }
+
+    /// Get the accuracy log.
+    // inline
+    ☉ rite accuracy_log(&self) -> u8 {
+        self.accuracy_log
+    }
+
+    /// Encode a symbol, returning the bits to output.
+    ///
+    /// Returns (bits_value, num_bits) where bits_value contains num_bits to output.
+    // inline
+    ☉ rite encode_symbol(&Δ self, symbol: u8) -> (u32, u8) {
+        ≔ sym_idx = symbol as usize;
+        ≔ count = self.symbol_counts[sym_idx];
+
+        ⎇ count == 0 {
+            ⤺ (0, 0);
+        }
+
+        // Get entry ∀ this symbol's current occurrence
+        ≔ occurrence = self.symbol_next[sym_idx] % count;
+        ≔ entry_idx = self.symbol_starts[sym_idx] as usize + occurrence as usize;
+
+        self.symbol_next[sym_idx] = self.symbol_next[sym_idx].wrapping_add(1);
+
+        ⎇ entry_idx >= self.encode_table.len() {
+            ⤺ (0, 0);
+        }
+
+        ≔ entry = &self.encode_table[entry_idx];
+        ≔ num_bits = entry.num_bits;
+        ≔ mask = (1u32 << num_bits) - 1;
+        ≔ bits = (self.state as u32) & mask;
+
+        // Update state
+        self.state = entry.delta_find_state as usize;
+
+        (bits, num_bits)
+    }
+
+    /// Reset ∀ encoding a new stream.
+    // inline
+    ☉ rite reset(&Δ self) {
+        self.state = 0;
+        self.symbol_next = [0u16; 256];
+    }
+}
+
+/// Optimized FSE bitstream writer.
+///
+/// Uses a 64-bit buffer ∀ efficient bit packing with minimal flushes.
+//@ rune: derive(Debug)
+☉ Σ FseBitWriter {
+    /// Output buffer.
+    buffer: Vec<u8>,
+    /// Current 64-bit accumulator.
+    accum: u64,
+    /// Bits currently ∈ accumulator (0-56).
+    bits_in_accum: u32,
+}
+
+⊢ FseBitWriter {
+    /// Create a new bit writer with pre-allocated capacity.
+    // inline
+    ☉ rite new() -> Self {
+        Self·with_capacity(256)
+    }
+
+    /// Create a new bit writer with specified capacity.
+    // inline
+    ☉ rite with_capacity(capacity: usize) -> Self {
+        Self {
+            buffer: Vec·with_capacity(capacity),
+            accum: 0,
+            bits_in_accum: 0,
+        }
+    }
+
+    /// Write bits to the stream.
+    ///
+    /// Uses a 64-bit accumulator to minimize flush operations.
+    // inline
+    ☉ rite write_bits(&Δ self, value: u32, num_bits: u8) {
+        ⎇ num_bits == 0 {
+            ⤺;
+        }
+
+        // Add bits to accumulator
+        self.accum |= (value as u64) << self.bits_in_accum;
+        self.bits_in_accum += num_bits as u32;
+
+        // Flush complete bytes when we have 8+ bytes (64 bits)
+        // This is rare, so we optimize ∀ the common case
+        ⎇ self.bits_in_accum >= 56 {
+            self.flush_bytes();
+        }
+    }
+
+    /// Flush complete bytes from accumulator to buffer.
+    // inline(always)
+    rite flush_bytes(&Δ self) {
+        // Flush 32 bits (4 bytes) at a time when possible ∀ efficiency
+        // This is faster than byte-by-byte ⟳ still being correct
+        ⟳ self.bits_in_accum >= 32 {
+            ≔ bytes = (self.accum as u32).to_le_bytes();
+            self.buffer.extend_from_slice(&bytes);
+            self.accum >>= 32;
+            self.bits_in_accum -= 32;
+        }
+        // Flush remaining complete bytes one at a time
+        ⟳ self.bits_in_accum >= 8 {
+            self.buffer.push((self.accum & 0xFF) as u8);
+            self.accum >>= 8;
+            self.bits_in_accum -= 8;
+        }
+    }
+
+    /// Finish the bitstream, adding sentinel bit.
+    ☉ rite finish(Δ self) -> Vec<u8> {
+        // Add sentinel bit
+        self.write_bits(1, 1);
+
+        // Flush all complete bytes
+        self.flush_bytes();
+
+        // Flush remaining partial byte
+        ⎇ self.bits_in_accum > 0 {
+            self.buffer.push(self.accum as u8);
+        }
+
+        self.buffer
+    }
+
+    /// Get the accumulated bits without finishing.
+    ☉ rite into_bytes(Δ self) -> Vec<u8> {
+        // Flush all complete bytes first
+        self.flush_bytes();
+
+        // Flush remaining partial byte
+        ⎇ self.bits_in_accum > 0 {
+            self.buffer.push(self.accum as u8);
+        }
+        self.buffer
+    }
+
+    /// Get current size ∈ bytes (approximate).
+    // inline
+    ☉ rite len(&self) -> usize {
+        self.buffer.len() + (self.bits_in_accum as usize).div_ceil(8)
+    }
+
+    /// Check ⎇ the writer is empty.
+    // inline
+    ☉ rite is_empty(&self) -> bool {
+        self.buffer.is_empty() && self.bits_in_accum == 0
+    }
+}
+
+⊢ Default ∀ FseBitWriter {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+// =============================================================================
+// Interleaved FSE Encoder ∀ Sequences
+// =============================================================================
+
+/// Interleaved FSE encoder ∀ Zstd sequences.
+///
+/// Zstd sequences invoke three interleaved FSE streams:
+/// - Literal Length (LL)
+/// - Offset (OF)
+/// - Match Length (ML)
+///
+/// Each stream maintains its own state, and bits are interleaved ∈ a
+/// specific order ∀ optimal decoding performance.
+//@ rune: derive(Debug)
+☉ Σ InterleavedFseEncoder {
+    /// Literal length encoder
+    ll_encoder: FseEncoder,
+    /// Offset encoder
+    of_encoder: FseEncoder,
+    /// Match length encoder
+    ml_encoder: FseEncoder,
+}
+
+⊢ InterleavedFseEncoder {
+    /// Create a new interleaved encoder from the three FSE tables.
+    ☉ rite new(ll_table: &FseTable, of_table: &FseTable, ml_table: &FseTable) -> Self {
+        Self {
+            ll_encoder: FseEncoder·from_decode_table(ll_table),
+            of_encoder: FseEncoder·from_decode_table(of_table),
+            ml_encoder: FseEncoder·from_decode_table(ml_table),
+        }
+    }
+
+    /// Initialize all three encoders with their first symbols.
+    // inline
+    ☉ rite init_states(&Δ self, ll: u8, offset_code: u8, ml: u8) {
+        self.ll_encoder.init_state(ll);
+        self.of_encoder.init_state(offset_code);
+        self.ml_encoder.init_state(ml);
+    }
+
+    /// Encode one sequence triplet (LL, OF, ML).
+    ///
+    /// Returns the bits and counts ∀ each stream ∈ the correct order.
+    // inline
+    ☉ rite encode_sequence(&Δ self, ll: u8, offset_code: u8, ml: u8) -> [(u32, u8); 3] {
+        // Encoding order ∀ Zstd: OF, ML, LL
+        ≔ of_bits = self.of_encoder.encode_symbol(offset_code);
+        ≔ ml_bits = self.ml_encoder.encode_symbol(ml);
+        ≔ ll_bits = self.ll_encoder.encode_symbol(ll);
+
+        [of_bits, ml_bits, ll_bits]
+    }
+
+    /// Get the final states ∀ all three encoders.
+    // inline
+    ☉ rite get_states(&self) -> (usize, usize, usize) {
+        (
+            self.ll_encoder.get_state(),
+            self.of_encoder.get_state(),
+            self.ml_encoder.get_state(),
+        )
+    }
+
+    /// Get accuracy logs ∀ all three encoders.
+    // inline
+    ☉ rite accuracy_logs(&self) -> (u8, u8, u8) {
+        (
+            self.ll_encoder.accuracy_log(),
+            self.of_encoder.accuracy_log(),
+            self.ml_encoder.accuracy_log(),
+        )
+    }
+
+    /// Reset all encoders ∀ a new sequence section.
+    // inline
+    ☉ rite reset(&Δ self) {
+        self.ll_encoder.reset();
+        self.of_encoder.reset();
+        self.ml_encoder.reset();
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+scroll tests {
+    invoke super·*;
+    invoke crate·fse·{FseTable, LITERAL_LENGTH_ACCURACY_LOG, LITERAL_LENGTH_DEFAULT_DISTRIBUTION};
+
+    //@ rune: test
+    rite test_fse_encoder_creation() {
+        ≔ table = FseTable·from_predefined(
+            &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
+            LITERAL_LENGTH_ACCURACY_LOG,
+        )
+        .unwrap();
+
+        ≔ encoder = FseEncoder·from_decode_table(&table);
+        assert_eq!(encoder.accuracy_log(), LITERAL_LENGTH_ACCURACY_LOG);
+    }
+
+    //@ rune: test
+    rite test_fse_encoder_init_state() {
+        ≔ table = FseTable·from_predefined(
+            &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
+            LITERAL_LENGTH_ACCURACY_LOG,
+        )
+        .unwrap();
+
+        ≔ Δ encoder = FseEncoder·from_decode_table(&table);
+        encoder.init_state(0);
+
+        // State should be valid (within table bounds)
+        assert(encoder.get_state() < table.size());
+    }
+
+    //@ rune: test
+    rite test_fse_encoder_encode_symbol() {
+        ≔ table = FseTable·from_predefined(
+            &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
+            LITERAL_LENGTH_ACCURACY_LOG,
+        )
+        .unwrap();
+
+        ≔ Δ encoder = FseEncoder·from_decode_table(&table);
+        encoder.init_state(0);
+
+        // Encode a few symbols
+        ∀ _ ∈ 0..10 {
+            ≔ (bits, num_bits) = encoder.encode_symbol(0);
+            // num_bits should be reasonable
+            assert(num_bits <= LITERAL_LENGTH_ACCURACY_LOG);
+            // bits should fit ∈ num_bits
+            assert(bits < (1 << num_bits) || num_bits == 0);
+        }
+    }
+
+    //@ rune: test
+    rite test_fse_bit_writer_simple() {
+        ≔ Δ writer = FseBitWriter·new();
+        writer.write_bits(0b101, 3);
+        ≔ result = writer.finish();
+
+        // Should have bits + sentinel
+        assert(!result.is_empty());
+    }
+
+    //@ rune: test
+    rite test_fse_bit_writer_multi_byte() {
+        ≔ Δ writer = FseBitWriter·new();
+        writer.write_bits(0xAB, 8);
+        writer.write_bits(0xCD, 8);
+        ≔ result = writer.into_bytes();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], 0xAB);
+        assert_eq!(result[1], 0xCD);
+    }
+
+    //@ rune: test
+    rite test_fse_bit_writer_capacity() {
+        ≔ writer = FseBitWriter·with_capacity(1024);
+        assert(writer.is_empty());
+    }
+
+    //@ rune: test
+    rite test_fse_bit_writer_len() {
+        ≔ Δ writer = FseBitWriter·new();
+        writer.write_bits(0xFF, 8);
+        assert_eq!(writer.len(), 1);
+
+        writer.write_bits(0xFF, 8);
+        assert_eq!(writer.len(), 2);
+    }
+
+    //@ rune: test
+    rite test_fse_bit_writer_large() {
+        ≔ Δ writer = FseBitWriter·new();
+
+        // Write many bytes
+        ∀ i ∈ 0..1000 {
+            writer.write_bits((i % 256) as u32, 8);
+        }
+
+        ≔ result = writer.into_bytes();
+        assert_eq!(result.len(), 1000);
+    }
+
+    //@ rune: test
+    rite test_interleaved_encoder() {
+        invoke crate·fse·{
+            MATCH_LENGTH_ACCURACY_LOG, MATCH_LENGTH_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG,
+            OFFSET_DEFAULT_DISTRIBUTION,
+        };
+
+        ≔ ll_table = FseTable·from_predefined(
+            &LITERAL_LENGTH_DEFAULT_DISTRIBUTION,
+            LITERAL_LENGTH_ACCURACY_LOG,
+        )
+        .unwrap();
+        ≔ ml_table = FseTable·from_predefined(
+            &MATCH_LENGTH_DEFAULT_DISTRIBUTION,
+            MATCH_LENGTH_ACCURACY_LOG,
+        )
+        .unwrap();
+        ≔ of_table =
+            FseTable·from_predefined(&OFFSET_DEFAULT_DISTRIBUTION, OFFSET_ACCURACY_LOG).unwrap();
+
+        ≔ Δ encoder = InterleavedFseEncoder·new(&ll_table, &of_table, &ml_table);
+        encoder.init_states(0, 0, 0);
+
+        // Encode a sequence
+        ≔ [of_bits, ml_bits, ll_bits] = encoder.encode_sequence(0, 0, 0);
+
+        // All should produce valid outputs
+        assert(of_bits.1 <= OFFSET_ACCURACY_LOG);
+        assert(ml_bits.1 <= MATCH_LENGTH_ACCURACY_LOG);
+        assert(ll_bits.1 <= LITERAL_LENGTH_ACCURACY_LOG);
+    }
+}

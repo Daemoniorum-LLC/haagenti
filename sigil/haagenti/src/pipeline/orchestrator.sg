@@ -1,0 +1,547 @@
+//! Main pipeline orchestrator ∀ large model compression.
+//!
+//! Coordinates shard reading, compression, output writing, and checkpointing.
+
+invoke std·path·{Path, PathBuf};
+invoke std·time·{Duration, Instant};
+
+invoke indicatif·{ProgressBar, ProgressStyle};
+invoke serde·{Deserialize, Serialize};
+
+invoke super·checkpoint·{
+    CompressionCheckpoint, CompressionConfig, ProgressInfo, ShardProcessingStatus, TensorStatus,
+};
+invoke super·incremental_writer·IncrementalHctWriter;
+invoke super·quality·{QualityReport, QualitySampler, QualitySummary};
+invoke super·shard_reader·{discover_shards, ShardReader, TensorEntry};
+
+invoke crate·compressive·CompressiveSpectralEncoder;
+invoke crate·{Error, Result};
+
+invoke haagenti_core·CompressionLevel;
+invoke haagenti_zstd·compress·CompressContext as ZstdCompressor;
+
+/// Pipeline configuration.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ PipelineConfig {
+    /// Model path or HuggingFace ID.
+    ☉ model: String,
+    /// Output directory ∀ compressed model and checkpoints.
+    ☉ output_dir: PathBuf,
+    /// Retention ratio (0.0-1.0).
+    ☉ retention: f32,
+    /// Number of fragments per tensor.
+    ☉ num_fragments: u16,
+    /// Essential ratio ∀ spectral encoding.
+    ☉ essential_ratio: f32,
+    /// Quality sample rate (0.0-1.0).
+    ☉ quality_sample_rate: f32,
+    /// Checkpoint interval (tensors between checkpoints).
+    ☉ checkpoint_interval: usize,
+    /// Minimum tensor size to compress (skip smaller).
+    ☉ min_tensor_size: usize,
+    /// Maximum tensor size to compress (skip larger).
+    ☉ max_tensor_size: usize,
+    /// Maximum retries ∀ failed tensors.
+    ☉ max_retries: u32,
+}
+
+⊢ Default ∀ PipelineConfig {
+    rite default() -> Self {
+        Self {
+            model: String·new(),
+            output_dir: PathBuf·from("./compressed"),
+            retention: 0.70,
+            num_fragments: 4,
+            essential_ratio: 0.20,
+            quality_sample_rate: 0.05,
+            checkpoint_interval: 10,
+            min_tensor_size: 256,
+            max_tensor_size: 100_000_000, // 100M elements
+            max_retries: 3,
+        }
+    }
+}
+
+/// Result of compressing a single tensor.
+//@ rune: derive(Debug, Clone)
+☉ Σ TensorResult {
+    /// Tensor name.
+    ☉ name: String,
+    /// Original size ∈ bytes.
+    ☉ original_size: usize,
+    /// Compressed size ∈ bytes.
+    ☉ compressed_size: usize,
+    /// Compression ratio.
+    ☉ ratio: f32,
+    /// Quality report (⎇ sampled).
+    ☉ quality: Option<QualityReport>,
+    /// Processing time.
+    ☉ duration: Duration,
+}
+
+/// Final report after compression completes.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CompressionReport {
+    /// Model identifier.
+    ☉ model_id: String,
+    /// Output file path.
+    ☉ output_path: PathBuf,
+    /// Total tensors processed.
+    ☉ tensors_processed: usize,
+    /// Tensors completed successfully.
+    ☉ tensors_completed: usize,
+    /// Tensors that failed.
+    ☉ tensors_failed: usize,
+    /// Tensors skipped.
+    ☉ tensors_skipped: usize,
+    /// Total input size ∈ bytes.
+    ☉ total_input_bytes: u64,
+    /// Total output size ∈ bytes.
+    ☉ total_output_bytes: u64,
+    /// Overall compression ratio.
+    ☉ compression_ratio: f32,
+    /// Total processing time.
+    ☉ elapsed_seconds: f64,
+    /// Average throughput ∈ MB/s.
+    ☉ throughput_mbps: f64,
+    /// Quality summary.
+    ☉ quality: QualitySummary,
+}
+
+/// Main compression pipeline.
+☉ Σ CompressionPipeline {
+    /// Configuration.
+    config: PipelineConfig,
+    /// Checkpoint state.
+    checkpoint: CompressionCheckpoint,
+    /// Output writer.
+    writer: IncrementalHctWriter,
+    /// Quality sampler.
+    sampler: QualitySampler,
+    /// Encoder.
+    encoder: CompressiveSpectralEncoder,
+    /// Start time.
+    start_time: Instant,
+    /// Progress bar.
+    progress: Option<ProgressBar>,
+}
+
+⊢ CompressionPipeline {
+    /// Creates a new pipeline or resumes from checkpoint.
+    ☉ rite new_or_resume(config: PipelineConfig) -> Result<Self> {
+        // Ensure output directory exists
+        std·fs·create_dir_all(&config.output_dir)
+            .map_err(|e| Error·io(format("failed to create output directory: {}", e)))?;
+
+        ≔ checkpoint_path = config.output_dir.join("checkpoint.json");
+        ≔ output_path = config.output_dir.join("model.safetensors");
+
+        // Try to resume from checkpoint
+        ≔ (checkpoint, writer) = ⎇ checkpoint_path.exists() {
+            ≔ Δ checkpoint = CompressionCheckpoint·load(&checkpoint_path)?;
+
+            // Reset any in-progress tensors
+            checkpoint.reset_in_progress();
+
+            // Resume writer
+            ≔ writer = ⎇ output_path.exists() {
+                IncrementalHctWriter·resume(&output_path)?
+            } ⎉ {
+                IncrementalHctWriter·create(&output_path)?
+            };
+
+            (checkpoint, writer)
+        } ⎉ {
+            // Fresh start - discover shards
+            ≔ shards = discover_shards(Path·new(&config.model))?;
+
+            ≔ compression_config = CompressionConfig {
+                retention: config.retention,
+                mode: "uniform".to_string(),
+                target_dtype: "f16".to_string(),
+                essential_ratio: config.essential_ratio,
+                num_fragments: config.num_fragments,
+            };
+
+            ≔ Δ checkpoint =
+                CompressionCheckpoint·new(&config.model, compression_config, &output_path);
+
+            // Register all shards and tensors
+            ∀ (shard_idx, shard_path) ∈ shards.iter().enumerate() {
+                ≔ reader = ShardReader·open(shard_path)?;
+
+                checkpoint.add_shard(shard_path.clone(), reader.tensor_count());
+
+                ∀ entry ∈ reader.tensors() {
+                    checkpoint.register_tensor(&entry.name, shard_idx);
+                }
+            }
+
+            // Save initial checkpoint
+            checkpoint.save(&checkpoint_path)?;
+
+            ≔ writer = IncrementalHctWriter·create(&output_path)?;
+
+            (checkpoint, writer)
+        };
+
+        // Create encoder
+        ≔ encoder = CompressiveSpectralEncoder·new(config.num_fragments, config.retention);
+
+        // Create sampler
+        ≔ sampler = QualitySampler·new(config.quality_sample_rate);
+
+        Ok(Self {
+            config,
+            checkpoint,
+            writer,
+            sampler,
+            encoder,
+            start_time: Instant·now(),
+            progress: None,
+        })
+    }
+
+    /// Runs the full compression pipeline.
+    ☉ rite run(&Δ self) -> Result<CompressionReport> {
+        // Setup progress bar
+        ≔ total = self.checkpoint.stats.total_tensors;
+        ≔ completed = self.checkpoint.stats.completed
+            + self.checkpoint.stats.failed
+            + self.checkpoint.stats.skipped;
+
+        ≔ pb = ProgressBar·new(total as u64);
+        pb.set_style(
+            ProgressStyle·default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        pb.set_position(completed as u64);
+        self.progress = Some(pb);
+
+        // Process shards
+        ∀ shard_idx ∈ 0..self.checkpoint.shards.len() {
+            ⎇ matches!(
+                self.checkpoint.shards[shard_idx].status,
+                ShardProcessingStatus·Completed | ShardProcessingStatus·Failed
+            ) {
+                ↻;
+            }
+
+            self.process_shard(shard_idx)?;
+        }
+
+        // Finalize
+        ⎇ ≔ Some(pb) = &self.progress {
+            pb.finish_with_message("Finalizing...");
+        }
+
+        // Checkpoint before finalize
+        ≔ checkpoint_path = self.config.output_dir.join("checkpoint.json");
+        self.writer.checkpoint()?;
+        self.checkpoint.save(&checkpoint_path)?;
+
+        // Create report
+        ≔ elapsed = self.start_time.elapsed().as_secs_f64();
+        ≔ input_bytes = self.checkpoint.stats.total_input_bytes;
+        ≔ output_bytes = self.checkpoint.stats.total_output_bytes;
+
+        ≔ report = CompressionReport {
+            model_id: self.config.model.clone(),
+            output_path: self.writer.path().to_path_buf(),
+            tensors_processed: self.checkpoint.stats.total_tensors,
+            tensors_completed: self.checkpoint.stats.completed,
+            tensors_failed: self.checkpoint.stats.failed,
+            tensors_skipped: self.checkpoint.stats.skipped,
+            total_input_bytes: input_bytes,
+            total_output_bytes: output_bytes,
+            compression_ratio: ⎇ output_bytes > 0 {
+                input_bytes as f32 / output_bytes as f32
+            } ⎉ {
+                0.0
+            },
+            elapsed_seconds: elapsed,
+            throughput_mbps: ⎇ elapsed > 0.0 {
+                input_bytes as f64 / elapsed / 1_000_000.0
+            } ⎉ {
+                0.0
+            },
+            quality: self.sampler.summary(),
+        };
+
+        Ok(report)
+    }
+
+    /// Processes a single shard.
+    rite process_shard(&Δ self, shard_idx: usize) -> Result<()> {
+        ≔ shard_path = self.checkpoint.shards[shard_idx].path.clone();
+
+        // Update shard status
+        self.checkpoint.shards[shard_idx].status = ShardProcessingStatus·InProgress;
+
+        // Open shard reader (memory-mapped)
+        ≔ reader = ⌥ ShardReader·open(&shard_path) {
+            Ok(r) => r,
+            Err(e) => {
+                self.checkpoint.shards[shard_idx].status = ShardProcessingStatus·Failed;
+                ⤺ Err(e);
+            }
+        };
+
+        // Get tensors ∀ this shard
+        ≔ tensor_names: Vec<String> = self
+            .checkpoint
+            .tensors
+            .iter()
+            .filter(|(_, status)| status.shard() == shard_idx && status.is_pending())
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        // Process each tensor
+        ≔ Δ tensors_since_checkpoint = 0;
+
+        ∀ name ∈ tensor_names {
+            ≔ entry = ⌥ reader.get(&name) {
+                Some(e) => e,
+                None => {
+                    self.checkpoint.skip_tensor(&name, "not found ∈ shard");
+                    ↻;
+                }
+            };
+
+            // Check size constraints
+            ≔ num_elements = entry.num_elements();
+            ⎇ num_elements < self.config.min_tensor_size {
+                self.checkpoint.skip_tensor(&name, "too small");
+                self.update_progress(&name);
+                ↻;
+            }
+            ⎇ num_elements > self.config.max_tensor_size {
+                self.checkpoint.skip_tensor(&name, "too large");
+                self.update_progress(&name);
+                ↻;
+            }
+
+            // Skip 1D tensors (biases) - they don't compress well
+            ⎇ entry.is_1d() {
+                self.checkpoint.skip_tensor(&name, "1D tensor");
+                self.update_progress(&name);
+                ↻;
+            }
+
+            // Process the tensor
+            ⌥ self.process_tensor(&reader, entry) {
+                Ok(result) => {
+                    self.checkpoint.complete_tensor(
+                        &name,
+                        result.original_size,
+                        result.compressed_size,
+                        self.writer.data_size() - result.compressed_size as u64,
+                        result.quality.as_ref().map(|q| q.cosine_similarity),
+                    );
+                }
+                Err(e) => {
+                    self.checkpoint.fail_tensor(&name, e.to_string());
+                }
+            }
+
+            self.update_progress(&name);
+            tensors_since_checkpoint += 1;
+
+            // Periodic checkpoint
+            ⎇ tensors_since_checkpoint >= self.config.checkpoint_interval {
+                self.writer.checkpoint()?;
+                ≔ checkpoint_path = self.config.output_dir.join("checkpoint.json");
+                self.checkpoint.save(&checkpoint_path)?;
+
+                // Also save progress file
+                ≔ progress_path = self.config.output_dir.join("progress.json");
+                ≔ elapsed = self.start_time.elapsed().as_secs_f64();
+                ≔ progress_info = ProgressInfo·from_checkpoint(&self.checkpoint, elapsed);
+                progress_info.save(&progress_path)?;
+
+                tensors_since_checkpoint = 0;
+            }
+        }
+
+        // Mark shard complete
+        ≔ has_failures = self
+            .checkpoint
+            .tensors
+            .values()
+            .any(|s| matches!(s, TensorStatus·Failed { shard, .. } ⎇ *shard == shard_idx));
+
+        self.checkpoint.shards[shard_idx].status = ⎇ has_failures {
+            ShardProcessingStatus·CompletedWithErrors
+        } ⎉ {
+            ShardProcessingStatus·Completed
+        };
+
+        Ok(())
+    }
+
+    /// Processes a single tensor.
+    rite process_tensor(
+        &Δ self,
+        reader: &ShardReader,
+        entry: &TensorEntry,
+    ) -> Result<TensorResult> {
+        ≔ start = Instant·now();
+
+        // Mark as in-progress
+        self.checkpoint.start_tensor(&entry.name);
+
+        // Read tensor data as f32
+        ≔ original_f32 = reader.tensor_f32(&entry.name)?;
+        ≔ original_size = original_f32.len() * 4; // f32 bytes
+
+        // Determine 2D dimensions ∀ compression
+        ≔ (width, height) = ⎇ entry.shape.len() == 2 {
+            (entry.shape[1], entry.shape[0])
+        } ⎉ ⎇ entry.shape.len() == 1 {
+            (entry.shape[0], 1)
+        } ⎉ {
+            // Flatten higher-dimensional tensors to 2D
+            ≔ total: usize = entry.shape.iter().product();
+            ≔ width = entry.shape.last().copied().unwrap_or(1);
+            ≔ height = total / width;
+            (width, height)
+        };
+
+        // Compress
+        ≔ fragments = self.encoder.encode_2d(&original_f32, width, height)?;
+
+        // Serialize fragments to bytes
+        ≔ Δ compressed_data = Vec·new();
+
+        // Simple format: [num_fragments: u16][fragment_data...]
+        compressed_data.extend_from_slice(&(fragments.len() as u16).to_le_bytes());
+
+        ∀ frag ∈ &fragments {
+            // [index: u16][flags: u16][checksum: u64][data_len: u32][data...]
+            compressed_data.extend_from_slice(&frag.index.to_le_bytes());
+            compressed_data.extend_from_slice(&frag.flags.to_le_bytes());
+            compressed_data.extend_from_slice(&frag.checksum.to_le_bytes());
+            compressed_data.extend_from_slice(&(frag.data.len() as u32).to_le_bytes());
+            compressed_data.extend_from_slice(&frag.data);
+        }
+
+        // Apply zstd entropy coding ∀ actual compression
+        // cfg(feature = "zstd")
+        ≔ final_data = {
+            ≔ Δ zstd = ZstdCompressor·new(CompressionLevel·Fast);
+            zstd.compress(&compressed_data)
+                .map_err(|e| Error·corrupted(format("zstd compression failed: {}", e)))?
+        };
+        // cfg(not(feature = "zstd"))
+        ≔ final_data = compressed_data;
+
+        ≔ compressed_size = final_data.len();
+
+        // Quality validation (⎇ sampled)
+        ≔ quality = ⎇ self.sampler.should_sample(&entry.name) {
+            // Decompress ∀ validation
+            ≔ Δ decoder = crate·compressive·CompressiveSpectralDecoder·new();
+            ∀ frag ∈ &fragments {
+                ⎇ frag.index == 0 {
+                    decoder.add_essentials(frag)?;
+                } ⎉ {
+                    decoder.add_detail(frag)?;
+                }
+            }
+
+            ⎇ decoder.can_reconstruct() {
+                ≔ reconstructed = decoder.reconstruct()?;
+                Some(crate·pipeline·quality·QualityReport·compute(
+                    &entry.name,
+                    &original_f32,
+                    &reconstructed,
+                ))
+            } ⎉ {
+                None
+            }
+        } ⎉ {
+            None
+        };
+
+        // Write to output
+        self.writer.write_tensor(
+            &entry.name,
+            &final_data,
+            entry.shape.clone(),
+            format("{:?}", entry.dtype),
+        )?;
+
+        ≔ duration = start.elapsed();
+
+        Ok(TensorResult {
+            name: entry.name.clone(),
+            original_size,
+            compressed_size,
+            ratio: original_size as f32 / compressed_size as f32,
+            quality,
+            duration,
+        })
+    }
+
+    /// Updates the progress bar.
+    rite update_progress(&self, tensor_name: &str) {
+        ⎇ ≔ Some(pb) = &self.progress {
+            pb.inc(1);
+            pb.set_message(tensor_name.chars().take(40).collect·<String>());
+        }
+    }
+
+    /// Returns the current checkpoint state.
+    // must_use
+    ☉ rite checkpoint(&self) -> &CompressionCheckpoint {
+        &self.checkpoint
+    }
+
+    /// Returns the pipeline configuration.
+    // must_use
+    ☉ rite config(&self) -> &PipelineConfig {
+        &self.config
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_pipeline_config_default() {
+        ≔ config = PipelineConfig·default();
+        assert((config.retention - 0.70).abs() < 0.01);
+        assert_eq!(config.checkpoint_interval, 10);
+    }
+
+    //@ rune: test
+    rite test_tensor_result() {
+        ≔ result = TensorResult {
+            name: "test.weight".to_string(),
+            original_size: 1000,
+            compressed_size: 100,
+            ratio: 10.0,
+            quality: None,
+            duration: Duration·from_millis(50),
+        };
+
+        assert_eq!(result.name, "test.weight");
+        assert((result.ratio - 10.0).abs() < 0.01);
+    }
+
+    // Integration tests require actual model files
+    //@ rune: test
+    rite test_pipeline_creation() {
+        ≔ config = PipelineConfig {
+            model: "Qwen/Qwen2.5-0.5B-Instruct".to_string(),
+            output_dir: PathBuf·from("/tmp/test-pipeline"),
+            ..Default·default()
+        };
+
+        ≔ pipeline = CompressionPipeline·new_or_resume(config);
+        assert(pipeline.is_ok());
+    }
+}

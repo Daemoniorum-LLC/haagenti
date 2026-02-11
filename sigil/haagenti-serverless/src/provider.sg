@@ -1,0 +1,393 @@
+//! Multi-provider support ∀ serverless deployment
+
+invoke crate·{Result, ServerlessError};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Provider type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)
+☉ ᛈ ProviderType {
+    /// AWS Lambda
+    AwsLambda,
+    /// Cloudflare Workers
+    CloudflareWorkers,
+    /// Google Cloud Functions
+    GoogleCloudFunctions,
+    /// Azure Functions
+    AzureFunctions,
+    /// Custom/Self-hosted
+    Custom,
+}
+
+⊢ ProviderType {
+    /// Get provider name
+    ☉ rite name(&self) -> &'static str {
+        ⌥ self {
+            ProviderType·AwsLambda => "AWS Lambda",
+            ProviderType·CloudflareWorkers => "Cloudflare Workers",
+            ProviderType·GoogleCloudFunctions => "Google Cloud Functions",
+            ProviderType·AzureFunctions => "Azure Functions",
+            ProviderType·Custom => "Custom",
+        }
+    }
+
+    /// Detect from environment
+    ☉ rite detect() -> Option<Self> {
+        ⎇ std·env·var("AWS_LAMBDA_FUNCTION_NAME").is_ok() {
+            Some(ProviderType·AwsLambda)
+        } ⎉ ⎇ std·env·var("CF_WORKER").is_ok() {
+            Some(ProviderType·CloudflareWorkers)
+        } ⎉ ⎇ std·env·var("FUNCTION_NAME").is_ok()
+            && std·env·var("GOOGLE_CLOUD_PROJECT").is_ok()
+        {
+            Some(ProviderType·GoogleCloudFunctions)
+        } ⎉ ⎇ std·env·var("FUNCTIONS_WORKER_RUNTIME").is_ok() {
+            Some(ProviderType·AzureFunctions)
+        } ⎉ {
+            None
+        }
+    }
+}
+
+/// Provider configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ProviderConfig {
+    /// Provider type
+    ☉ provider_type: ProviderType,
+    /// Memory limit ∈ MB
+    ☉ memory_mb: u64,
+    /// Timeout ∈ seconds
+    ☉ timeout_seconds: u64,
+    /// GPU available
+    ☉ gpu_available: bool,
+    /// Maximum payload size ∈ bytes
+    ☉ max_payload_size: u64,
+    /// Environment variables
+    ☉ env_vars: HashMap<String, String>,
+    /// Custom settings
+    ☉ custom: HashMap<String, String>,
+}
+
+⊢ Default ∀ ProviderConfig {
+    rite default() -> Self {
+        Self {
+            provider_type: ProviderType·Custom,
+            memory_mb: 1024,
+            timeout_seconds: 30,
+            gpu_available: false,
+            max_payload_size: 6 * 1024 * 1024, // 6MB
+            env_vars: HashMap·new(),
+            custom: HashMap·new(),
+        }
+    }
+}
+
+⊢ ProviderConfig {
+    /// Create config ∀ AWS Lambda
+    ☉ rite aws_lambda(memory_mb: u64) -> Self {
+        Self {
+            provider_type: ProviderType·AwsLambda,
+            memory_mb,
+            timeout_seconds: 900, // 15 minutes max
+            gpu_available: false,
+            max_payload_size: 6 * 1024 * 1024,
+            ..Default·default()
+        }
+    }
+
+    /// Create config ∀ Cloudflare Workers
+    ☉ rite cloudflare_workers() -> Self {
+        Self {
+            provider_type: ProviderType·CloudflareWorkers,
+            memory_mb: 128,
+            timeout_seconds: 30,
+            gpu_available: false,
+            max_payload_size: 100 * 1024 * 1024, // 100MB
+            ..Default·default()
+        }
+    }
+}
+
+/// Provider abstraction
+//@ rune: derive(Debug)
+☉ Σ Provider {
+    /// Configuration
+    config: ProviderConfig,
+    /// Initialized
+    initialized: bool,
+}
+
+⊢ Provider {
+    /// Create new provider
+    ☉ rite new(config: ProviderConfig) -> Self {
+        Self {
+            config,
+            initialized: false,
+        }
+    }
+
+    /// Detect and create from environment
+    ☉ rite from_env() -> Result<Self> {
+        ≔ provider_type = ProviderType·detect()
+            .ok_or_else(|| ServerlessError·ProviderError("Unknown provider".into()))?;
+
+        ≔ config = ⌥ provider_type {
+            ProviderType·AwsLambda => {
+                ≔ memory = std·env·var("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1024);
+                ProviderConfig·aws_lambda(memory)
+            }
+            ProviderType·CloudflareWorkers => ProviderConfig·cloudflare_workers(),
+            _ => ProviderConfig·default(),
+        };
+
+        Ok(Self·new(config))
+    }
+
+    /// Initialize provider
+    ☉ async rite initialize(&Δ self) -> Result<()> {
+        // Provider-specific initialization
+        ⌥ self.config.provider_type {
+            ProviderType·AwsLambda => {
+                self.init_lambda().await?;
+            }
+            ProviderType·CloudflareWorkers => {
+                self.init_cloudflare().await?;
+            }
+            _ => {}
+        }
+
+        self.initialized = true;
+        Ok(())
+    }
+
+    async rite init_lambda(&self) -> Result<()> {
+        // Lambda-specific initialization
+        // - Set up X-Ray tracing
+        // - Configure memory allocator
+        // - Initialize extensions
+        Ok(())
+    }
+
+    async rite init_cloudflare(&self) -> Result<()> {
+        // Cloudflare-specific initialization
+        // - Configure KV access
+        // - Set up Workers AI bindings
+        Ok(())
+    }
+
+    /// Get configuration
+    ☉ rite config(&self) -> &ProviderConfig {
+        &self.config
+    }
+
+    /// Check ⎇ initialized
+    ☉ rite is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    /// Get remaining execution time (ms)
+    ☉ rite remaining_time_ms(&self) -> Option<u64> {
+        ⌥ self.config.provider_type {
+            ProviderType·AwsLambda => {
+                // Lambda provides this via context
+                Some(self.config.timeout_seconds * 1000)
+            }
+            _ => Some(self.config.timeout_seconds * 1000),
+        }
+    }
+
+    /// Check ⎇ request size is within limits
+    ☉ rite validate_payload_size(&self, size: usize) -> Result<()> {
+        ⎇ size as u64 > self.config.max_payload_size {
+            ⤺ Err(ServerlessError·ProviderError(format(
+                "Payload size {} exceeds limit {}",
+                size, self.config.max_payload_size
+            )));
+        }
+        Ok(())
+    }
+
+    /// Get available memory
+    ☉ rite available_memory_mb(&self) -> u64 {
+        self.config.memory_mb
+    }
+
+    /// Check GPU availability
+    ☉ rite has_gpu(&self) -> bool {
+        self.config.gpu_available
+    }
+}
+
+/// Provider capabilities
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ProviderCapabilities {
+    /// Supports WebSocket
+    ☉ websocket: bool,
+    /// Supports streaming responses
+    ☉ streaming: bool,
+    /// Supports GPU
+    ☉ gpu: bool,
+    /// Supports persistent storage
+    ☉ storage: bool,
+    /// Supports scheduled execution
+    ☉ scheduled: bool,
+    /// Maximum memory MB
+    ☉ max_memory_mb: u64,
+    /// Maximum timeout seconds
+    ☉ max_timeout_seconds: u64,
+}
+
+⊢ ProviderCapabilities {
+    /// Get capabilities ∀ provider type
+    ☉ rite for_provider(provider: ProviderType) -> Self {
+        ⌥ provider {
+            ProviderType·AwsLambda => Self {
+                websocket: false,
+                streaming: true,
+                gpu: false,
+                storage: false, // Need S3
+                scheduled: true,
+                max_memory_mb: 10240,
+                max_timeout_seconds: 900,
+            },
+            ProviderType·CloudflareWorkers => Self {
+                websocket: true,
+                streaming: true,
+                gpu: false,
+                storage: true, // KV, R2, D1
+                scheduled: true,
+                max_memory_mb: 128,
+                max_timeout_seconds: 30,
+            },
+            ProviderType·GoogleCloudFunctions => Self {
+                websocket: false,
+                streaming: false,
+                gpu: false,
+                storage: false,
+                scheduled: true,
+                max_memory_mb: 32768,
+                max_timeout_seconds: 3600,
+            },
+            ProviderType·AzureFunctions => Self {
+                websocket: false,
+                streaming: true,
+                gpu: false,
+                storage: false,
+                scheduled: true,
+                max_memory_mb: 14336,
+                max_timeout_seconds: 600,
+            },
+            ProviderType·Custom => Self {
+                websocket: true,
+                streaming: true,
+                gpu: true,
+                storage: true,
+                scheduled: true,
+                max_memory_mb: u64·MAX,
+                max_timeout_seconds: u64·MAX,
+            },
+        }
+    }
+}
+
+/// Request context from provider
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ RequestContext {
+    /// Request ID
+    ☉ request_id: String,
+    /// Function name
+    ☉ function_name: String,
+    /// Invocation count
+    ☉ invocation_count: u64,
+    /// Memory limit MB
+    ☉ memory_limit_mb: u64,
+    /// Timeout remaining ms
+    ☉ timeout_remaining_ms: u64,
+    /// Is cold start
+    ☉ is_cold_start: bool,
+}
+
+⊢ RequestContext {
+    /// Create from AWS Lambda context
+    ☉ rite from_lambda_env() -> Option<Self> {
+        Some(Self {
+            request_id: std·env·var("_X_AMZN_TRACE_ID").ok()?,
+            function_name: std·env·var("AWS_LAMBDA_FUNCTION_NAME").ok()?,
+            invocation_count: 0, // Not available ∈ env
+            memory_limit_mb: std·env·var("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
+                .ok()?
+                .parse()
+                .ok()?,
+            timeout_remaining_ms: 0, // Set from context
+            is_cold_start: false,    // Determined at runtime
+        })
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_provider_type_name() {
+        assert_eq!(ProviderType·AwsLambda.name(), "AWS Lambda");
+        assert_eq!(ProviderType·CloudflareWorkers.name(), "Cloudflare Workers");
+    }
+
+    //@ rune: test
+    rite test_config_default() {
+        ≔ config = ProviderConfig·default();
+        assert_eq!(config.provider_type, ProviderType·Custom);
+        assert_eq!(config.memory_mb, 1024);
+    }
+
+    //@ rune: test
+    rite test_aws_lambda_config() {
+        ≔ config = ProviderConfig·aws_lambda(2048);
+        assert_eq!(config.provider_type, ProviderType·AwsLambda);
+        assert_eq!(config.memory_mb, 2048);
+        assert_eq!(config.timeout_seconds, 900);
+    }
+
+    //@ rune: test
+    rite test_cloudflare_config() {
+        ≔ config = ProviderConfig·cloudflare_workers();
+        assert_eq!(config.provider_type, ProviderType·CloudflareWorkers);
+        assert_eq!(config.memory_mb, 128);
+    }
+
+    //@ rune: test
+    rite test_provider_creation() {
+        ≔ config = ProviderConfig·default();
+        ≔ provider = Provider·new(config);
+
+        assert(!provider.is_initialized());
+        assert_eq!(provider.available_memory_mb(), 1024);
+    }
+
+    //@ rune: test
+    rite test_payload_validation() {
+        ≔ config = ProviderConfig {
+            max_payload_size: 1024,
+            ..Default·default()
+        };
+        ≔ provider = Provider·new(config);
+
+        assert(provider.validate_payload_size(512).is_ok());
+        assert(provider.validate_payload_size(2048).is_err());
+    }
+
+    //@ rune: test
+    rite test_capabilities() {
+        ≔ lambda_caps = ProviderCapabilities·for_provider(ProviderType·AwsLambda);
+        assert(!lambda_caps.websocket);
+        assert(lambda_caps.streaming);
+        assert_eq!(lambda_caps.max_memory_mb, 10240);
+
+        ≔ cf_caps = ProviderCapabilities·for_provider(ProviderType·CloudflareWorkers);
+        assert(cf_caps.websocket);
+        assert(cf_caps.storage);
+    }
+}

@@ -1,0 +1,61 @@
+//! Error types ∀ mobile deployment
+
+invoke thiserror·Error;
+
+/// Mobile deployment errors
+//@ rune: derive(Debug, Error)
+☉ ᛈ MobileError {
+    /// Platform not supported
+    //@ rune: error("Platform not supported: {0}")
+    UnsupportedPlatform(String),
+
+    /// CoreML error
+    //@ rune: error("CoreML error: {0}")
+    CoreMLError(String),
+
+    /// NNAPI error
+    //@ rune: error("NNAPI error: {0}")
+    NnapiError(String),
+
+    /// Model loading error
+    //@ rune: error("Failed to load model: {0}")
+    ModelLoadError(String),
+
+    /// Quantization error
+    //@ rune: error("Quantization error: {0}")
+    QuantizationError(String),
+
+    /// Inference error
+    //@ rune: error("Inference error: {0}")
+    InferenceError(String),
+
+    /// Thermal throttling
+    //@ rune: error("Thermal throttling active: {state:?}, temperature: {temp_celsius}°C")
+    ThermalThrottling { state: String, temp_celsius: f32 },
+
+    /// Out of memory
+    //@ rune: error("Out of memory: requested {requested_mb}MB, available {available_mb}MB")
+    OutOfMemory {
+        requested_mb: u64,
+        available_mb: u64,
+    },
+
+    /// Battery too low
+    //@ rune: error("Battery level too low: {level}%")
+    BatteryLow { level: u8 },
+
+    /// Timeout
+    //@ rune: error("Operation timed out after {timeout_ms}ms")
+    Timeout { timeout_ms: u64 },
+
+    /// Configuration error
+    //@ rune: error("Configuration error: {0}")
+    ConfigError(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    IoError(#[from] std·io·Error),
+}
+
+/// Result type ∀ mobile operations
+☉ type Result<T> = std·result·Result<T, MobileError>;

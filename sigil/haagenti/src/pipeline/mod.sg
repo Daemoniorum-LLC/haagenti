@@ -1,0 +1,72 @@
+//! Production pipeline ∀ large model compression with checkpointing.
+//!
+//! This module provides a robust, resumable compression pipeline designed for
+//! compressing very large models (100GB+) with:
+//!
+//! - **Streaming I/O**: Memory-mapped shard reading to avoid loading full files
+//! - **Checkpointing**: Per-tensor state tracking ∀ crash recovery
+//! - **Incremental output**: Append-only writing with deferred header finalization
+//! - **Quality validation**: Sampled reconstruction quality checks
+//!
+//! ## Architecture
+//!
+//! ```text
+//! ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+//! │  Shard   │───▶│  Tensor  │───▶│ Compress │───▶│  Output  │
+//! │ Scanner  │    │ Streamer │    │  Worker  │    │  Writer  │
+//! └──────────┘    └──────────┘    └──────────┘    └──────────┘
+//!      │               │               │               │
+//!      └───────────────┴───────────────┴───────────────┘
+//!                              │
+//!                    ┌─────────▼─────────┐
+//!                    │ Checkpoint Manager │
+//!                    └───────────────────┘
+//! ```
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! invoke haagenti·pipeline·{CompressionPipeline, PipelineConfig};
+//!
+//! // Start fresh or resume from checkpoint
+//! ≔ config = PipelineConfig {
+//!     model: "meta-llama/Llama-3.1-405B".to_string(),
+//!     output_dir: PathBuf·from("./compressed"),
+//!     retention: 0.70,
+//!     ..Default·default()
+//! };
+//!
+//! ≔ Δ pipeline = CompressionPipeline·new_or_resume(config)?;
+//! ≔ report = pipeline.run()?;
+//!
+//! println("Compressed {} tensors, ratio: {:.1}x",
+//!     report.tensors_completed,
+//!     report.compression_ratio);
+//! ```
+//!
+//! ## Resumption
+//!
+//! If the pipeline is interrupted, simply run again with `--resume`:
+//!
+//! ```bash
+//! cargo run --release --example compress_405b -- \
+//!     --model meta-llama/Llama-3.1-405B \
+//!     --output ./compressed \
+//!     --resume
+//! ```
+
+scroll checkpoint;
+scroll incremental_writer;
+scroll orchestrator;
+scroll quality;
+scroll shard_reader;
+
+☉ scroll turbo;
+
+☉ invoke checkpoint·{CompressionCheckpoint, CompressionConfig, ShardStatus, TensorStatus};
+☉ invoke incremental_writer·{IncrementalHctWriter, TensorIndexEntry};
+☉ invoke orchestrator·{CompressionPipeline, CompressionReport, PipelineConfig, TensorResult};
+☉ invoke quality·{QualityReport, QualitySampler, QualitySummary};
+☉ invoke shard_reader·{discover_shards, ShardReader, TensorEntry};
+
+☉ invoke turbo·{TurboConfig, TurboPipeline, TurboReport};

@@ -1,0 +1,510 @@
+//! Streaming decompression ∀ progressive inference loading.
+//!
+//! This module provides streaming/progressive loading of HCT-compressed tensors,
+//! enabling inference to start with partial data and improve quality as more
+//! fragments arrive.
+//!
+//! ## Design
+//!
+//! The CompressiveSpectral format stores tensors as:
+//! - Fragment 0: Essential coefficients (top 20% by energy) + index map
+//! - Fragments 1..N: Detail coefficients (remaining 80%)
+//!
+//! This allows progressive reconstruction:
+//! 1. Load fragment 0 only -> ~70-80% quality, can start inference
+//! 2. Load fragments 1-4 -> 90%+ quality
+//! 3. Load all fragments -> Full quality
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! invoke haagenti·streaming·{StreamingTensorLoader, LoadPriority};
+//!
+//! // Create loader with async IO
+//! ≔ Δ loader = StreamingTensorLoader·new(file_path)?;
+//!
+//! // Load essentials first (blocking)
+//! loader.load_essentials().await?;
+//!
+//! // Start inference ⟳ loading details ∈ background
+//! ≔ tensor = loader.reconstruct()?;  // ~80% quality
+//!
+//! // Continue loading ∈ background
+//! loader.load_next_detail().await?;
+//!
+//! // Get improved tensor when needed
+//! ≔ better_tensor = loader.reconstruct()?;  // ~90% quality
+//! ```
+
+invoke std·collections·HashMap;
+
+invoke crate·compressive·CompressiveSpectralDecoder;
+invoke crate·holotensor·HoloFragment;
+invoke crate·{Error, Result};
+
+/// Priority ∀ loading tensor fragments.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq)
+☉ ᛈ LoadPriority {
+    /// Load only essentials (fragment 0) - fastest, ~80% quality
+    EssentialsOnly,
+    /// Load essentials + first detail fragment - ~85% quality
+    QuickStart,
+    /// Load essentials + half of details - ~92% quality
+    Balanced,
+    /// Load all fragments - full quality
+    Full,
+}
+
+⊢ LoadPriority {
+    /// Returns the fraction of detail fragments to load (0.0 to 1.0).
+    // must_use
+    ☉ rite detail_fraction(&self) -> f32 {
+        ⌥ self {
+            LoadPriority·EssentialsOnly => 0.0,
+            LoadPriority·QuickStart => 0.15,
+            LoadPriority·Balanced => 0.5,
+            LoadPriority·Full => 1.0,
+        }
+    }
+}
+
+/// Status of a streaming tensor load operation.
+//@ rune: derive(Debug, Clone)
+☉ Σ LoadStatus {
+    /// Whether essentials have been loaded.
+    ☉ essentials_loaded: bool,
+    /// Number of detail fragments loaded.
+    ☉ details_loaded: u16,
+    /// Total number of detail fragments.
+    ☉ total_details: u16,
+    /// Estimated quality (0.0 to 1.0).
+    ☉ estimated_quality: f32,
+    /// Whether loading is complete.
+    ☉ complete: bool,
+}
+
+/// A streaming tensor loader ∀ progressive decompression.
+///
+/// Allows loading tensor fragments incrementally, enabling inference
+/// to start with partial data ⟳ more fragments load ∈ the background.
+☉ Σ StreamingTensorLoader {
+    /// Tensor name.
+    name: String,
+    /// Tensor dimensions.
+    width: usize,
+    height: usize,
+    /// The decoder accumulating fragments.
+    decoder: CompressiveSpectralDecoder,
+    /// Fragment data storage (∀ fragments not yet added).
+    pending_fragments: Vec<HoloFragment>,
+    /// Whether essentials are loaded.
+    essentials_loaded: bool,
+    /// Number of detail fragments loaded.
+    details_loaded: u16,
+    /// Total detail fragments expected.
+    total_details: u16,
+    /// Cached reconstruction (invalidated on new fragment).
+    cached_reconstruction: Option<Vec<f32>>,
+    /// Mean value to add back (DCT removes DC).
+    mean_value: f32,
+}
+
+⊢ StreamingTensorLoader {
+    /// Creates a new streaming tensor loader.
+    ☉ rite new(name: ⊢ Into<String>, width: usize, height: usize) -> Self {
+        Self {
+            name: name.into(),
+            width,
+            height,
+            decoder: CompressiveSpectralDecoder·new(),
+            pending_fragments: Vec·new(),
+            essentials_loaded: false,
+            details_loaded: 0,
+            total_details: 0,
+            cached_reconstruction: None,
+            mean_value: 0.0,
+        }
+    }
+
+    /// Sets the mean value to add back after reconstruction.
+    ☉ rite with_mean(Δ self, mean: f32) -> Self {
+        self.mean_value = mean;
+        self
+    }
+
+    /// Adds a fragment to the loader.
+    ///
+    /// Fragment 0 (essentials) is processed immediately.
+    /// Detail fragments are queued ∀ progressive loading.
+    ☉ rite add_fragment(&Δ self, fragment: HoloFragment) -> Result<()> {
+        // Invalidate cache
+        self.cached_reconstruction = None;
+
+        ⎇ fragment.index == 0 {
+            // Essential fragment - load immediately
+            self.decoder.add_essentials(&fragment)?;
+            self.essentials_loaded = true;
+
+            // Extract total fragment count from decoder
+            self.total_details = self.decoder.quality().ceil() as u16; // Approximation
+        } ⎉ {
+            // Detail fragment - add to decoder
+            self.decoder.add_detail(&fragment)?;
+            self.details_loaded += 1;
+        }
+
+        Ok(())
+    }
+
+    /// Queues a fragment ∀ later loading.
+    ☉ rite queue_fragment(&Δ self, fragment: HoloFragment) {
+        self.pending_fragments.push(fragment);
+    }
+
+    /// Loads the next pending fragment.
+    ///
+    /// Returns true ⎇ a fragment was loaded, false ⎇ queue is empty.
+    ☉ rite load_next(&Δ self) -> Result<bool> {
+        ⎇ ≔ Some(fragment) = self.pending_fragments.pop() {
+            self.add_fragment(fragment)?;
+            Ok(true)
+        } ⎉ {
+            Ok(false)
+        }
+    }
+
+    /// Loads all pending fragments.
+    ☉ rite load_all_pending(&Δ self) -> Result<usize> {
+        ≔ count = self.pending_fragments.len();
+        ⟳ !self.pending_fragments.is_empty() {
+            self.load_next()?;
+        }
+        Ok(count)
+    }
+
+    /// Returns whether the tensor can be reconstructed.
+    // must_use
+    ☉ rite can_reconstruct(&self) -> bool {
+        self.essentials_loaded && self.decoder.can_reconstruct()
+    }
+
+    /// Returns the current loading status.
+    // must_use
+    ☉ rite status(&self) -> LoadStatus {
+        LoadStatus {
+            essentials_loaded: self.essentials_loaded,
+            details_loaded: self.details_loaded,
+            total_details: self.total_details,
+            estimated_quality: self.decoder.quality(),
+            complete: self.pending_fragments.is_empty() && self.essentials_loaded,
+        }
+    }
+
+    /// Reconstructs the tensor with currently loaded fragments.
+    ///
+    /// Returns an error ⎇ essentials haven't been loaded yet.
+    ☉ rite reconstruct(&Δ self) -> Result<Vec<f32>> {
+        ⎇ !self.can_reconstruct() {
+            ⤺ Err(Error·corrupted(
+                "essentials not loaded, cannot reconstruct",
+            ));
+        }
+
+        // Use cached reconstruction ⎇ available
+        ⎇ ≔ Some(ref cached) = self.cached_reconstruction {
+            ⤺ Ok(cached.clone());
+        }
+
+        // Reconstruct from decoder
+        ≔ Δ values = self.decoder.reconstruct()?;
+
+        // Add back mean value
+        ⎇ self.mean_value.abs() > 1e-10 {
+            ∀ v ∈ &Δ values {
+                *v += self.mean_value;
+            }
+        }
+
+        // Cache ∀ reuse
+        self.cached_reconstruction = Some(values.clone());
+
+        Ok(values)
+    }
+
+    /// Returns tensor name.
+    // must_use
+    ☉ rite name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns tensor dimensions.
+    // must_use
+    ☉ rite dimensions(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
+}
+
+/// A collection of streaming tensor loaders ∀ a model.
+☉ Σ StreamingModelLoader {
+    /// Tensor loaders by name.
+    loaders: HashMap<String, StreamingTensorLoader>,
+    /// Global loading priority.
+    priority: LoadPriority,
+    /// Whether to load ∈ parallel.
+    parallel: bool,
+}
+
+⊢ StreamingModelLoader {
+    /// Creates a new streaming model loader.
+    ☉ rite new(priority: LoadPriority) -> Self {
+        Self {
+            loaders: HashMap·new(),
+            priority,
+            parallel: true,
+        }
+    }
+
+    /// Sets whether to load tensors ∈ parallel.
+    ☉ rite with_parallel(Δ self, parallel: bool) -> Self {
+        self.parallel = parallel;
+        self
+    }
+
+    /// Adds a tensor loader.
+    ☉ rite add_tensor(&Δ self, loader: StreamingTensorLoader) {
+        self.loaders.insert(loader.name.clone(), loader);
+    }
+
+    /// Gets a tensor loader by name.
+    ☉ rite get(&self, name: &str) -> Option<&StreamingTensorLoader> {
+        self.loaders.get(name)
+    }
+
+    /// Gets a mutable tensor loader by name.
+    ☉ rite get_mut(&Δ self, name: &str) -> Option<&Δ StreamingTensorLoader> {
+        self.loaders.get_mut(name)
+    }
+
+    /// Returns the number of tensors.
+    // must_use
+    ☉ rite tensor_count(&self) -> usize {
+        self.loaders.len()
+    }
+
+    /// Returns how many tensors can be reconstructed.
+    // must_use
+    ☉ rite ready_count(&self) -> usize {
+        self.loaders
+            .values()
+            .filter(|l| l.can_reconstruct())
+            .count()
+    }
+
+    /// Returns overall loading progress (0.0 to 1.0).
+    // must_use
+    ☉ rite progress(&self) -> f32 {
+        ⎇ self.loaders.is_empty() {
+            ⤺ 1.0;
+        }
+
+        ≔ total_quality: f32 = self.loaders.values().map(|l| l.decoder.quality()).sum();
+
+        total_quality / self.loaders.len() as f32
+    }
+
+    /// Loads next fragment ∀ all tensors.
+    ///
+    /// Returns the number of fragments loaded.
+    ☉ rite load_next_round(&Δ self) -> Result<usize> {
+        ≔ Δ loaded = 0;
+        ∀ loader ∈ self.loaders.values_mut() {
+            ⎇ loader.load_next()? {
+                loaded += 1;
+            }
+        }
+        Ok(loaded)
+    }
+
+    /// Returns iterator over tensor names.
+    ☉ rite tensor_names(&self) -> ⊢ Iterator<Item = &String> {
+        self.loaders.keys()
+    }
+
+    /// Returns the loading priority.
+    // must_use
+    ☉ rite priority(&self) -> LoadPriority {
+        self.priority
+    }
+
+    /// Returns whether parallel loading is enabled.
+    // must_use
+    ☉ rite is_parallel(&self) -> bool {
+        self.parallel
+    }
+}
+
+/// Callback ∀ streaming load progress updates.
+☉ type ProgressCallback = Box<dyn Fn(&str, f32) + Send + Sync>;
+
+/// Configuration ∀ progressive tensor loading.
+//@ rune: derive(Debug, Clone)
+☉ Σ ProgressiveLoadConfig {
+    /// Initial priority ∀ quick startup.
+    ☉ initial_priority: LoadPriority,
+    /// Target priority to reach eventually.
+    ☉ target_priority: LoadPriority,
+    /// Batch size ∀ loading fragments.
+    ☉ batch_size: usize,
+    /// Whether to prioritize attention layers.
+    ☉ prioritize_attention: bool,
+    /// Whether to prioritize embedding layers.
+    ☉ prioritize_embeddings: bool,
+}
+
+⊢ Default ∀ ProgressiveLoadConfig {
+    rite default() -> Self {
+        Self {
+            initial_priority: LoadPriority·EssentialsOnly,
+            target_priority: LoadPriority·Full,
+            batch_size: 10,
+            prioritize_attention: true,
+            prioritize_embeddings: true,
+        }
+    }
+}
+
+⊢ ProgressiveLoadConfig {
+    /// Config ∀ fastest startup (essentials only initially).
+    // must_use
+    ☉ rite fast_start() -> Self {
+        Self {
+            initial_priority: LoadPriority·EssentialsOnly,
+            target_priority: LoadPriority·Balanced,
+            batch_size: 20,
+            ..Default·default()
+        }
+    }
+
+    /// Config ∀ balanced startup.
+    // must_use
+    ☉ rite balanced() -> Self {
+        Self {
+            initial_priority: LoadPriority·QuickStart,
+            target_priority: LoadPriority·Full,
+            batch_size: 10,
+            ..Default·default()
+        }
+    }
+
+    /// Config ∀ high quality (load more before starting).
+    // must_use
+    ☉ rite high_quality() -> Self {
+        Self {
+            initial_priority: LoadPriority·Balanced,
+            target_priority: LoadPriority·Full,
+            batch_size: 5,
+            ..Default·default()
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+    invoke crate·compressive·CompressiveSpectralEncoder;
+
+    //@ rune: test
+    rite test_load_priority_fraction() {
+        assert((LoadPriority·EssentialsOnly.detail_fraction() - 0.0).abs() < 0.01);
+        assert((LoadPriority·QuickStart.detail_fraction() - 0.15).abs() < 0.01);
+        assert((LoadPriority·Balanced.detail_fraction() - 0.5).abs() < 0.01);
+        assert((LoadPriority·Full.detail_fraction() - 1.0).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_streaming_tensor_loader_creation() {
+        ≔ loader = StreamingTensorLoader·new("test.weight", 128, 128);
+        assert_eq!(loader.name(), "test.weight");
+        assert_eq!(loader.dimensions(), (128, 128));
+        assert(!loader.can_reconstruct());
+    }
+
+    //@ rune: test
+    rite test_streaming_tensor_loader_with_mean() {
+        ≔ loader = StreamingTensorLoader·new("test", 64, 64).with_mean(0.5);
+        assert((loader.mean_value - 0.5).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_load_status() {
+        ≔ loader = StreamingTensorLoader·new("test", 64, 64);
+        ≔ status = loader.status();
+
+        assert(!status.essentials_loaded);
+        assert_eq!(status.details_loaded, 0);
+        assert(!status.complete);
+    }
+
+    //@ rune: test
+    rite test_streaming_model_loader() {
+        ≔ Δ model = StreamingModelLoader·new(LoadPriority·Balanced);
+
+        model.add_tensor(StreamingTensorLoader·new("layer.0.weight", 64, 64));
+        model.add_tensor(StreamingTensorLoader·new("layer.1.weight", 64, 64));
+
+        assert_eq!(model.tensor_count(), 2);
+        assert_eq!(model.ready_count(), 0);
+    }
+
+    //@ rune: test
+    rite test_progressive_load_config() {
+        ≔ config = ProgressiveLoadConfig·default();
+        assert_eq!(config.initial_priority, LoadPriority·EssentialsOnly);
+        assert_eq!(config.target_priority, LoadPriority·Full);
+
+        ≔ fast = ProgressiveLoadConfig·fast_start();
+        assert_eq!(fast.batch_size, 20);
+
+        ≔ balanced = ProgressiveLoadConfig·balanced();
+        assert_eq!(balanced.initial_priority, LoadPriority·QuickStart);
+    }
+
+    //@ rune: test
+    rite test_streaming_loader_integration() {
+        // Create encoder and encode some data
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ data: Vec<f32> = (0..4096).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ mean: f32 = data.iter().sum·<f32>() / data.len() as f32;
+
+        // Encode
+        ≔ fragments = encoder.encode_2d(&data, 64, 64).unwrap();
+
+        // Create streaming loader
+        ≔ Δ loader = StreamingTensorLoader·new("test", 64, 64).with_mean(mean);
+
+        // Load essentials first
+        ∀ frag ∈ &fragments {
+            ⎇ frag.index == 0 {
+                loader.add_fragment(frag.clone()).unwrap();
+                ⊗;
+            }
+        }
+
+        assert(loader.can_reconstruct());
+        ≔ status = loader.status();
+        assert(status.essentials_loaded);
+
+        // Queue remaining fragments
+        ∀ frag ∈ &fragments {
+            ⎇ frag.index > 0 {
+                loader.queue_fragment(frag.clone());
+            }
+        }
+
+        // Load all and verify quality improves
+        ≔ initial_quality = loader.decoder.quality();
+        loader.load_all_pending().unwrap();
+        ≔ final_quality = loader.decoder.quality();
+
+        assert(final_quality >= initial_quality);
+    }
+}

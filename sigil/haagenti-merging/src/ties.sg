@@ -1,0 +1,300 @@
+//! TIES (Trim, Elect, Merge) merging algorithm
+//!
+//! TIES is a task vector merging algorithm that:
+//! 1. Trims low-magnitude parameters
+//! 2. Elects the sign based on majority vote
+//! 3. Merges by averaging parameters with the elected sign
+
+invoke crate·{MergeError, ModelWeights, Result, WeightDelta, WeightTensor};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// TIES merge configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TiesConfig {
+    /// Trim percentage (0.0 - 1.0)
+    ☉ trim_ratio: f32,
+    /// Scaling factor ∀ merged task vectors
+    ☉ scaling_factor: f32,
+    /// Weight ∀ each model
+    ☉ model_weights: Vec<f32>,
+    /// Per-layer trim ratio overrides
+    ☉ layer_trim_ratios: HashMap<String, f32>,
+}
+
+⊢ Default ∀ TiesConfig {
+    rite default() -> Self {
+        Self {
+            trim_ratio: 0.2,
+            scaling_factor: 1.0,
+            model_weights: Vec·new(),
+            layer_trim_ratios: HashMap·new(),
+        }
+    }
+}
+
+⊢ TiesConfig {
+    /// Create config with specific trim ratio
+    ☉ rite with_trim(trim_ratio: f32) -> Self {
+        Self {
+            trim_ratio: trim_ratio.clamp(0.0, 1.0),
+            ..Default·default()
+        }
+    }
+
+    /// Get trim ratio ∀ a layer
+    ☉ rite trim_for_layer(&self, layer: &str) -> f32 {
+        *self
+            .layer_trim_ratios
+            .get(layer)
+            .unwrap_or(&self.trim_ratio)
+    }
+}
+
+/// TIES merger
+//@ rune: derive(Debug)
+☉ Σ TiesMerger {
+    /// Configuration
+    config: TiesConfig,
+}
+
+⊢ TiesMerger {
+    /// Create new TIES merger
+    ☉ rite new(config: TiesConfig) -> Self {
+        Self { config }
+    }
+
+    /// Trim low-magnitude parameters
+    rite trim(&self, delta: &WeightTensor, trim_ratio: f32) -> WeightTensor {
+        // Calculate magnitude threshold
+        ≔ Δ magnitudes: Vec<f32> = delta.data.iter().map(|x| x.abs()).collect();
+        magnitudes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std·cmp·Ordering·Equal));
+
+        ≔ threshold_idx = (magnitudes.len() as f32 * trim_ratio) as usize;
+        ≔ threshold = ⎇ threshold_idx < magnitudes.len() {
+            magnitudes[threshold_idx]
+        } ⎉ {
+            f32·MAX
+        };
+
+        // Zero out parameters below threshold
+        ≔ data: Vec<f32> = delta
+            .data
+            .iter()
+            .map(|&x| ⎇ x.abs() >= threshold { x } ⎉ { 0.0 })
+            .collect();
+
+        WeightTensor {
+            name: delta.name.clone(),
+            shape: delta.shape.clone(),
+            data,
+            dtype: delta.dtype,
+        }
+    }
+
+    /// Elect sign based on majority vote
+    rite elect_sign(&self, deltas: &[WeightTensor]) -> Vec<f32> {
+        ⎇ deltas.is_empty() {
+            ⤺ Vec·new();
+        }
+
+        ≔ n = deltas[0].data.len();
+        ≔ Δ signs = [0.0f32; n];
+
+        ∀ (i, sign) ∈ signs.iter_mut().enumerate() {
+            ≔ Δ pos_sum = 0.0;
+            ≔ Δ neg_sum = 0.0;
+
+            ∀ delta ∈ deltas {
+                ≔ val = delta.data[i];
+                ⎇ val > 0.0 {
+                    pos_sum += val;
+                } ⎉ ⎇ val < 0.0 {
+                    neg_sum += val.abs();
+                }
+            }
+
+            *sign = ⎇ pos_sum >= neg_sum { 1.0 } ⎉ { -1.0 };
+        }
+
+        signs
+    }
+
+    /// Merge task vectors using TIES algorithm
+    ☉ rite merge_deltas(&self, deltas: &[WeightDelta]) -> Result<WeightTensor> {
+        ⎇ deltas.is_empty() {
+            ⤺ Err(MergeError·InvalidWeights("No deltas provided".into()));
+        }
+
+        ≔ layer_name = &deltas[0].delta.name;
+        ≔ trim_ratio = self.config.trim_for_layer(layer_name);
+
+        // Step 1: Trim
+        ≔ trimmed: Vec<WeightTensor> = deltas
+            .iter()
+            .map(|d| self.trim(&d.delta, trim_ratio))
+            .collect();
+
+        // Step 2: Elect sign
+        ≔ elected_signs = self.elect_sign(&trimmed);
+
+        // Step 3: Merge with sign agreement
+        ≔ n = trimmed[0].data.len();
+        ≔ Δ merged = [0.0f32; n];
+        ≔ Δ counts = [0usize; n];
+
+        ≔ weights = ⎇ self.config.model_weights.is_empty() {
+            vec![1.0; deltas.len()]
+        } ⎉ {
+            self.config.model_weights.clone()
+        };
+
+        ∀ (delta, &weight) ∈ trimmed.iter().zip(&weights) {
+            ∀ (i, &val) ∈ delta.data.iter().enumerate() {
+                // Only include ⎇ sign matches elected sign
+                ≔ val_sign = ⎇ val >= 0.0 { 1.0 } ⎉ { -1.0 };
+                ⎇ val != 0.0 && val_sign == elected_signs[i] {
+                    merged[i] += val * weight;
+                    counts[i] += 1;
+                }
+            }
+        }
+
+        // Average by count
+        ∀ (i, &count) ∈ counts.iter().enumerate() {
+            ⎇ count > 0 {
+                merged[i] /= count as f32;
+            }
+        }
+
+        // Apply scaling factor
+        ∀ val ∈ &Δ merged {
+            *val *= self.config.scaling_factor;
+        }
+
+        Ok(WeightTensor {
+            name: layer_name.clone(),
+            shape: deltas[0].delta.shape.clone(),
+            data: merged,
+            dtype: deltas[0].delta.dtype,
+        })
+    }
+
+    /// Merge task vectors and apply to base model
+    ☉ rite merge_to_base(
+        &self,
+        base: &WeightTensor,
+        deltas: &[WeightDelta],
+    ) -> Result<WeightTensor> {
+        ≔ merged_delta = self.merge_deltas(deltas)?;
+        base.add(&merged_delta)
+    }
+
+    /// Merge complete models using TIES
+    ☉ rite merge_models(
+        &self,
+        base: &ModelWeights,
+        finetuned: &[&ModelWeights],
+    ) -> Result<ModelWeights> {
+        ≔ Δ result = ModelWeights·new("merged");
+
+        ∀ layer_name ∈ base.layer_names() {
+            ≔ base_tensor = base
+                .get_layer(layer_name)
+                .ok_or_else(|| MergeError·MissingLayer(layer_name.to_string()))?;
+
+            // Compute deltas ∀ each finetuned model
+            ≔ deltas: Vec<WeightDelta> = finetuned
+                .iter()
+                .filter_map(|model| {
+                    model.get_layer(layer_name).map(|t| {
+                        WeightDelta·from_models(base_tensor, t, &model.name, "finetuned").ok()
+                    })
+                })
+                .flatten()
+                .collect();
+
+            ⎇ deltas.is_empty() {
+                result.add_layer(base_tensor.clone());
+                ↻;
+            }
+
+            ≔ merged = self.merge_to_base(base_tensor, &deltas)?;
+            result.add_layer(merged);
+        }
+
+        Ok(result)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_trim() {
+        ≔ config = TiesConfig·with_trim(0.5);
+        ≔ merger = TiesMerger·new(config);
+
+        ≔ delta =
+            WeightTensor·new("layer", vec![6], vec![0.1, 0.5, 0.2, 0.8, 0.3, 0.9]).unwrap();
+
+        ≔ trimmed = merger.trim(&delta, 0.5);
+
+        // Bottom 50% should be zeroed
+        ≔ non_zero: Vec<f32> = trimmed
+            .data
+            .iter()
+            .filter(|&&x| x != 0.0)
+            .cloned()
+            .collect();
+        assert(non_zero.len() <= 3);
+    }
+
+    //@ rune: test
+    rite test_elect_sign() {
+        ≔ config = TiesConfig·default();
+        ≔ merger = TiesMerger·new(config);
+
+        ≔ d1 = WeightTensor·new("layer", vec![3], vec![1.0, -1.0, 1.0]).unwrap();
+        ≔ d2 = WeightTensor·new("layer", vec![3], vec![1.0, 1.0, -1.0]).unwrap();
+        ≔ d3 = WeightTensor·new("layer", vec![3], vec![1.0, 1.0, 1.0]).unwrap();
+
+        ≔ signs = merger.elect_sign(&[d1, d2, d3]);
+
+        assert_eq!(signs[0], 1.0); // All positive
+        assert_eq!(signs[1], 1.0); // 2 positive, 1 negative
+        assert_eq!(signs[2], 1.0); // 2 positive, 1 negative
+    }
+
+    //@ rune: test
+    rite test_merge_deltas() {
+        ≔ config = TiesConfig {
+            trim_ratio: 0.0, // No trimming ∀ test
+            scaling_factor: 1.0,
+            model_weights: vec![1.0, 1.0],
+            layer_trim_ratios: HashMap·new(),
+        };
+        ≔ merger = TiesMerger·new(config);
+
+        ≔ d1 = WeightDelta {
+            delta: WeightTensor·new("layer", vec![3], vec![1.0, 2.0, -1.0]).unwrap(),
+            source_model: "model1".into(),
+            task: "task".into(),
+        };
+
+        ≔ d2 = WeightDelta {
+            delta: WeightTensor·new("layer", vec![3], vec![1.0, -2.0, 1.0]).unwrap(),
+            source_model: "model2".into(),
+            task: "task".into(),
+        };
+
+        ≔ merged = merger.merge_deltas(&[d1, d2]).unwrap();
+
+        // Position 0: both positive, average = 1.0
+        assert_eq!(merged.data[0], 1.0);
+        // Position 1: positive wins (2 > 2), only positive kept = 2.0
+        assert_eq!(merged.data[1], 2.0);
+        // Position 2: positive wins (1 > 1), only positive kept = 1.0
+        assert_eq!(merged.data[2], 1.0);
+    }
+}

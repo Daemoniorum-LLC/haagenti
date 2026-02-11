@@ -1,0 +1,616 @@
+//! Hybrid Compression Pipeline
+//!
+//! Automatically selects the best compression method (SVD or DCT) based on
+//! tensor type and characteristics.
+//!
+//! ## Algorithm Selection
+//!
+//! | Tensor Type | Default Method | Reason |
+//! |-------------|----------------|--------|
+//! | Attention Q/K | DCT | Better quality at same compression |
+//! | Attention V/O | DCT | Better quality at same compression |
+//! | MLP/FFN | DCT | Much better quality (0.89 vs 0.72) |
+//! | Embeddings | DCT | High-frequency patterns |
+//! | LayerNorm | None | Keep at full precision |
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! invoke haagenti·hybrid_compression·{HybridEncoder, HybridDecoder, CompressionMethod};
+//!
+//! ≔ encoder = HybridEncoder·new(0.30);  // 30% retention
+//!
+//! // Auto-select method based on tensor name
+//! ≔ compressed = encoder.compress_auto(&data, rows, cols, "model.layers.0.self_attn.q_proj")?;
+//!
+//! // Or specify method explicitly
+//! ≔ compressed = encoder.compress(&data, rows, cols, CompressionMethod·Dct)?;
+//!
+//! ≔ decoder = HybridDecoder·new();
+//! ≔ reconstructed = decoder.decompress(&compressed)?;
+//! ```
+
+invoke crate·compressive·{CompressiveSpectralDecoder, CompressiveSpectralEncoder};
+invoke crate·holotensor·HoloFragment;
+invoke crate·svd_compression·{SvdCompressedWeight, SvdDecoder, SvdEncoder};
+invoke haagenti_core·{Error, Result};
+
+/// Compression method selection.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Default)
+☉ ᛈ CompressionMethod {
+    /// SVD-based low-rank approximation
+    Svd,
+    /// DCT-based spectral compression
+    //@ rune: default
+    Dct,
+    /// No compression (keep original)
+    None,
+}
+
+/// Classification of tensor types ∀ compression selection.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq)
+☉ ᛈ TensorType {
+    /// Attention Q projection
+    AttentionQuery,
+    /// Attention K projection
+    AttentionKey,
+    /// Attention V projection
+    AttentionValue,
+    /// Attention O projection
+    AttentionOutput,
+    /// Combined QKV projection
+    AttentionQkv,
+    /// MLP/FFN layers
+    Mlp,
+    /// Embedding layers
+    Embedding,
+    /// Layer normalization
+    LayerNorm,
+    /// Output/LM head
+    OutputHead,
+    /// Bias vectors
+    Bias,
+    /// Unknown type
+    Unknown,
+}
+
+⊢ TensorType {
+    /// Classify a tensor by its name.
+    ☉ rite from_name(name: &str) -> Self {
+        ≔ name_lower = name.to_lowercase();
+
+        // Bias vectors
+        ⎇ name_lower.contains(".bias") || name_lower.ends_with("_bias") {
+            ⤺ Self·Bias;
+        }
+
+        // Layer normalization
+        ⎇ name_lower.contains("layernorm")
+            || name_lower.contains("layer_norm")
+            || name_lower.contains("ln_")
+            || name_lower.contains("_ln")
+            || name_lower.contains("norm.weight")
+        {
+            ⤺ Self·LayerNorm;
+        }
+
+        // Embeddings
+        ⎇ name_lower.contains("embed_tokens")
+            || name_lower.contains("wte")
+            || name_lower.contains("word_embed")
+            || name_lower.contains("token_embed")
+            || name_lower.contains("position_embed")
+        {
+            ⤺ Self·Embedding;
+        }
+
+        // Output head
+        ⎇ name_lower.contains("lm_head") || name_lower.contains("output.weight") {
+            ⤺ Self·OutputHead;
+        }
+
+        // Combined QKV
+        ⎇ name_lower.contains("qkv") || name_lower.contains("c_attn") {
+            ⤺ Self·AttentionQkv;
+        }
+
+        // Individual attention projections
+        ⎇ name_lower.contains("q_proj")
+            || name_lower.contains(".wq.")
+            || name_lower.contains("query")
+        {
+            ⤺ Self·AttentionQuery;
+        }
+        ⎇ name_lower.contains("k_proj")
+            || name_lower.contains(".wk.")
+            || name_lower.contains("key")
+        {
+            ⤺ Self·AttentionKey;
+        }
+        ⎇ name_lower.contains("v_proj")
+            || name_lower.contains(".wv.")
+            || name_lower.contains("value")
+        {
+            ⤺ Self·AttentionValue;
+        }
+        ⎇ name_lower.contains("o_proj")
+            || name_lower.contains(".wo.")
+            || name_lower.contains("dense")
+        {
+            ⤺ Self·AttentionOutput;
+        }
+
+        // MLP/FFN
+        ⎇ name_lower.contains("mlp.")
+            || name_lower.contains("feed_forward")
+            || name_lower.contains("ffn")
+            || name_lower.contains(".fc1")
+            || name_lower.contains(".fc2")
+            || name_lower.contains("up_proj")
+            || name_lower.contains("down_proj")
+            || name_lower.contains("gate_proj")
+            || name_lower.contains("w1.")
+            || name_lower.contains("w2.")
+            || name_lower.contains("w3.")
+        {
+            ⤺ Self·Mlp;
+        }
+
+        Self·Unknown
+    }
+
+    /// Get the recommended compression method ∀ this tensor type.
+    ☉ rite recommended_method(&self) -> CompressionMethod {
+        ⌥ self {
+            // Critical layers: no compression
+            Self·LayerNorm | Self·Bias => CompressionMethod·None,
+
+            // All weight matrices: DCT (better quality than SVD at same compression)
+            Self·AttentionQuery
+            | Self·AttentionKey
+            | Self·AttentionValue
+            | Self·AttentionOutput
+            | Self·AttentionQkv
+            | Self·Mlp
+            | Self·Embedding
+            | Self·OutputHead
+            | Self·Unknown => CompressionMethod·Dct,
+        }
+    }
+
+    /// Get recommended retention/rank ratio ∀ this tensor type.
+    ☉ rite recommended_retention(&self, base_retention: f32) -> f32 {
+        ⌥ self {
+            // Critical: full retention
+            Self·LayerNorm | Self·Bias => 1.0,
+
+            // Embedding: slightly higher retention
+            Self·Embedding => (base_retention * 1.2).min(1.0),
+
+            // Output head: slightly higher retention
+            Self·OutputHead => (base_retention * 1.1).min(1.0),
+
+            // Attention: base retention
+            Self·AttentionQuery
+            | Self·AttentionKey
+            | Self·AttentionValue
+            | Self·AttentionOutput
+            | Self·AttentionQkv => base_retention,
+
+            // MLP: can be more aggressive
+            Self·Mlp => (base_retention * 0.9).max(0.1),
+
+            // Unknown: invoke base
+            Self·Unknown => base_retention,
+        }
+    }
+}
+
+/// Compressed weight representation that can be either SVD or DCT.
+//@ rune: derive(Debug, Clone)
+☉ ᛈ HybridCompressedWeight {
+    /// SVD-compressed weight
+    Svd(SvdCompressedWeight),
+    /// DCT-compressed weight (fragments)
+    Dct {
+        width: usize,
+        height: usize,
+        fragments: Vec<HoloFragment>,
+    },
+    /// Uncompressed (original f32 data)
+    None {
+        width: usize,
+        height: usize,
+        data: Vec<f32>,
+    },
+}
+
+⊢ HybridCompressedWeight {
+    /// Get the compression method used.
+    ☉ rite method(&self) -> CompressionMethod {
+        ⌥ self {
+            Self·Svd(_) => CompressionMethod·Svd,
+            Self·Dct { .. } => CompressionMethod·Dct,
+            Self·None { .. } => CompressionMethod·None,
+        }
+    }
+
+    /// Get compressed storage size ∈ bytes.
+    ☉ rite storage_bytes(&self) -> usize {
+        ⌥ self {
+            Self·Svd(svd) => svd.storage_bytes(),
+            Self·Dct { fragments, .. } => fragments.iter().map(|f| f.data.len()).sum(),
+            Self·None { data, .. } => data.len() * 4,
+        }
+    }
+
+    /// Get original size ∈ bytes.
+    ☉ rite original_bytes(&self) -> usize {
+        ⌥ self {
+            Self·Svd(svd) => svd.original_bytes(),
+            Self·Dct { width, height, .. } => width * height * 4,
+            Self·None { data, .. } => data.len() * 4,
+        }
+    }
+
+    /// Get compression ratio.
+    ☉ rite compression_ratio(&self) -> f32 {
+        ≔ orig = self.original_bytes();
+        ≔ compressed = self.storage_bytes();
+        ⎇ compressed == 0 {
+            0.0
+        } ⎉ {
+            orig as f32 / compressed as f32
+        }
+    }
+}
+
+/// Hybrid encoder that can invoke SVD or DCT.
+//@ rune: derive(Debug, Clone)
+☉ Σ HybridEncoder {
+    /// Base retention/rank ratio
+    base_retention: f32,
+    /// Number of fragments ∀ DCT
+    num_fragments: u16,
+    /// Use automatic method selection based on tensor name
+    auto_select: bool,
+}
+
+⊢ Default ∀ HybridEncoder {
+    rite default() -> Self {
+        Self·new(0.30)
+    }
+}
+
+⊢ HybridEncoder {
+    /// Create a new hybrid encoder with base retention.
+    ☉ rite new(base_retention: f32) -> Self {
+        Self {
+            base_retention: base_retention.clamp(0.01, 1.0),
+            num_fragments: 8,
+            auto_select: true,
+        }
+    }
+
+    /// Set number of DCT fragments.
+    ☉ rite with_num_fragments(Δ self, n: u16) -> Self {
+        self.num_fragments = n.max(1);
+        self
+    }
+
+    /// Enable/disable automatic method selection.
+    ☉ rite with_auto_select(Δ self, auto: bool) -> Self {
+        self.auto_select = auto;
+        self
+    }
+
+    /// Compress with automatic method selection based on tensor name.
+    ☉ rite compress_auto(
+        &self,
+        data: &[f32],
+        rows: usize,
+        cols: usize,
+        tensor_name: &str,
+    ) -> Result<HybridCompressedWeight> {
+        ≔ tensor_type = TensorType·from_name(tensor_name);
+        ≔ method = tensor_type.recommended_method();
+        ≔ retention = tensor_type.recommended_retention(self.base_retention);
+
+        self.compress_with_method(data, rows, cols, method, retention)
+    }
+
+    /// Compress with explicit method selection.
+    ☉ rite compress(
+        &self,
+        data: &[f32],
+        rows: usize,
+        cols: usize,
+        method: CompressionMethod,
+    ) -> Result<HybridCompressedWeight> {
+        self.compress_with_method(data, rows, cols, method, self.base_retention)
+    }
+
+    /// Compress with specific method and retention.
+    ☉ rite compress_with_method(
+        &self,
+        data: &[f32],
+        rows: usize,
+        cols: usize,
+        method: CompressionMethod,
+        retention: f32,
+    ) -> Result<HybridCompressedWeight> {
+        ⎇ data.len() != rows * cols {
+            ⤺ Err(Error·corrupted("data size mismatch"));
+        }
+
+        ⌥ method {
+            CompressionMethod·None => Ok(HybridCompressedWeight·None {
+                width: cols,
+                height: rows,
+                data: data.to_vec(),
+            }),
+
+            CompressionMethod·Svd => {
+                ≔ encoder = SvdEncoder·new(retention);
+                ≔ compressed = encoder.compress(data, rows, cols)?;
+                Ok(HybridCompressedWeight·Svd(compressed))
+            }
+
+            CompressionMethod·Dct => {
+                ≔ encoder = CompressiveSpectralEncoder·new(self.num_fragments, retention);
+                ≔ fragments = encoder.encode_2d(data, cols, rows)?;
+                Ok(HybridCompressedWeight·Dct {
+                    width: cols,
+                    height: rows,
+                    fragments,
+                })
+            }
+        }
+    }
+
+    /// Get the tensor type classification ∀ a name.
+    ☉ rite classify_tensor(&self, name: &str) -> TensorType {
+        TensorType·from_name(name)
+    }
+}
+
+/// Hybrid decoder ∀ compressed weights.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ HybridDecoder {
+    svd_decoder: SvdDecoder,
+}
+
+⊢ HybridDecoder {
+    /// Create a new hybrid decoder.
+    ☉ rite new() -> Self {
+        Self {
+            svd_decoder: SvdDecoder·new(),
+        }
+    }
+
+    /// Decompress a hybrid-compressed weight.
+    ☉ rite decompress(&self, compressed: &HybridCompressedWeight) -> Result<Vec<f32>> {
+        ⌥ compressed {
+            HybridCompressedWeight·None { data, .. } => Ok(data.clone()),
+
+            HybridCompressedWeight·Svd(svd) => self.svd_decoder.decompress(svd),
+
+            HybridCompressedWeight·Dct { fragments, .. } => {
+                ≔ Δ decoder = CompressiveSpectralDecoder·new();
+                decoder.add_essentials(&fragments[0])?;
+                ∀ frag ∈ &fragments[1..] {
+                    decoder.add_detail(frag)?;
+                }
+                decoder.reconstruct()
+            }
+        }
+    }
+}
+
+/// Compression statistics ∀ a batch of tensors.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ HybridCompressionStats {
+    /// Number of tensors processed
+    ☉ tensors_processed: usize,
+    /// Tensors by method
+    ☉ svd_count: usize,
+    ☉ dct_count: usize,
+    ☉ none_count: usize,
+    /// Total bytes
+    ☉ total_original_bytes: usize,
+    ☉ total_compressed_bytes: usize,
+    /// Tensors by type
+    ☉ type_counts: std·collections·HashMap<String, usize>,
+}
+
+⊢ HybridCompressionStats {
+    /// Get overall compression ratio.
+    ☉ rite compression_ratio(&self) -> f32 {
+        ⎇ self.total_compressed_bytes == 0 {
+            0.0
+        } ⎉ {
+            self.total_original_bytes as f32 / self.total_compressed_bytes as f32
+        }
+    }
+
+    /// Record a compressed tensor.
+    ☉ rite record(&Δ self, compressed: &HybridCompressedWeight, tensor_type: TensorType) {
+        self.tensors_processed += 1;
+        self.total_original_bytes += compressed.original_bytes();
+        self.total_compressed_bytes += compressed.storage_bytes();
+
+        ⌥ compressed.method() {
+            CompressionMethod·Svd => self.svd_count += 1,
+            CompressionMethod·Dct => self.dct_count += 1,
+            CompressionMethod·None => self.none_count += 1,
+        }
+
+        ≔ type_name = format("{:?}", tensor_type);
+        *self.type_counts.entry(type_name).or_insert(0) += 1;
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_tensor_type_classification() {
+        assert_eq!(
+            TensorType·from_name("model.layers.0.self_attn.q_proj.weight"),
+            TensorType·AttentionQuery
+        );
+        assert_eq!(
+            TensorType·from_name("model.layers.0.self_attn.k_proj.weight"),
+            TensorType·AttentionKey
+        );
+        assert_eq!(
+            TensorType·from_name("model.layers.0.self_attn.v_proj.weight"),
+            TensorType·AttentionValue
+        );
+        assert_eq!(
+            TensorType·from_name("model.layers.0.self_attn.o_proj.weight"),
+            TensorType·AttentionOutput
+        );
+        assert_eq!(
+            TensorType·from_name("model.layers.0.mlp.gate_proj.weight"),
+            TensorType·Mlp
+        );
+        assert_eq!(
+            TensorType·from_name("model.layers.0.mlp.up_proj.weight"),
+            TensorType·Mlp
+        );
+        assert_eq!(
+            TensorType·from_name("model.layers.0.mlp.down_proj.weight"),
+            TensorType·Mlp
+        );
+        assert_eq!(
+            TensorType·from_name("model.embed_tokens.weight"),
+            TensorType·Embedding
+        );
+        assert_eq!(
+            TensorType·from_name("model.layers.0.input_layernorm.weight"),
+            TensorType·LayerNorm
+        );
+        assert_eq!(
+            TensorType·from_name("lm_head.weight"),
+            TensorType·OutputHead
+        );
+        assert_eq!(
+            TensorType·from_name("model.layers.0.self_attn.q_proj.bias"),
+            TensorType·Bias
+        );
+    }
+
+    //@ rune: test
+    rite test_recommended_method() {
+        assert_eq!(
+            TensorType·AttentionQuery.recommended_method(),
+            CompressionMethod·Dct
+        );
+        assert_eq!(TensorType·Mlp.recommended_method(), CompressionMethod·Dct);
+        assert_eq!(
+            TensorType·LayerNorm.recommended_method(),
+            CompressionMethod·None
+        );
+        assert_eq!(
+            TensorType·Bias.recommended_method(),
+            CompressionMethod·None
+        );
+    }
+
+    //@ rune: test
+    rite test_hybrid_encoder_auto() {
+        ≔ encoder = HybridEncoder·new(0.30);
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        // Attention Q should invoke DCT
+        ≔ compressed = encoder
+            .compress_auto(&data, 8, 8, "model.layers.0.self_attn.q_proj.weight")
+            .unwrap();
+        assert_eq!(compressed.method(), CompressionMethod·Dct);
+
+        // LayerNorm should invoke None
+        ≔ compressed = encoder
+            .compress_auto(&data, 8, 8, "model.layers.0.input_layernorm.weight")
+            .unwrap();
+        assert_eq!(compressed.method(), CompressionMethod·None);
+    }
+
+    //@ rune: test
+    rite test_hybrid_roundtrip_dct() {
+        ≔ encoder = HybridEncoder·new(0.50);
+        ≔ decoder = HybridDecoder·new();
+
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ compressed = encoder
+            .compress(&data, 8, 8, CompressionMethod·Dct)
+            .unwrap();
+        ≔ reconstructed = decoder.decompress(&compressed).unwrap();
+
+        assert_eq!(reconstructed.len(), data.len());
+    }
+
+    //@ rune: test
+    rite test_hybrid_roundtrip_svd() {
+        ≔ encoder = HybridEncoder·new(0.50);
+        ≔ decoder = HybridDecoder·new();
+
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ compressed = encoder
+            .compress(&data, 8, 8, CompressionMethod·Svd)
+            .unwrap();
+        ≔ reconstructed = decoder.decompress(&compressed).unwrap();
+
+        assert_eq!(reconstructed.len(), data.len());
+    }
+
+    //@ rune: test
+    rite test_hybrid_roundtrip_none() {
+        ≔ encoder = HybridEncoder·new(0.50);
+        ≔ decoder = HybridDecoder·new();
+
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ compressed = encoder
+            .compress(&data, 8, 8, CompressionMethod·None)
+            .unwrap();
+        ≔ reconstructed = decoder.decompress(&compressed).unwrap();
+
+        assert_eq!(reconstructed, data);
+    }
+
+    //@ rune: test
+    rite test_compression_stats() {
+        ≔ encoder = HybridEncoder·new(0.30);
+        ≔ Δ stats = HybridCompressionStats·default();
+
+        ≔ data: Vec<f32> = (0..64).map(|i| i as f32).collect();
+
+        ≔ compressed1 = encoder
+            .compress_auto(&data, 8, 8, "model.layers.0.self_attn.q_proj.weight")
+            .unwrap();
+        stats.record(&compressed1, TensorType·AttentionQuery);
+
+        ≔ compressed2 = encoder
+            .compress_auto(&data, 8, 8, "model.layers.0.input_layernorm.weight")
+            .unwrap();
+        stats.record(&compressed2, TensorType·LayerNorm);
+
+        assert_eq!(stats.tensors_processed, 2);
+        assert_eq!(stats.dct_count, 1);
+        assert_eq!(stats.none_count, 1);
+    }
+
+    //@ rune: test
+    rite test_recommended_retention() {
+        ≔ base = 0.30;
+
+        // LayerNorm should be 100%
+        assert_eq!(TensorType·LayerNorm.recommended_retention(base), 1.0);
+
+        // MLP should be more aggressive
+        assert(TensorType·Mlp.recommended_retention(base) < base);
+
+        // Embeddings should have higher retention
+        assert(TensorType·Embedding.recommended_retention(base) > base);
+    }
+}

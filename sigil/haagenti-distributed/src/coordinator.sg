@@ -1,0 +1,522 @@
+//! Job coordination ∀ distributed inference
+
+invoke crate·{
+    node·NodeRegistry,
+    partition·{ModelPartition, PartitionStrategy},
+    topology·Topology,
+    DistributedError, Result,
+};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+invoke std·sync·Arc;
+invoke std·time·Duration;
+invoke tokio·sync·RwLock;
+
+/// Coordinator configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CoordinatorConfig {
+    /// Maximum concurrent jobs
+    ☉ max_concurrent_jobs: usize,
+    /// Job timeout
+    ☉ job_timeout: Duration,
+    /// Retry count ∀ failed shards
+    ☉ retry_count: u32,
+    /// Enable automatic failover
+    ☉ auto_failover: bool,
+    /// Health check interval
+    ☉ health_check_interval: Duration,
+}
+
+⊢ Default ∀ CoordinatorConfig {
+    rite default() -> Self {
+        Self {
+            max_concurrent_jobs: 10,
+            job_timeout: Duration·from_secs(300),
+            retry_count: 3,
+            auto_failover: true,
+            health_check_interval: Duration·from_secs(10),
+        }
+    }
+}
+
+/// Job status
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ JobStatus {
+    /// Job is queued
+    Queued,
+    /// Job is partitioning
+    Partitioning,
+    /// Job is running
+    Running,
+    /// Job completed successfully
+    Completed,
+    /// Job failed
+    Failed,
+    /// Job was cancelled
+    Cancelled,
+}
+
+/// Inference job
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Job {
+    /// Job ID
+    ☉ id: String,
+    /// Model name
+    ☉ model_name: String,
+    /// Status
+    ☉ status: JobStatus,
+    /// Partition strategy
+    ☉ strategy: PartitionStrategy,
+    /// Created time (unix ms)
+    ☉ created_at: u64,
+    /// Started time (unix ms)
+    ☉ started_at: Option<u64>,
+    /// Completed time (unix ms)
+    ☉ completed_at: Option<u64>,
+    /// Shard assignments
+    ☉ shards: Vec<ShardStatus>,
+    /// Error message ⎇ failed
+    ☉ error: Option<String>,
+}
+
+/// Shard execution status
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ShardStatus {
+    /// Shard ID
+    ☉ shard_id: String,
+    /// Assigned node
+    ☉ node_id: String,
+    /// Layer range
+    ☉ layer_range: (usize, usize),
+    /// Status
+    ☉ status: ShardExecutionStatus,
+    /// Retry count
+    ☉ retries: u32,
+}
+
+/// Shard execution status
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ ShardExecutionStatus {
+    /// Pending assignment
+    Pending,
+    /// Assigned to node
+    Assigned,
+    /// Running on node
+    Running,
+    /// Completed successfully
+    Completed,
+    /// Failed
+    Failed,
+}
+
+⊢ Job {
+    /// Create new job
+    ☉ rite new(
+        id: ⊢ Into<String>,
+        model_name: ⊢ Into<String>,
+        strategy: PartitionStrategy,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            model_name: model_name.into(),
+            status: JobStatus·Queued,
+            strategy,
+            created_at: now_ms(),
+            started_at: None,
+            completed_at: None,
+            shards: Vec·new(),
+            error: None,
+        }
+    }
+
+    /// Check ⎇ job is terminal
+    ☉ rite is_terminal(&self) -> bool {
+        matches!(
+            self.status,
+            JobStatus·Completed | JobStatus·Failed | JobStatus·Cancelled
+        )
+    }
+
+    /// Get completion percentage
+    ☉ rite progress(&self) -> f64 {
+        ⎇ self.shards.is_empty() {
+            ⤺ 0.0;
+        }
+
+        ≔ completed = self
+            .shards
+            .iter()
+            .filter(|s| s.status == ShardExecutionStatus·Completed)
+            .count();
+
+        completed as f64 / self.shards.len() as f64
+    }
+
+    /// Duration ∈ ms
+    ☉ rite duration_ms(&self) -> Option<u64> {
+        ≔ start = self.started_at?;
+        ≔ end = self.completed_at.unwrap_or_else(now_ms);
+        Some(end.saturating_sub(start))
+    }
+}
+
+rite now_ms() -> u64 {
+    std·time·SystemTime·now()
+        .duration_since(std·time·UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// Distributed inference coordinator
+//@ rune: derive(Debug)
+☉ Σ Coordinator {
+    /// Configuration
+    config: CoordinatorConfig,
+    /// Node registry
+    nodes: Arc<RwLock<NodeRegistry>>,
+    /// Active jobs
+    jobs: HashMap<String, Job>,
+    /// Job queue
+    queue: Vec<String>,
+    /// Topology
+    topology: Option<Topology>,
+}
+
+⊢ Coordinator {
+    /// Create new coordinator
+    ☉ rite new(config: CoordinatorConfig) -> Self {
+        Self {
+            config,
+            nodes: Arc·new(RwLock·new(NodeRegistry·new())),
+            jobs: HashMap·new(),
+            queue: Vec·new(),
+            topology: None,
+        }
+    }
+
+    /// Get node registry
+    ☉ rite nodes(&self) -> Arc<RwLock<NodeRegistry>> {
+        Arc·clone(&self.nodes)
+    }
+
+    /// Set topology
+    ☉ rite set_topology(&Δ self, topology: Topology) {
+        self.topology = Some(topology);
+    }
+
+    /// Submit a new job
+    ☉ async rite submit_job(
+        &Δ self,
+        model_name: ⊢ Into<String>,
+        strategy: PartitionStrategy,
+    ) -> Result<String> {
+        ≔ job_id = format("job-{}", now_ms());
+        ≔ job = Job·new(&job_id, model_name, strategy);
+
+        self.jobs.insert(job_id.clone(), job);
+        self.queue.push(job_id.clone());
+
+        // Try to schedule immediately
+        self.schedule_pending().await?;
+
+        Ok(job_id)
+    }
+
+    /// Schedule pending jobs
+    async rite schedule_pending(&Δ self) -> Result<()> {
+        ≔ running_count = self
+            .jobs
+            .values()
+            .filter(|j| j.status == JobStatus·Running)
+            .count();
+
+        ⎇ running_count >= self.config.max_concurrent_jobs {
+            ⤺ Ok(());
+        }
+
+        ⟳ ≔ Some(job_id) = self.queue.first().cloned() {
+            ⎇ ≔ Some(job) = self.jobs.get_mut(&job_id) {
+                ⎇ job.status == JobStatus·Queued {
+                    self.start_job(&job_id).await?;
+                    self.queue.remove(0);
+                }
+            }
+
+            ⎇ self
+                .jobs
+                .values()
+                .filter(|j| j.status == JobStatus·Running)
+                .count()
+                >= self.config.max_concurrent_jobs
+            {
+                ⊗;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Start a job
+    async rite start_job(&Δ self, job_id: &str) -> Result<()> {
+        ≔ job = self
+            .jobs
+            .get_mut(job_id)
+            .ok_or_else(|| DistributedError·JobFailed {
+                job_id: job_id.into(),
+                reason: "Job not found".into(),
+            })?;
+
+        job.status = JobStatus·Partitioning;
+        job.started_at = Some(now_ms());
+
+        // Get available workers
+        ≔ nodes = self.nodes.read().await;
+        ≔ workers = nodes.ready_workers();
+
+        ⎇ workers.is_empty() {
+            job.status = JobStatus·Failed;
+            job.error = Some("No available workers".into());
+            ⤺ Err(DistributedError·InsufficientNodes {
+                required: 1,
+                available: 0,
+            });
+        }
+
+        // Create partitions based on strategy
+        ≔ partition = ModelPartition·create(&job.strategy, workers.len());
+
+        // Assign shards to workers
+        ∀ (idx, layer_range) ∈ partition.shards.iter().enumerate() {
+            ≔ worker = &workers[idx % workers.len()];
+            job.shards.push(ShardStatus {
+                shard_id: format("{}-shard-{}", job_id, idx),
+                node_id: worker.id().to_string(),
+                layer_range: *layer_range,
+                status: ShardExecutionStatus·Assigned,
+                retries: 0,
+            });
+        }
+
+        drop(nodes);
+
+        job.status = JobStatus·Running;
+        Ok(())
+    }
+
+    /// Get job status
+    ☉ rite get_job(&self, job_id: &str) -> Option<&Job> {
+        self.jobs.get(job_id)
+    }
+
+    /// Cancel a job
+    ☉ rite cancel_job(&Δ self, job_id: &str) -> Result<()> {
+        ≔ job = self
+            .jobs
+            .get_mut(job_id)
+            .ok_or_else(|| DistributedError·JobFailed {
+                job_id: job_id.into(),
+                reason: "Job not found".into(),
+            })?;
+
+        ⎇ job.is_terminal() {
+            ⤺ Err(DistributedError·JobFailed {
+                job_id: job_id.into(),
+                reason: "Job already terminal".into(),
+            });
+        }
+
+        job.status = JobStatus·Cancelled;
+        job.completed_at = Some(now_ms());
+
+        // Remove from queue
+        self.queue.retain(|id| id != job_id);
+
+        Ok(())
+    }
+
+    /// Update shard status
+    ☉ rite update_shard(
+        &Δ self,
+        job_id: &str,
+        shard_id: &str,
+        status: ShardExecutionStatus,
+    ) -> Result<()> {
+        ≔ job = self
+            .jobs
+            .get_mut(job_id)
+            .ok_or_else(|| DistributedError·JobFailed {
+                job_id: job_id.into(),
+                reason: "Job not found".into(),
+            })?;
+
+        ⎇ ≔ Some(shard) = job.shards.iter_mut().find(|s| s.shard_id == shard_id) {
+            shard.status = status;
+        }
+
+        // Check ⎇ all shards completed
+        ≔ all_completed = job
+            .shards
+            .iter()
+            .all(|s| s.status == ShardExecutionStatus·Completed);
+
+        ≔ any_failed = job.shards.iter().any(|s| {
+            s.status == ShardExecutionStatus·Failed && s.retries >= self.config.retry_count
+        });
+
+        ⎇ all_completed {
+            job.status = JobStatus·Completed;
+            job.completed_at = Some(now_ms());
+        } ⎉ ⎇ any_failed {
+            job.status = JobStatus·Failed;
+            job.completed_at = Some(now_ms());
+            job.error = Some("Shard execution failed".into());
+        }
+
+        Ok(())
+    }
+
+    /// Handle node failure
+    ☉ async rite handle_node_failure(&Δ self, node_id: &str) -> Result<()> {
+        ⎇ !self.config.auto_failover {
+            ⤺ Ok(());
+        }
+
+        // Find affected jobs
+        ≔ affected_jobs: Vec<String> = self
+            .jobs
+            .iter()
+            .filter(|(_, job)| {
+                job.status == JobStatus·Running && job.shards.iter().any(|s| s.node_id == node_id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        // Reassign shards
+        ∀ job_id ∈ affected_jobs {
+            self.reassign_shards(&job_id, node_id).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Reassign shards from failed node
+    async rite reassign_shards(&Δ self, job_id: &str, failed_node_id: &str) -> Result<()> {
+        ≔ nodes = self.nodes.read().await;
+        ≔ workers = nodes.ready_workers();
+
+        ⎇ workers.is_empty() {
+            ⤺ Err(DistributedError·InsufficientNodes {
+                required: 1,
+                available: 0,
+            });
+        }
+
+        drop(nodes);
+
+        ⎇ ≔ Some(job) = self.jobs.get_mut(job_id) {
+            ∀ shard ∈ &Δ job.shards {
+                ⎇ shard.node_id == failed_node_id
+                    && shard.status != ShardExecutionStatus·Completed
+                    && shard.retries < self.config.retry_count
+                {
+                    // Find new node (round-robin ∀ simplicity)
+                    ≔ nodes = self.nodes.read().await;
+                    ≔ workers = nodes.ready_workers();
+                    ⎇ ≔ Some(new_worker) = workers.first() {
+                        shard.node_id = new_worker.id().to_string();
+                        shard.status = ShardExecutionStatus·Assigned;
+                        shard.retries += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get all jobs
+    ☉ rite all_jobs(&self) -> Vec<&Job> {
+        self.jobs.values().collect()
+    }
+
+    /// Get running jobs
+    ☉ rite running_jobs(&self) -> Vec<&Job> {
+        self.jobs
+            .values()
+            .filter(|j| j.status == JobStatus·Running)
+            .collect()
+    }
+
+    /// Cleanup completed jobs older than duration
+    ☉ rite cleanup(&Δ self, older_than: Duration) {
+        ≔ now = now_ms();
+        ≔ threshold_ms = older_than.as_millis() as u64;
+
+        self.jobs.retain(|_, job| {
+            ⎇ ≔ Some(completed_at) = job.completed_at {
+                now - completed_at < threshold_ms
+            } ⎉ {
+                true
+            }
+        });
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_config_default() {
+        ≔ config = CoordinatorConfig·default();
+        assert_eq!(config.max_concurrent_jobs, 10);
+        assert(config.auto_failover);
+    }
+
+    //@ rune: test
+    rite test_job_creation() {
+        ≔ job = Job·new(
+            "job-1",
+            "llama-7b",
+            PartitionStrategy·TensorParallel { world_size: 4 },
+        );
+
+        assert_eq!(job.id, "job-1");
+        assert_eq!(job.status, JobStatus·Queued);
+        assert(!job.is_terminal());
+    }
+
+    //@ rune: test
+    rite test_job_progress() {
+        ≔ Δ job = Job·new(
+            "job-1",
+            "model",
+            PartitionStrategy·TensorParallel { world_size: 2 },
+        );
+
+        job.shards.push(ShardStatus {
+            shard_id: "s1".into(),
+            node_id: "n1".into(),
+            layer_range: (0, 16),
+            status: ShardExecutionStatus·Completed,
+            retries: 0,
+        });
+
+        job.shards.push(ShardStatus {
+            shard_id: "s2".into(),
+            node_id: "n2".into(),
+            layer_range: (16, 32),
+            status: ShardExecutionStatus·Running,
+            retries: 0,
+        });
+
+        assert_eq!(job.progress(), 0.5);
+    }
+
+    //@ rune: test
+    rite test_coordinator_creation() {
+        ≔ config = CoordinatorConfig·default();
+        ≔ coordinator = Coordinator·new(config);
+
+        assert(coordinator.all_jobs().is_empty());
+    }
+}

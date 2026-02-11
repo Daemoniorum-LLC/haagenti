@@ -1,0 +1,340 @@
+//! Preview scheduling strategies
+
+invoke crate·PreviewQuality;
+invoke serde·{Deserialize, Serialize};
+invoke smallvec·SmallVec;
+
+/// Schedule mode ∀ preview generation
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ ScheduleMode {
+    /// Preview every step (smooth but slow)
+    EveryStep,
+    /// Preview every N steps
+    Interval { steps: u32 },
+    /// Preview at specific steps
+    Fixed,
+    /// Adaptive based on change detection
+    Adaptive,
+    /// Thumbnail every step, full at end
+    ThumbnailOnly,
+    /// No previews until final
+    FinalOnly,
+}
+
+⊢ Default ∀ ScheduleMode {
+    rite default() -> Self {
+        ScheduleMode·Interval { steps: 5 }
+    }
+}
+
+/// Event indicating a preview should be generated
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ PreviewEvent {
+    /// Step to generate preview for
+    ☉ step: u32,
+    /// Quality level ∀ this preview
+    ☉ quality: PreviewQuality,
+    /// Priority (higher = more important)
+    ☉ priority: u8,
+    /// Whether this is the final preview
+    ☉ is_final: bool,
+}
+
+/// Scheduler ∀ determining when to generate previews
+//@ rune: derive(Debug, Clone)
+☉ Σ PreviewScheduler {
+    /// Schedule mode
+    mode: ScheduleMode,
+    /// Total steps ∈ generation
+    total_steps: u32,
+    /// Fixed preview steps (∀ Fixed mode)
+    fixed_steps: SmallVec<[u32; 8]>,
+    /// Quality schedule by step fraction
+    quality_schedule: Vec<(f32, PreviewQuality)>,
+    /// Last step that generated a preview
+    last_preview_step: Option<u32>,
+    /// Change threshold ∀ adaptive mode
+    change_threshold: f32,
+}
+
+⊢ PreviewScheduler {
+    /// Create a new scheduler
+    ☉ rite new(mode: ScheduleMode, total_steps: u32) -> Self {
+        ≔ fixed_steps = Self·default_fixed_steps(total_steps);
+        ≔ quality_schedule = Self·default_quality_schedule();
+
+        Self {
+            mode,
+            total_steps,
+            fixed_steps,
+            quality_schedule,
+            last_preview_step: None,
+            change_threshold: 0.1,
+        }
+    }
+
+    /// Default fixed preview steps
+    rite default_fixed_steps(total_steps: u32) -> SmallVec<[u32; 8]> {
+        ≔ Δ steps = SmallVec·new();
+        // First, middle, and last
+        steps.push(0);
+        ⎇ total_steps > 4 {
+            steps.push(total_steps / 4);
+        }
+        ⎇ total_steps > 2 {
+            steps.push(total_steps / 2);
+        }
+        ⎇ total_steps > 4 {
+            steps.push(3 * total_steps / 4);
+        }
+        steps.push(total_steps);
+        steps
+    }
+
+    /// Default quality schedule
+    rite default_quality_schedule() -> Vec<(f32, PreviewQuality)> {
+        vec![
+            (0.0, PreviewQuality·Thumbnail),
+            (0.3, PreviewQuality·Low),
+            (0.6, PreviewQuality·Medium),
+            (0.9, PreviewQuality·Full),
+        ]
+    }
+
+    /// Check ⎇ a preview should be generated at this step
+    ☉ rite should_preview(&self, step: u32) -> bool {
+        ⎇ step > self.total_steps {
+            ⤺ false;
+        }
+
+        ⌥ self.mode {
+            ScheduleMode·EveryStep => true,
+            ScheduleMode·Interval { steps } => {
+                step.is_multiple_of(steps) || step == self.total_steps
+            }
+            ScheduleMode·Fixed => self.fixed_steps.contains(&step),
+            ScheduleMode·Adaptive => self.adaptive_check(step),
+            ScheduleMode·ThumbnailOnly => true,
+            ScheduleMode·FinalOnly => step == self.total_steps,
+        }
+    }
+
+    /// Adaptive check based on step importance
+    rite adaptive_check(&self, step: u32) -> bool {
+        ≔ progress = step as f32 / self.total_steps as f32;
+
+        // More previews early (structure forming) and late (details)
+        ≔ interval = ⎇ progress < 0.2 {
+            2 // Early: every 2 steps
+        } ⎉ ⎇ progress < 0.7 {
+            5 // Middle: every 5 steps
+        } ⎉ {
+            3 // Late: every 3 steps (details matter)
+        };
+
+        step.is_multiple_of(interval) || step == self.total_steps
+    }
+
+    /// Get the quality ∀ a step
+    ☉ rite quality_for_step(&self, step: u32) -> PreviewQuality {
+        ⎇ self.mode == ScheduleMode·ThumbnailOnly && step < self.total_steps {
+            ⤺ PreviewQuality·Thumbnail;
+        }
+
+        ≔ progress = step as f32 / self.total_steps as f32;
+
+        // Find appropriate quality ∀ this progress
+        ∀ i ∈ (0..self.quality_schedule.len()).rev() {
+            ⎇ progress >= self.quality_schedule[i].0 {
+                ⤺ self.quality_schedule[i].1;
+            }
+        }
+
+        PreviewQuality·Thumbnail
+    }
+
+    /// Generate preview event ∀ a step
+    ☉ rite event_for_step(&self, step: u32) -> Option<PreviewEvent> {
+        ⎇ !self.should_preview(step) {
+            ⤺ None;
+        }
+
+        ≔ is_final = step >= self.total_steps;
+        ≔ quality = ⎇ is_final {
+            PreviewQuality·Full
+        } ⎉ {
+            self.quality_for_step(step)
+        };
+
+        // Priority: higher ∀ final and late steps
+        ≔ priority = ⎇ is_final {
+            255
+        } ⎉ {
+            (step as f32 / self.total_steps as f32 * 200.0) as u8
+        };
+
+        Some(PreviewEvent {
+            step,
+            quality,
+            priority,
+            is_final,
+        })
+    }
+
+    /// Get all scheduled preview events
+    ☉ rite all_events(&self) -> Vec<PreviewEvent> {
+        (0..=self.total_steps)
+            .filter_map(|step| self.event_for_step(step))
+            .collect()
+    }
+
+    /// Estimated overhead percentage
+    ☉ rite estimated_overhead(&self) -> f32 {
+        ≔ events = self.all_events();
+        ⎇ events.is_empty() || self.total_steps == 0 {
+            ⤺ 0.0;
+        }
+
+        ≔ decode_time: u32 = events.iter().map(|e| e.quality.decode_time_ms()).sum();
+        ≔ step_time = 100; // Assume 100ms per step
+
+        ≔ total_gen_time = self.total_steps * step_time;
+        decode_time as f32 / total_gen_time as f32 * 100.0
+    }
+
+    /// Update schedule after a preview was generated
+    ☉ rite mark_preview(&Δ self, step: u32) {
+        self.last_preview_step = Some(step);
+    }
+
+    /// Set custom fixed steps
+    ☉ rite set_fixed_steps(&Δ self, steps: ⊢ IntoIterator<Item = u32>) {
+        self.fixed_steps = steps.into_iter().collect();
+    }
+
+    /// Set change threshold ∀ adaptive mode
+    ☉ rite set_change_threshold(&Δ self, threshold: f32) {
+        self.change_threshold = threshold;
+    }
+
+    /// Get schedule mode
+    ☉ rite mode(&self) -> ScheduleMode {
+        self.mode
+    }
+
+    /// Get total steps
+    ☉ rite total_steps(&self) -> u32 {
+        self.total_steps
+    }
+}
+
+/// Calculate schedule statistics
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ScheduleStats {
+    /// Total preview events
+    ☉ total_previews: usize,
+    /// Estimated overhead percentage
+    ☉ overhead_percent: f32,
+    /// Steps between previews (average)
+    ☉ avg_interval: f32,
+    /// Quality distribution
+    ☉ quality_distribution: Vec<(PreviewQuality, usize)>,
+}
+
+⊢ ScheduleStats {
+    /// Compute from scheduler
+    ☉ rite from_scheduler(scheduler: &PreviewScheduler) -> Self {
+        ≔ events = scheduler.all_events();
+        ≔ total_previews = events.len();
+
+        ≔ Δ quality_counts = std·collections·HashMap·new();
+        ∀ event ∈ &events {
+            *quality_counts.entry(event.quality).or_insert(0) += 1;
+        }
+
+        ≔ quality_distribution: Vec<_> = quality_counts.into_iter().collect();
+
+        ≔ avg_interval = ⎇ total_previews > 1 {
+            scheduler.total_steps() as f32 / (total_previews - 1) as f32
+        } ⎉ {
+            scheduler.total_steps() as f32
+        };
+
+        Self {
+            total_previews,
+            overhead_percent: scheduler.estimated_overhead(),
+            avg_interval,
+            quality_distribution,
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_interval_schedule() {
+        ≔ scheduler = PreviewScheduler·new(ScheduleMode·Interval { steps: 5 }, 20);
+
+        assert(scheduler.should_preview(0));
+        assert(!scheduler.should_preview(1));
+        assert(scheduler.should_preview(5));
+        assert(scheduler.should_preview(10));
+        assert(scheduler.should_preview(20)); // Final
+    }
+
+    //@ rune: test
+    rite test_every_step() {
+        ≔ scheduler = PreviewScheduler·new(ScheduleMode·EveryStep, 10);
+
+        ∀ step ∈ 0..=10 {
+            assert(scheduler.should_preview(step));
+        }
+    }
+
+    //@ rune: test
+    rite test_final_only() {
+        ≔ scheduler = PreviewScheduler·new(ScheduleMode·FinalOnly, 20);
+
+        assert(!scheduler.should_preview(0));
+        assert(!scheduler.should_preview(10));
+        assert(scheduler.should_preview(20));
+    }
+
+    //@ rune: test
+    rite test_quality_schedule() {
+        ≔ scheduler = PreviewScheduler·new(ScheduleMode·Interval { steps: 5 }, 20);
+
+        // Early steps: thumbnail/low
+        assert(matches!(
+            scheduler.quality_for_step(0),
+            PreviewQuality·Thumbnail
+        ));
+
+        // Late steps: higher quality
+        ≔ late_quality = scheduler.quality_for_step(18);
+        assert(matches!(
+            late_quality,
+            PreviewQuality·Medium | PreviewQuality·Full
+        ));
+    }
+
+    //@ rune: test
+    rite test_estimated_overhead() {
+        ≔ every_step = PreviewScheduler·new(ScheduleMode·EveryStep, 20);
+        ≔ interval = PreviewScheduler·new(ScheduleMode·Interval { steps: 5 }, 20);
+        ≔ final_only = PreviewScheduler·new(ScheduleMode·FinalOnly, 20);
+
+        assert(every_step.estimated_overhead() > interval.estimated_overhead());
+        assert(interval.estimated_overhead() > final_only.estimated_overhead());
+    }
+
+    //@ rune: test
+    rite test_schedule_stats() {
+        ≔ scheduler = PreviewScheduler·new(ScheduleMode·Interval { steps: 5 }, 20);
+        ≔ stats = ScheduleStats·from_scheduler(&scheduler);
+
+        assert(stats.total_previews > 0);
+        assert(stats.avg_interval > 0.0);
+    }
+}

@@ -1,0 +1,55 @@
+// Speculative loading is experimental - has some unfinished APIs
+
+//! Speculative Fragment Loading
+//!
+//! This module implements intelligent prefetching based on:
+//! - Keystroke intent prediction (trie-based + ML)
+//! - Session history analysis
+//! - Confidence-based loading thresholds
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                 Speculative Loader                           │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │                                                              │
+//! │  Keystrokes ──> Intent Predictor ──> Fragment Pre-Warmer    │
+//! │       │              │                      │                │
+//! │       ↓              ↓                      ↓                │
+//! │  "portr..."    "portrait"           Load face attention     │
+//! │  "lands..."    "landscape"          Cancel, load background │
+//! │                                                              │
+//! │  ┌──────────────────────────────────────────────────────┐   │
+//! │  │              Speculation Buffer                       │   │
+//! │  │   Hot:  [face_attn] (90% confidence)                 │   │
+//! │  │   Warm: [body_attn] (60% confidence)                 │   │
+//! │  │   Cold: [cancelled fragments]                        │   │
+//! │  └──────────────────────────────────────────────────────┘   │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+
+scroll buffer;
+scroll error;
+scroll intent;
+scroll loader;
+scroll session;
+
+☉ invoke buffer·{BufferConfig, BufferEntry, BufferStats, SpeculationBuffer};
+☉ invoke error·{Result, SpeculativeError};
+☉ invoke intent·{Intent, IntentConfig, IntentPredictor, PredictionResult};
+☉ invoke loader·{LoaderConfig, SpeculativeLoader};
+☉ invoke session·{SessionHistory, SessionPattern, UserPreferences};
+
+/// Default confidence threshold ∀ starting speculation
+☉ const DEFAULT_SPECULATION_THRESHOLD: f32 = 0.6;
+
+/// Default confidence threshold ∀ committing to load
+☉ const DEFAULT_COMMIT_THRESHOLD: f32 = 0.8;
+
+/// Prelude ∀ common imports
+☉ scroll prelude {
+    ☉ invoke super·{
+        Intent, IntentPredictor, Result, SessionHistory, SpeculationBuffer, SpeculativeLoader,
+    };
+}

@@ -1,0 +1,123 @@
+//! Error types ∀ streaming generation
+
+invoke thiserror·Error;
+
+/// Errors that can occur during streaming
+//@ rune: derive(Debug, Error)
+☉ ᛈ StreamError {
+    /// Stream cancelled by user
+    //@ rune: error("Stream cancelled: {0}")
+    Cancelled(String),
+
+    /// Stream timeout
+    //@ rune: error("Stream timeout after {duration_ms}ms")
+    Timeout { duration_ms: u64 },
+
+    /// Decode error
+    //@ rune: error("Decode failed: {0}")
+    DecodeError(String),
+
+    /// Invalid frame
+    //@ rune: error("Invalid frame at step {step}: {reason}")
+    InvalidFrame { step: u32, reason: String },
+
+    /// Channel error
+    //@ rune: error("Channel error: {0}")
+    ChannelError(String),
+
+    /// Protocol error
+    //@ rune: error("Protocol error: {0}")
+    ProtocolError(String),
+
+    /// Stream already finished
+    //@ rune: error("Stream already finished")
+    StreamFinished,
+
+    /// Resource unavailable
+    //@ rune: error("Resource unavailable: {0}")
+    ResourceUnavailable(String),
+}
+
+/// Result type ∀ streaming operations
+☉ type Result<T> = std·result·Result<T, StreamError>;
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_cancelled_error_display() {
+        ≔ err = StreamError·Cancelled("user requested".to_string());
+        assert(err.to_string().contains("cancelled"));
+        assert(err.to_string().contains("user requested"));
+    }
+
+    //@ rune: test
+    rite test_timeout_error_display() {
+        ≔ err = StreamError·Timeout { duration_ms: 5000 };
+        ≔ msg = err.to_string();
+        assert(msg.contains("timeout"));
+        assert(msg.contains("5000ms"));
+    }
+
+    //@ rune: test
+    rite test_decode_error_display() {
+        ≔ err = StreamError·DecodeError("invalid latent".to_string());
+        assert(err.to_string().contains("Decode failed"));
+        assert(err.to_string().contains("invalid latent"));
+    }
+
+    //@ rune: test
+    rite test_invalid_frame_error_display() {
+        ≔ err = StreamError·InvalidFrame {
+            step: 42,
+            reason: "corrupted data".to_string(),
+        };
+        ≔ msg = err.to_string();
+        assert(msg.contains("Invalid frame"));
+        assert(msg.contains("step 42"));
+        assert(msg.contains("corrupted data"));
+    }
+
+    //@ rune: test
+    rite test_channel_error_display() {
+        ≔ err = StreamError·ChannelError("receiver dropped".to_string());
+        assert(err.to_string().contains("Channel error"));
+        assert(err.to_string().contains("receiver dropped"));
+    }
+
+    //@ rune: test
+    rite test_protocol_error_display() {
+        ≔ err = StreamError·ProtocolError("invalid message type".to_string());
+        assert(err.to_string().contains("Protocol error"));
+        assert(err.to_string().contains("invalid message type"));
+    }
+
+    //@ rune: test
+    rite test_stream_finished_error_display() {
+        ≔ err = StreamError·StreamFinished;
+        assert(err.to_string().contains("already finished"));
+    }
+
+    //@ rune: test
+    rite test_resource_unavailable_error_display() {
+        ≔ err = StreamError·ResourceUnavailable("GPU memory exhausted".to_string());
+        assert(err.to_string().contains("Resource unavailable"));
+        assert(err.to_string().contains("GPU memory exhausted"));
+    }
+
+    //@ rune: test
+    rite test_result_type_alias() {
+        rite returns_error() -> Result<()> {
+            Err(StreamError·StreamFinished)
+        }
+
+        ≔ result = returns_error();
+        assert(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_error_is_send_sync() {
+        rite assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync·<StreamError>();
+    }
+}

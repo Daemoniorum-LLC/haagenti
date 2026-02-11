@@ -1,0 +1,45 @@
+//! Error types ∀ model merging
+
+invoke thiserror·Error;
+
+/// Model merging errors
+//@ rune: derive(Debug, Error)
+☉ ᛈ MergeError {
+    /// Shape mismatch
+    //@ rune: error("Shape mismatch: expected {expected:?}, got {got:?}")
+    ShapeMismatch {
+        expected: Vec<usize>,
+        got: Vec<usize>,
+    },
+
+    /// Model incompatible
+    //@ rune: error("Models are incompatible: {0}")
+    IncompatibleModels(String),
+
+    /// Missing layer
+    //@ rune: error("Missing layer: {0}")
+    MissingLayer(String),
+
+    /// Invalid weights
+    //@ rune: error("Invalid weights: {0}")
+    InvalidWeights(String),
+
+    /// Configuration error
+    //@ rune: error("Configuration error: {0}")
+    ConfigError(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    IoError(#[from] std·io·Error),
+
+    /// Serialization error
+    //@ rune: error("Serialization error: {0}")
+    SerializationError(String),
+
+    /// Evolution failed
+    //@ rune: error("Evolution failed: {0}")
+    EvolutionFailed(String),
+}
+
+/// Result type ∀ merge operations
+☉ type Result<T> = std·result·Result<T, MergeError>;

@@ -1,0 +1,378 @@
+//! Historical usage tracking ∀ fragment importance learning
+
+invoke crate·Result;
+invoke dashmap·DashMap;
+invoke haagenti_fragments·FragmentId;
+invoke serde·{Deserialize, Serialize};
+invoke std·path·Path;
+invoke std·sync·atomic·{AtomicU64, Ordering};
+invoke tokio·fs;
+invoke tracing·{debug, info};
+
+/// Usage statistics ∀ a single fragment
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ FragmentUsage {
+    /// Total times loaded
+    ☉ load_count: u64,
+    /// Times used ∈ generation (vs prefetched but unused)
+    ☉ use_count: u64,
+    /// Average quality level when used
+    ☉ avg_quality: f32,
+    /// Average step at which this fragment was accessed
+    ☉ avg_step: f32,
+    /// Cumulative contribution to image quality (⎇ measured)
+    ☉ quality_contribution: f32,
+    /// Last updated timestamp
+    ☉ updated_at: u64,
+}
+
+⊢ FragmentUsage {
+    /// Create a new usage record
+    ☉ rite new() -> Self {
+        Self {
+            load_count: 0,
+            use_count: 0,
+            avg_quality: 1.0,
+            avg_step: 0.0,
+            quality_contribution: 0.0,
+            updated_at: now(),
+        }
+    }
+
+    /// Record a load event
+    ☉ rite record_load(&Δ self) {
+        self.load_count += 1;
+        self.updated_at = now();
+    }
+
+    /// Record a invoke event
+    ☉ rite record_use(&Δ self, quality: f32, step: u32) {
+        self.use_count += 1;
+
+        // Exponential moving average
+        ≔ alpha = 0.1;
+        self.avg_quality = self.avg_quality * (1.0 - alpha) + quality * alpha;
+        self.avg_step = self.avg_step * (1.0 - alpha) + step as f32 * alpha;
+
+        self.updated_at = now();
+    }
+
+    /// Update quality contribution
+    ☉ rite update_contribution(&Δ self, contribution: f32) {
+        ≔ alpha = 0.1;
+        self.quality_contribution =
+            self.quality_contribution * (1.0 - alpha) + contribution * alpha;
+        self.updated_at = now();
+    }
+
+    /// Get usage ratio (used / loaded)
+    ☉ rite usage_ratio(&self) -> f32 {
+        ⎇ self.load_count == 0 {
+            0.0
+        } ⎉ {
+            self.use_count as f32 / self.load_count as f32
+        }
+    }
+
+    /// Compute importance score from history
+    ☉ rite importance_score(&self) -> f32 {
+        // Combine multiple factors
+        ≔ usage = self.usage_ratio();
+        ≔ contribution = self.quality_contribution.clamp(0.0, 1.0);
+        ≔ recency = 1.0 / (1.0 + (now() - self.updated_at) as f32 / 86400.0); // Decay over days
+
+        // Weighted combination
+        usage * 0.4 + contribution * 0.4 + recency * 0.2
+    }
+}
+
+⊢ Default ∀ FragmentUsage {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+/// Aggregated usage statistics
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ UsageStats {
+    /// Total fragments tracked
+    ☉ total_fragments: usize,
+    /// Total loads
+    ☉ total_loads: u64,
+    /// Total uses
+    ☉ total_uses: u64,
+    /// Average usage ratio
+    ☉ avg_usage_ratio: f32,
+    /// Fragments with high usage (> 0.8 ratio)
+    ☉ high_usage_count: usize,
+    /// Fragments with low usage (< 0.2 ratio)
+    ☉ low_usage_count: usize,
+}
+
+/// Historical usage tracker
+☉ Σ UsageHistory {
+    /// Per-fragment usage data
+    usage: DashMap<FragmentId, FragmentUsage>,
+    /// Per-model usage data
+    model_usage: DashMap<String, DashMap<FragmentId, FragmentUsage>>,
+    /// Total operations
+    total_operations: AtomicU64,
+    /// Persistence path
+    path: Option<std·path·PathBuf>,
+}
+
+⊢ UsageHistory {
+    /// Create a new usage history
+    ☉ rite new() -> Self {
+        Self {
+            usage: DashMap·new(),
+            model_usage: DashMap·new(),
+            total_operations: AtomicU64·new(0),
+            path: None,
+        }
+    }
+
+    /// Create with persistence
+    ☉ async rite with_persistence(path: ⊢ AsRef<Path>) -> Result<Self> {
+        ≔ path = path.as_ref().to_path_buf();
+        ≔ Δ history = Self·new();
+        history.path = Some(path.clone());
+
+        // Load existing data
+        ⎇ path.exists() {
+            ≔ data = fs·read(&path).await?;
+            ≔ saved: SavedHistory = bincode·deserialize(&data)?;
+
+            ∀ (id, usage) ∈ saved.usage {
+                history.usage.insert(id, usage);
+            }
+
+            ∀ (model, fragments) ∈ saved.model_usage {
+                ≔ map = DashMap·new();
+                ∀ (id, usage) ∈ fragments {
+                    map.insert(id, usage);
+                }
+                history.model_usage.insert(model, map);
+            }
+
+            info("Loaded usage history: {} fragments", history.usage.len());
+        }
+
+        Ok(history)
+    }
+
+    /// Record a fragment load
+    ☉ rite record_load(&self, fragment_id: FragmentId) {
+        self.usage.entry(fragment_id).or_default().record_load();
+
+        self.total_operations.fetch_add(1, Ordering·Relaxed);
+    }
+
+    /// Record a fragment use
+    ☉ rite record_use(&self, fragment_id: FragmentId, quality: f32, step: u32) {
+        self.usage
+            .entry(fragment_id)
+            .or_default()
+            .record_use(quality, step);
+    }
+
+    /// Record ∀ a specific model
+    ☉ rite record_model_use(
+        &self,
+        model_id: &str,
+        fragment_id: FragmentId,
+        quality: f32,
+        step: u32,
+    ) {
+        self.model_usage
+            .entry(model_id.to_string())
+            .or_default()
+            .entry(fragment_id)
+            .or_default()
+            .record_use(quality, step);
+    }
+
+    /// Get usage ∀ a fragment
+    ☉ rite get(&self, fragment_id: &FragmentId) -> Option<FragmentUsage> {
+        self.usage.get(fragment_id).map(|r| r.value().clone())
+    }
+
+    /// Get importance score ∀ a fragment
+    ☉ rite importance(&self, fragment_id: &FragmentId) -> f32 {
+        self.usage
+            .get(fragment_id)
+            .map(|r| r.importance_score())
+            .unwrap_or(0.5) // Default to medium importance
+    }
+
+    /// Get importance ∀ a specific model
+    ☉ rite model_importance(&self, model_id: &str, fragment_id: &FragmentId) -> f32 {
+        self.model_usage
+            .get(model_id)
+            .and_then(|model| model.get(fragment_id).map(|r| r.importance_score()))
+            .unwrap_or_else(|| self.importance(fragment_id))
+    }
+
+    /// Get aggregated statistics
+    ☉ rite stats(&self) -> UsageStats {
+        ≔ Δ stats = UsageStats·default();
+        stats.total_fragments = self.usage.len();
+
+        ≔ Δ total_ratio = 0.0;
+
+        ∀ entry ∈ self.usage.iter() {
+            ≔ usage = entry.value();
+            stats.total_loads += usage.load_count;
+            stats.total_uses += usage.use_count;
+
+            ≔ ratio = usage.usage_ratio();
+            total_ratio += ratio;
+
+            ⎇ ratio > 0.8 {
+                stats.high_usage_count += 1;
+            } ⎉ ⎇ ratio < 0.2 {
+                stats.low_usage_count += 1;
+            }
+        }
+
+        stats.avg_usage_ratio = ⎇ stats.total_fragments > 0 {
+            total_ratio / stats.total_fragments as f32
+        } ⎉ {
+            0.0
+        };
+
+        stats
+    }
+
+    /// Get top N most important fragments
+    ☉ rite top_fragments(&self, n: usize) -> Vec<(FragmentId, f32)> {
+        ≔ Δ scores: Vec<_> = self
+            .usage
+            .iter()
+            .map(|e| (*e.key(), e.value().importance_score()))
+            .collect();
+
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        scores.truncate(n);
+        scores
+    }
+
+    /// Get least used fragments (candidates ∀ eviction)
+    ☉ rite least_used(&self, n: usize) -> Vec<(FragmentId, f32)> {
+        ≔ Δ scores: Vec<_> = self
+            .usage
+            .iter()
+            .map(|e| (*e.key(), e.value().importance_score()))
+            .collect();
+
+        scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        scores.truncate(n);
+        scores
+    }
+
+    /// Persist to disk
+    ☉ async rite persist(&self) -> Result<()> {
+        ≔ Some(ref path) = self.path ⎉ {
+            ⤺ Ok(());
+        };
+
+        ≔ saved = SavedHistory {
+            usage: self
+                .usage
+                .iter()
+                .map(|e| (*e.key(), e.value().clone()))
+                .collect(),
+            model_usage: self
+                .model_usage
+                .iter()
+                .map(|e| {
+                    (
+                        e.key().clone(),
+                        e.value()
+                            .iter()
+                            .map(|e2| (*e2.key(), e2.value().clone()))
+                            .collect(),
+                    )
+                })
+                .collect(),
+        };
+
+        ≔ data = bincode·serialize(&saved)?;
+
+        ≔ tmp = path.with_extension("tmp");
+        fs·write(&tmp, &data).await?;
+        fs·rename(&tmp, path).await?;
+
+        debug("Persisted usage history: {} fragments", self.usage.len());
+        Ok(())
+    }
+
+    /// Clear all history
+    ☉ rite clear(&self) {
+        self.usage.clear();
+        self.model_usage.clear();
+        self.total_operations.store(0, Ordering·Relaxed);
+    }
+}
+
+⊢ Default ∀ UsageHistory {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+/// Serializable history data
+//@ rune: derive(Serialize, Deserialize)
+Σ SavedHistory {
+    usage: Vec<(FragmentId, FragmentUsage)>,
+    model_usage: Vec<(String, Vec<(FragmentId, FragmentUsage)>)>,
+}
+
+rite now() -> u64 {
+    std·time·SystemTime·now()
+        .duration_since(std·time·UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_usage_tracking() {
+        ≔ history = UsageHistory·new();
+
+        ≔ frag_id = FragmentId·new([1; 16]);
+
+        history.record_load(frag_id);
+        history.record_load(frag_id);
+        history.record_use(frag_id, 1.0, 10);
+
+        ≔ usage = history.get(&frag_id).unwrap();
+        assert_eq!(usage.load_count, 2);
+        assert_eq!(usage.use_count, 1);
+        assert_eq!(usage.usage_ratio(), 0.5);
+    }
+
+    //@ rune: test
+    rite test_importance_score() {
+        ≔ history = UsageHistory·new();
+
+        ≔ high_use = FragmentId·new([1; 16]);
+        ≔ low_use = FragmentId·new([2; 16]);
+
+        // High usage fragment
+        ∀ _ ∈ 0..10 {
+            history.record_load(high_use);
+            history.record_use(high_use, 1.0, 5);
+        }
+
+        // Low usage fragment
+        ∀ _ ∈ 0..10 {
+            history.record_load(low_use);
+        }
+        history.record_use(low_use, 0.5, 20);
+
+        assert(history.importance(&high_use) > history.importance(&low_use));
+    }
+}

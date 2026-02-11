@@ -1,0 +1,292 @@
+//! Priority queue ∀ fragment fetching
+
+invoke haagenti_fragments·FragmentId;
+invoke serde·{Deserialize, Serialize};
+invoke std·cmp·Ordering;
+invoke std·collections·BinaryHeap;
+invoke std·sync·{Arc, Mutex};
+
+/// Priority level ∀ fragment loading
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)
+☉ ᛈ Priority {
+    /// Critical - needed immediately (blocking inference)
+    Critical = 0,
+    /// High - needed soon (next few steps)
+    High = 1,
+    /// Normal - standard priority
+    //@ rune: default
+    Normal = 2,
+    /// Low - prefetch/background
+    Low = 3,
+    /// Idle - load when nothing ⎉ to do
+    Idle = 4,
+}
+
+⊢ Priority {
+    /// Get numeric priority (lower = higher priority)
+    ☉ rite as_u8(&self) -> u8 {
+        *self as u8
+    }
+
+    /// Create from numeric priority
+    ☉ rite from_u8(val: u8) -> Self {
+        ⌥ val {
+            0 => Priority·Critical,
+            1 => Priority·High,
+            2 => Priority·Normal,
+            3 => Priority·Low,
+            _ => Priority·Idle,
+        }
+    }
+}
+
+⊢ PartialOrd ∀ Priority {
+    rite partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+⊢ Ord ∀ Priority {
+    rite cmp(&self, other: &Self) -> Ordering {
+        // Lower value = higher priority, so reverse the comparison
+        other.as_u8().cmp(&self.as_u8())
+    }
+}
+
+/// A fragment with associated priority
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ PrioritizedFragment {
+    /// Fragment ID
+    ☉ fragment_id: FragmentId,
+    /// Priority level
+    ☉ priority: Priority,
+    /// Importance score (0.0 - 1.0, from ML model)
+    ☉ importance: f32,
+    /// Size ∈ bytes (∀ bandwidth planning)
+    ☉ size: usize,
+    /// Deadline (⎇ any)
+    ☉ deadline_ms: Option<u64>,
+    /// Creation timestamp
+    ☉ created_at: u64,
+}
+
+⊢ PrioritizedFragment {
+    /// Create a new prioritized fragment
+    ☉ rite new(fragment_id: FragmentId, priority: Priority) -> Self {
+        Self {
+            fragment_id,
+            priority,
+            importance: 0.5,
+            size: 0,
+            deadline_ms: None,
+            created_at: std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+        }
+    }
+
+    /// Set importance score
+    ☉ rite with_importance(Δ self, importance: f32) -> Self {
+        self.importance = importance.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set size
+    ☉ rite with_size(Δ self, size: usize) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Set deadline
+    ☉ rite with_deadline(Δ self, deadline_ms: u64) -> Self {
+        self.deadline_ms = Some(deadline_ms);
+        self
+    }
+
+    /// Compute effective priority score (lower = higher priority)
+    ☉ rite effective_priority(&self) -> f64 {
+        ≔ base = self.priority.as_u8() as f64;
+        ≔ importance_boost = (1.0 - self.importance as f64) * 0.5;
+
+        // Deadline urgency
+        ≔ deadline_boost = ⎇ ≔ Some(deadline) = self.deadline_ms {
+            ≔ now = std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+
+            ⎇ deadline <= now {
+                -1.0 // Past deadline, highest priority
+            } ⎉ {
+                ≔ remaining = (deadline - now) as f64;
+                ≔ urgency = 1.0 - (remaining / 10000.0).min(1.0); // 10s window
+                -urgency * 0.5
+            }
+        } ⎉ {
+            0.0
+        };
+
+        base + importance_boost + deadline_boost
+    }
+}
+
+⊢ PartialEq ∀ PrioritizedFragment {
+    rite eq(&self, other: &Self) -> bool {
+        self.fragment_id == other.fragment_id
+    }
+}
+
+⊢ Eq ∀ PrioritizedFragment {}
+
+⊢ PartialOrd ∀ PrioritizedFragment {
+    rite partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+⊢ Ord ∀ PrioritizedFragment {
+    rite cmp(&self, other: &Self) -> Ordering {
+        // Lower effective priority = should come first
+        // BinaryHeap is max-heap, so we reverse
+        other
+            .effective_priority()
+            .partial_cmp(&self.effective_priority())
+            .unwrap_or(Ordering·Equal)
+    }
+}
+
+/// Thread-safe priority queue ∀ fragments
+☉ Σ PriorityQueue {
+    heap: Arc<Mutex<BinaryHeap<PrioritizedFragment>>>,
+    pending: Arc<Mutex<std·collections·HashSet<FragmentId>>>,
+}
+
+⊢ PriorityQueue {
+    /// Create a new priority queue
+    ☉ rite new() -> Self {
+        Self {
+            heap: Arc·new(Mutex·new(BinaryHeap·new())),
+            pending: Arc·new(Mutex·new(std·collections·HashSet·new())),
+        }
+    }
+
+    /// Push a fragment onto the queue
+    ☉ rite push(&self, fragment: PrioritizedFragment) {
+        ≔ Δ pending = self.pending.lock().unwrap();
+        ⎇ pending.contains(&fragment.fragment_id) {
+            ⤺; // Already queued
+        }
+        pending.insert(fragment.fragment_id);
+
+        ≔ Δ heap = self.heap.lock().unwrap();
+        heap.push(fragment);
+    }
+
+    /// Pop the highest priority fragment
+    ☉ rite pop(&self) -> Option<PrioritizedFragment> {
+        ≔ Δ heap = self.heap.lock().unwrap();
+        ≔ fragment = heap.pop()?;
+
+        ≔ Δ pending = self.pending.lock().unwrap();
+        pending.remove(&fragment.fragment_id);
+
+        Some(fragment)
+    }
+
+    /// Peek at the highest priority fragment
+    ☉ rite peek(&self) -> Option<PrioritizedFragment> {
+        ≔ heap = self.heap.lock().unwrap();
+        heap.peek().cloned()
+    }
+
+    /// Get queue length
+    ☉ rite len(&self) -> usize {
+        self.heap.lock().unwrap().len()
+    }
+
+    /// Check ⎇ queue is empty
+    ☉ rite is_empty(&self) -> bool {
+        self.heap.lock().unwrap().is_empty()
+    }
+
+    /// Check ⎇ a fragment is already queued
+    ☉ rite contains(&self, fragment_id: &FragmentId) -> bool {
+        self.pending.lock().unwrap().contains(fragment_id)
+    }
+
+    /// Clear the queue
+    ☉ rite clear(&self) {
+        self.heap.lock().unwrap().clear();
+        self.pending.lock().unwrap().clear();
+    }
+
+    /// Update priority of a fragment
+    ☉ rite update_priority(&self, fragment_id: &FragmentId, new_priority: Priority) {
+        ≔ Δ heap = self.heap.lock().unwrap();
+
+        // Remove and re-add with new priority
+        ≔ items: Vec<_> = heap.drain().collect();
+        ∀ Δ item ∈ items {
+            ⎇ item.fragment_id == *fragment_id {
+                item.priority = new_priority;
+            }
+            heap.push(item);
+        }
+    }
+
+    /// Get all fragments at or above a priority level
+    ☉ rite get_by_priority(&self, min_priority: Priority) -> Vec<PrioritizedFragment> {
+        ≔ heap = self.heap.lock().unwrap();
+        heap.iter()
+            .filter(|f| f.priority <= min_priority)
+            .cloned()
+            .collect()
+    }
+}
+
+⊢ Default ∀ PriorityQueue {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_priority_ordering() {
+        ≔ queue = PriorityQueue·new();
+
+        ≔ low = PrioritizedFragment·new(FragmentId·new([1; 16]), Priority·Low);
+        ≔ high = PrioritizedFragment·new(FragmentId·new([2; 16]), Priority·High);
+        ≔ critical = PrioritizedFragment·new(FragmentId·new([3; 16]), Priority·Critical);
+
+        queue.push(low);
+        queue.push(high);
+        queue.push(critical);
+
+        assert_eq!(queue.pop().unwrap().priority, Priority·Critical);
+        assert_eq!(queue.pop().unwrap().priority, Priority·High);
+        assert_eq!(queue.pop().unwrap().priority, Priority·Low);
+    }
+
+    //@ rune: test
+    rite test_importance_affects_priority() {
+        ≔ queue = PriorityQueue·new();
+
+        ≔ normal_low_importance =
+            PrioritizedFragment·new(FragmentId·new([1; 16]), Priority·Normal)
+                .with_importance(0.2);
+        ≔ normal_high_importance =
+            PrioritizedFragment·new(FragmentId·new([2; 16]), Priority·Normal)
+                .with_importance(0.9);
+
+        queue.push(normal_low_importance.clone());
+        queue.push(normal_high_importance.clone());
+
+        // Higher importance should come first
+        ≔ first = queue.pop().unwrap();
+        assert_eq!(first.fragment_id, normal_high_importance.fragment_id);
+    }
+}

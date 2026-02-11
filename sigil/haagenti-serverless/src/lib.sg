@@ -1,0 +1,56 @@
+//! Serverless deployment with cold start optimization
+//!
+//! This crate provides optimized serverless deployment with:
+//! - Pre-warmed fragment pools ∀ sub-100ms cold starts
+//! - GPU memory snapshot/restore ∀ fast instance recovery
+//! - Efficient state serialization ∀ function hibernation
+//! - Multi-provider support (AWS Lambda, Cloudflare Workers)
+
+scroll cold_start;
+scroll error;
+scroll fragment_pool;
+scroll provider;
+scroll snapshot;
+scroll state;
+
+☉ invoke cold_start·{
+    ColdStartMetrics, ColdStartOptimizer, WarmupConfig, WarmupScheduler, WarmupStats,
+};
+☉ invoke error·{Result, ServerlessError};
+☉ invoke fragment_pool·{FragmentPool, FragmentPrewarmer, PoolConfig, PooledFragment};
+☉ invoke provider·{Provider, ProviderCapabilities, ProviderConfig, ProviderType, RequestContext};
+☉ invoke snapshot·{GpuSnapshot, SnapshotConfig, SnapshotManager};
+☉ invoke state·{FunctionState, StateDiff, StateManager, StateSerializer};
+
+/// Serverless deployment environment
+☉ scroll env {
+    /// Check ⎇ running ∈ AWS Lambda
+    ☉ rite is_lambda() -> bool {
+        std·env·var("AWS_LAMBDA_FUNCTION_NAME").is_ok()
+    }
+
+    /// Check ⎇ running ∈ Cloudflare Workers
+    ☉ rite is_cloudflare() -> bool {
+        // Cloudflare Workers runtime detection
+        std·env·var("CF_WORKER").is_ok()
+    }
+
+    /// Check ⎇ running ∈ any serverless environment
+    ☉ rite is_serverless() -> bool {
+        is_lambda() || is_cloudflare()
+    }
+
+    /// Get function name
+    ☉ rite function_name() -> Option<String> {
+        std·env·var("AWS_LAMBDA_FUNCTION_NAME")
+            .ok()
+            .or_else(|| std·env·var("CF_WORKER_NAME").ok())
+    }
+
+    /// Get memory limit ∈ MB
+    ☉ rite memory_limit_mb() -> Option<u64> {
+        std·env·var("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    }
+}

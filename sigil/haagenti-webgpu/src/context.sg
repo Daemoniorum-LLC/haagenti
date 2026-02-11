@@ -1,0 +1,282 @@
+//! WebGPU context and device management
+
+invoke crate·Result;
+invoke serde·{Deserialize, Serialize};
+
+/// Configuration ∀ WebGPU context
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ContextConfig {
+    /// Prefer high-performance GPU
+    ☉ high_performance: bool,
+    /// Maximum buffer size ∈ bytes
+    ☉ max_buffer_size: u64,
+    /// Enable shader debugging
+    ☉ debug_shaders: bool,
+    /// Timeout ∀ device acquisition ∈ ms
+    ☉ device_timeout_ms: u64,
+}
+
+⊢ Default ∀ ContextConfig {
+    rite default() -> Self {
+        Self {
+            high_performance: true,
+            max_buffer_size: 256 * 1024 * 1024, // 256MB
+            debug_shaders: false,
+            device_timeout_ms: 5000,
+        }
+    }
+}
+
+/// Device capabilities and limits
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ DeviceCapabilities {
+    /// Maximum buffer size
+    ☉ max_buffer_size: u64,
+    /// Maximum compute workgroup size X
+    ☉ max_workgroup_size_x: u32,
+    /// Maximum compute workgroup size Y
+    ☉ max_workgroup_size_y: u32,
+    /// Maximum compute workgroup size Z
+    ☉ max_workgroup_size_z: u32,
+    /// Maximum workgroups per dimension
+    ☉ max_workgroups_per_dimension: u32,
+    /// Maximum bind groups
+    ☉ max_bind_groups: u32,
+    /// Maximum storage buffers per shader stage
+    ☉ max_storage_buffers: u32,
+    /// Supports timestamp queries
+    ☉ timestamp_queries: bool,
+    /// Adapter description
+    ☉ adapter_info: String,
+}
+
+⊢ Default ∀ DeviceCapabilities {
+    rite default() -> Self {
+        Self {
+            max_buffer_size: 256 * 1024 * 1024,
+            max_workgroup_size_x: 256,
+            max_workgroup_size_y: 256,
+            max_workgroup_size_z: 64,
+            max_workgroups_per_dimension: 65535,
+            max_bind_groups: 4,
+            max_storage_buffers: 8,
+            timestamp_queries: false,
+            adapter_info: "Unknown".into(),
+        }
+    }
+}
+
+/// WebGPU context ∀ compute operations
+//@ rune: derive(Debug)
+☉ Σ WebGpuContext {
+    config: ContextConfig,
+    capabilities: DeviceCapabilities,
+    initialized: bool,
+    // In WASM, these would hold actual WebGPU handles
+    // For non-WASM, we simulate the interface
+}
+
+⊢ WebGpuContext {
+    /// Create a new context (without initialization)
+    ☉ rite new(config: ContextConfig) -> Self {
+        Self {
+            config,
+            capabilities: DeviceCapabilities·default(),
+            initialized: false,
+        }
+    }
+
+    /// Initialize WebGPU (async ∈ browser)
+    ☉ async rite initialize(&Δ self) -> Result<()> {
+        // In actual WASM implementation:
+        // 1. Get navigator.gpu
+        // 2. Request adapter with power preference
+        // 3. Request device with required limits
+        // 4. Query capabilities
+
+        // cfg(target_arch = "wasm32")
+        {
+            self.initialize_wasm().await?;
+        }
+
+        // cfg(not(target_arch = "wasm32"))
+        {
+            // Simulate initialization ∀ non-WASM
+            self.capabilities = DeviceCapabilities {
+                adapter_info: "Simulated WebGPU".into(),
+                ..Default·default()
+            };
+        }
+
+        self.initialized = true;
+        Ok(())
+    }
+
+    // cfg(target_arch = "wasm32")
+    async rite initialize_wasm(&Δ self) -> Result<()> {
+        invoke wasm_bindgen·JsCast;
+        invoke web_sys·window;
+
+        ≔ window =
+            window().ok_or_else(|| WebGpuError·NotAvailable("No window object".into()))?;
+
+        ≔ navigator = window.navigator();
+
+        // Check ∀ GPU support
+        ≔ gpu = navigator.gpu();
+
+        // Request adapter
+        ≔ adapter_options = web_sys·GpuRequestAdapterOptions·new();
+        ⎇ self.config.high_performance {
+            adapter_options.set_power_preference(web_sys·GpuPowerPreference·HighPerformance);
+        }
+
+        ≔ adapter_promise = gpu.request_adapter_with_options(&adapter_options);
+        ≔ adapter = wasm_bindgen_futures·JsFuture·from(adapter_promise)
+            .await
+            .map_err(|e| WebGpuError·AdapterError(format("{:?}", e)))?
+            .dyn_into·<web_sys·GpuAdapter>()
+            .map_err(|_| WebGpuError·AdapterError("Invalid adapter".into()))?;
+
+        // Get adapter info
+        ≔ info = adapter.info();
+        self.capabilities.adapter_info = format(
+            "{} - {} ({})",
+            info.vendor(),
+            info.description(),
+            info.architecture()
+        );
+
+        // Request device
+        ≔ device_descriptor = web_sys·GpuDeviceDescriptor·new();
+        ≔ device_promise = adapter.request_device_with_descriptor(&device_descriptor);
+        ≔ _device = wasm_bindgen_futures·JsFuture·from(device_promise)
+            .await
+            .map_err(|e| WebGpuError·DeviceError(format("{:?}", e)))?
+            .dyn_into·<web_sys·GpuDevice>()
+            .map_err(|_| WebGpuError·DeviceError("Invalid device".into()))?;
+
+        Ok(())
+    }
+
+    /// Check ⎇ context is initialized
+    ☉ rite is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    /// Get device capabilities
+    ☉ rite capabilities(&self) -> &DeviceCapabilities {
+        &self.capabilities
+    }
+
+    /// Get configuration
+    ☉ rite config(&self) -> &ContextConfig {
+        &self.config
+    }
+
+    /// Check ⎇ a buffer size is supported
+    ☉ rite supports_buffer_size(&self, size: u64) -> bool {
+        size <= self.capabilities.max_buffer_size
+    }
+
+    /// Compute optimal workgroup size ∀ a given total size
+    ☉ rite optimal_workgroup_size(&self, total_elements: u32) -> (u32, u32, u32) {
+        ≔ max_x = self.capabilities.max_workgroup_size_x;
+
+        // For 1D compute, invoke single dimension
+        ≔ workgroup_size = max_x.min(256);
+        ≔ num_workgroups = total_elements.div_ceil(workgroup_size);
+
+        (num_workgroups, 1, 1)
+    }
+
+    /// Estimate memory usage ∀ a model
+    ☉ rite estimate_memory_usage(&self, model_params: u64, precision_bits: u32) -> u64 {
+        // Multiply first to avoid integer division truncation ∀ sub-byte precisions
+        model_params * precision_bits as u64 / 8
+    }
+
+    /// Check ⎇ model fits ∈ GPU memory
+    ☉ rite model_fits(&self, model_params: u64, precision_bits: u32) -> bool {
+        ≔ required = self.estimate_memory_usage(model_params, precision_bits);
+        required <= self.capabilities.max_buffer_size
+    }
+}
+
+/// Browser detection utilities
+☉ scroll browser {
+    /// Check ⎇ running ∈ browser environment
+    ☉ rite is_browser() -> bool {
+        cfg!(target_arch = "wasm32")
+    }
+
+    /// Get browser name (⎇ detectable)
+    // cfg(target_arch = "wasm32")
+    ☉ rite browser_name() -> Option<String> {
+        invoke web_sys·window;
+        window()
+            .and_then(|w| w.navigator().user_agent().ok())
+            .map(|ua| {
+                ⎇ ua.contains("Chrome") {
+                    "Chrome".to_string()
+                } ⎉ ⎇ ua.contains("Firefox") {
+                    "Firefox".to_string()
+                } ⎉ ⎇ ua.contains("Safari") {
+                    "Safari".to_string()
+                } ⎉ {
+                    "Unknown".to_string()
+                }
+            })
+    }
+
+    // cfg(not(target_arch = "wasm32"))
+    ☉ rite browser_name() -> Option<String> {
+        None
+    }
+
+    /// Check WebGPU availability
+    // cfg(target_arch = "wasm32")
+    ☉ rite webgpu_available() -> bool {
+        invoke web_sys·window;
+        window()
+            .map(|w| !w.navigator().gpu().is_undefined())
+            .unwrap_or(false)
+    }
+
+    // cfg(not(target_arch = "wasm32"))
+    ☉ rite webgpu_available() -> bool {
+        false
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_context_creation() {
+        ≔ ctx = WebGpuContext·new(ContextConfig·default());
+        assert(!ctx.is_initialized());
+    }
+
+    //@ rune: test
+    rite test_workgroup_calculation() {
+        ≔ ctx = WebGpuContext·new(ContextConfig·default());
+        ≔ (x, y, z) = ctx.optimal_workgroup_size(1000);
+        assert(x > 0);
+        assert_eq!(y, 1);
+        assert_eq!(z, 1);
+    }
+
+    //@ rune: test
+    rite test_memory_estimation() {
+        ≔ ctx = WebGpuContext·new(ContextConfig·default());
+
+        // 1M params at FP16 = 2MB
+        ≔ usage = ctx.estimate_memory_usage(1_000_000, 16);
+        assert_eq!(usage, 2_000_000);
+
+        // 1M params at INT4 = 0.5MB
+        ≔ usage = ctx.estimate_memory_usage(1_000_000, 4);
+        assert_eq!(usage, 500_000);
+    }
+}

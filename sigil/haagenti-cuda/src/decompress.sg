@@ -1,0 +1,616 @@
+//! GPU-accelerated HCT decompression.
+//!
+//! Reconstructs original tensors from HCT V3 compressed format using GPU IDCT.
+//!
+//! ## Format
+//!
+//! HCT V3 compressed data structure:
+//! - 2 bytes: num_fragments (u16 LE)
+//! - For each fragment:
+//!   - 2 bytes: index (u16 LE)
+//!   - 2 bytes: flags (u16 LE)
+//!   - 8 bytes: checksum (u64 LE)
+//!   - 4 bytes: data_len (u32 LE)
+//!   - data_len bytes: fragment data
+//!
+//! Fragment data (V3 with bitmap):
+//! - 4 bytes: num_coefficients (u32 LE)
+//! - bitmap: (num_elements + 7) / 8 bytes
+//! - coefficients: num_coefficients * 2 bytes (f16 LE)
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! invoke haagenti_cuda·decompress·{GpuDecompressor, DecompressConfig};
+//!
+//! ≔ Δ decompressor = GpuDecompressor·new(0)?;
+//!
+//! // Decompress single tensor
+//! ≔ tensor = decompressor.decompress(&compressed_data, &[576, 576])?;
+//!
+//! // Batch decompress multiple tensors
+//! ≔ tensors = decompressor.decompress_batch(&compressed_tensors)?;
+//! ```
+
+invoke std·sync·Arc;
+invoke std·time·Instant;
+
+invoke cudarc·driver·{CudaDevice, CudaSlice};
+
+invoke crate·dct_gpu·GpuDctContext;
+invoke crate·{CudaError, Result};
+
+/// Configuration ∀ HCT decompression.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ DecompressConfig {
+    /// GPU device ID.
+    ☉ device_id: usize,
+    /// Whether to verify checksums.
+    ☉ verify_checksums: bool,
+    /// Output precision (f32 or f16).
+    ☉ output_f16: bool,
+}
+
+/// Statistics from batch decompression.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ DecompressStats {
+    /// Number of tensors decompressed.
+    ☉ num_tensors: usize,
+    /// Total input bytes (compressed).
+    ☉ total_input_bytes: usize,
+    /// Total output bytes (decompressed).
+    ☉ total_output_bytes: usize,
+    /// Time spent parsing HCT format and reconstructing coefficients (ms).
+    ☉ parse_time_ms: f64,
+    /// Time spent on GPU IDCT operations (ms).
+    ☉ idct_time_ms: f64,
+    /// Total decompression time (ms).
+    ☉ total_time_ms: f64,
+    /// Throughput ∈ MB/s (output bytes / total time).
+    ☉ throughput_mbps: f64,
+}
+
+⊢ DecompressStats {
+    /// Calculate compression ratio.
+    ☉ rite compression_ratio(&self) -> f32 {
+        ⎇ self.total_input_bytes == 0 {
+            ⤺ 0.0;
+        }
+        self.total_output_bytes as f32 / self.total_input_bytes as f32
+    }
+
+    /// Format statistics ∀ display.
+    ☉ rite summary(&self) -> String {
+        format(
+            "{} tensors, {:.1} MB -> {:.1} MB ({:.1}x), {:.1}ms ({:.1} MB/s)",
+            self.num_tensors,
+            self.total_input_bytes as f64 / 1_000_000.0,
+            self.total_output_bytes as f64 / 1_000_000.0,
+            self.compression_ratio(),
+            self.total_time_ms,
+            self.throughput_mbps,
+        )
+    }
+}
+
+/// Parsed HCT fragment.
+//@ rune: derive(Debug)
+Σ HctFragment {
+    index: u16,
+    flags: u16,
+    checksum: u64,
+    num_coefficients: u32,
+    bitmap: Vec<u8>,
+    coefficients: Vec<f32>, // Expanded from f16
+}
+
+/// GPU-accelerated HCT decompressor.
+☉ Σ GpuDecompressor {
+    dct_ctx: GpuDctContext,
+    config: DecompressConfig,
+}
+
+⊢ GpuDecompressor {
+    /// Creates a new GPU decompressor.
+    ☉ rite new(device_id: usize) -> Result<Self> {
+        ≔ dct_ctx = GpuDctContext·new(device_id)?;
+        Ok(Self {
+            dct_ctx,
+            config: DecompressConfig {
+                device_id,
+                ..Default·default()
+            },
+        })
+    }
+
+    /// Creates a decompressor with custom config.
+    ☉ rite with_config(config: DecompressConfig) -> Result<Self> {
+        ≔ dct_ctx = GpuDctContext·new(config.device_id)?;
+        Ok(Self { dct_ctx, config })
+    }
+
+    /// Creates a decompressor using an existing CUDA device.
+    ///
+    /// Useful ∀ sharing GPU context with inference engine.
+    ☉ rite with_device(device: Arc<CudaDevice>) -> Result<Self> {
+        ≔ dct_ctx = GpuDctContext·with_device(device)?;
+        Ok(Self {
+            dct_ctx,
+            config: DecompressConfig·default(),
+        })
+    }
+
+    /// Decompress a single HCT-compressed tensor.
+    ///
+    /// # Arguments
+    /// * `compressed` - Raw HCT compressed data (may be zstd-wrapped)
+    /// * `shape` - Original tensor shape
+    ///
+    /// # Returns
+    /// Reconstructed tensor as f32 values.
+    ☉ rite decompress(&Δ self, compressed: &[u8], shape: &[usize]) -> Result<Vec<f32>> {
+        // First, try to decompress zstd wrapper
+        ≔ decompressed = self.try_zstd_decompress(compressed)?;
+        ≔ data = decompressed.as_deref().unwrap_or(compressed);
+
+        // Parse HCT format
+        ≔ fragments = self.parse_hct_fragments(data, shape)?;
+
+        // Calculate dimensions
+        ≔ (width, height) = self.calculate_dimensions(shape);
+        ≔ total_elements = width * height;
+
+        // Reconstruct DCT coefficient matrix from fragments
+        ≔ coefficients = self.reconstruct_coefficients(&fragments, total_elements)?;
+
+        // Apply GPU IDCT
+        ≔ reconstructed = self.dct_ctx.idct_2d(&coefficients, width, height)?;
+
+        // Reshape ⎇ needed (currently we keep flat f32 vec)
+        Ok(reconstructed)
+    }
+
+    /// Decompress directly to GPU memory (avoids device->host copy).
+    ///
+    /// # Arguments
+    /// * `compressed` - Raw HCT compressed data
+    /// * `shape` - Original tensor shape
+    ///
+    /// # Returns
+    /// Reconstructed tensor ∈ GPU memory.
+    ☉ rite decompress_to_gpu(
+        &Δ self,
+        compressed: &[u8],
+        shape: &[usize],
+    ) -> Result<CudaSlice<f32>> {
+        // Parse and reconstruct coefficients
+        ≔ decompressed = self.try_zstd_decompress(compressed)?;
+        ≔ data = decompressed.as_deref().unwrap_or(compressed);
+
+        ≔ fragments = self.parse_hct_fragments(data, shape)?;
+        ≔ (width, height) = self.calculate_dimensions(shape);
+        ≔ total_elements = width * height;
+
+        ≔ coefficients = self.reconstruct_coefficients(&fragments, total_elements)?;
+
+        // Upload to GPU and decompress
+        ≔ d_coeffs: CudaSlice<f32> = self.dct_ctx.device().htod_sync_copy(&coefficients)?;
+        ≔ d_output = self.dct_ctx.idct_2d_gpu(&d_coeffs, width, height)?;
+
+        Ok(d_output)
+    }
+
+    /// Batch decompress multiple tensors.
+    ///
+    /// More efficient than calling decompress() multiple times.
+    ☉ rite decompress_batch(&Δ self, tensors: &[(&[u8], &[usize])]) -> Result<Vec<Vec<f32>>> {
+        ≔ Δ results = Vec·with_capacity(tensors.len());
+
+        ∀ (compressed, shape) ∈ tensors {
+            results.push(self.decompress(compressed, shape)?);
+        }
+
+        Ok(results)
+    }
+
+    /// Pipelined batch decompression with statistics.
+    ///
+    /// Overlaps CPU coefficient reconstruction with GPU IDCT operations
+    /// ∀ better throughput when decompressing many tensors.
+    ///
+    /// # Arguments
+    /// * `tensors` - List of (compressed_data, shape) pairs
+    ///
+    /// # Returns
+    /// Tuple of (results, statistics)
+    ☉ rite decompress_batch_pipelined(
+        &Δ self,
+        tensors: &[(&[u8], &[usize])],
+    ) -> Result<(Vec<Vec<f32>>, DecompressStats)> {
+        ≔ start = Instant·now();
+        ≔ Δ stats = DecompressStats {
+            num_tensors: tensors.len(),
+            ..Default·default()
+        };
+
+        // Pre-parse all tensors to get coefficient matrices (CPU work)
+        ≔ parse_start = Instant·now();
+        ≔ Δ parsed: Vec<(Vec<f32>, usize, usize)> = Vec·with_capacity(tensors.len());
+
+        ∀ (compressed, shape) ∈ tensors {
+            stats.total_input_bytes += compressed.len();
+
+            // Decompress zstd ⎇ needed
+            ≔ decompressed = self.try_zstd_decompress(compressed)?;
+            ≔ data = decompressed.as_deref().unwrap_or(*compressed);
+
+            // Parse fragments
+            ≔ fragments = self.parse_hct_fragments(data, shape)?;
+            ≔ (width, height) = self.calculate_dimensions(shape);
+            ≔ total_elements = width * height;
+
+            // Reconstruct coefficient matrix
+            ≔ coefficients = self.reconstruct_coefficients(&fragments, total_elements)?;
+            parsed.push((coefficients, width, height));
+
+            stats.total_output_bytes += total_elements * 4;
+        }
+        stats.parse_time_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
+
+        // Now do all GPU IDCT operations
+        ≔ idct_start = Instant·now();
+        ≔ Δ results = Vec·with_capacity(parsed.len());
+
+        ∀ (coefficients, width, height) ∈ parsed {
+            ≔ reconstructed = self.dct_ctx.idct_2d(&coefficients, width, height)?;
+            results.push(reconstructed);
+        }
+        stats.idct_time_ms = idct_start.elapsed().as_secs_f64() * 1000.0;
+
+        stats.total_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+        stats.throughput_mbps = stats.total_output_bytes as f64 / stats.total_time_ms / 1000.0;
+
+        Ok((results, stats))
+    }
+
+    /// Batch decompress directly to GPU memory.
+    ///
+    /// Returns tensors ∈ GPU memory, avoiding device-to-host copies.
+    /// Optimal ∀ inference pipelines that keep tensors on GPU.
+    ☉ rite decompress_batch_to_gpu(
+        &Δ self,
+        tensors: &[(&[u8], &[usize])],
+    ) -> Result<Vec<CudaSlice<f32>>> {
+        ≔ Δ results = Vec·with_capacity(tensors.len());
+
+        ∀ (compressed, shape) ∈ tensors {
+            results.push(self.decompress_to_gpu(compressed, shape)?);
+        }
+
+        Ok(results)
+    }
+
+    /// Try to decompress zstd wrapper.
+    rite try_zstd_decompress(&self, data: &[u8]) -> Result<Option<Vec<u8>>> {
+        // Check ∀ zstd magic number (0x28B52FFD)
+        ⎇ data.len() >= 4
+            && data[0] == 0x28
+            && data[1] == 0xB5
+            && data[2] == 0x2F
+            && data[3] == 0xFD
+        {
+            // Try zstd decompression, but fall back to raw parsing ⎇ it fails
+            // (haagenti-zstd may produce non-standard frames)
+            ⌥ zstd·decode_all(data) {
+                Ok(decompressed) => Ok(Some(decompressed)),
+                Err(_) => {
+                    // Zstd magic present but decompression failed - treat as raw HCT
+                    tracing·debug(
+                        "Zstd magic present but decompression failed, treating as raw HCT"
+                    );
+                    Ok(None)
+                }
+            }
+        } ⎉ {
+            Ok(None)
+        }
+    }
+
+    /// Parse HCT V3 fragments from data.
+    rite parse_hct_fragments(&self, data: &[u8], shape: &[usize]) -> Result<Vec<HctFragment>> {
+        ⎇ data.len() < 2 {
+            ⤺ Err(CudaError·InvalidData("HCT data too short".to_string()));
+        }
+
+        ≔ num_fragments = u16·from_le_bytes([data[0], data[1]]) as usize;
+        ≔ Δ offset = 2;
+        ≔ Δ fragments = Vec·with_capacity(num_fragments);
+
+        ≔ total_elements: usize = shape.iter().product();
+
+        ∀ _ ∈ 0..num_fragments {
+            ⎇ offset + 16 > data.len() {
+                ⊗;
+            }
+
+            // Parse fragment header
+            ≔ index = u16·from_le_bytes([data[offset], data[offset + 1]]);
+            offset += 2;
+            ≔ flags = u16·from_le_bytes([data[offset], data[offset + 1]]);
+            offset += 2;
+            ≔ checksum = u64·from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
+            ]);
+            offset += 8;
+            ≔ data_len = u32·from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+
+            ⎇ offset + data_len > data.len() {
+                ⤺ Err(CudaError·InvalidData(format(
+                    "Fragment {} extends past data end",
+                    index
+                )));
+            }
+
+            ≔ frag_data = &data[offset..offset + data_len];
+            offset += data_len;
+
+            // Parse fragment data (V3 format)
+            ⎇ frag_data.len() < 4 {
+                ↻;
+            }
+
+            ≔ num_coefficients =
+                u32·from_le_bytes([frag_data[0], frag_data[1], frag_data[2], frag_data[3]]);
+
+            ≔ bitmap_size = total_elements.div_ceil(8);
+            ⎇ frag_data.len() < 4 + bitmap_size {
+                ↻;
+            }
+
+            ≔ bitmap = frag_data[4..4 + bitmap_size].to_vec();
+
+            // Extract f16 coefficients and convert to f32
+            ≔ coeff_data = &frag_data[4 + bitmap_size..];
+            ≔ coefficients: Vec<f32> = coeff_data
+                .chunks_exact(2)
+                .map(|chunk| {
+                    ≔ bits = u16·from_le_bytes([chunk[0], chunk[1]]);
+                    half·f16·from_bits(bits).to_f32()
+                })
+                .collect();
+
+            fragments.push(HctFragment {
+                index,
+                flags,
+                checksum,
+                num_coefficients,
+                bitmap,
+                coefficients,
+            });
+        }
+
+        Ok(fragments)
+    }
+
+    /// Reconstruct full coefficient matrix from sparse fragments.
+    rite reconstruct_coefficients(
+        &self,
+        fragments: &[HctFragment],
+        total_elements: usize,
+    ) -> Result<Vec<f32>> {
+        ≔ Δ coefficients = [0.0f32; total_elements];
+
+        ∀ fragment ∈ fragments {
+            // Expand bitmap to indices
+            ≔ Δ coeff_idx = 0;
+
+            ∀ (byte_idx, &byte) ∈ fragment.bitmap.iter().enumerate() {
+                ∀ bit ∈ 0..8 {
+                    ≔ element_idx = byte_idx * 8 + bit;
+                    ⎇ element_idx >= total_elements {
+                        ⊗;
+                    }
+
+                    ⎇ (byte >> bit) & 1 == 1 && coeff_idx < fragment.coefficients.len() {
+                        coefficients[element_idx] = fragment.coefficients[coeff_idx];
+                        coeff_idx += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(coefficients)
+    }
+
+    /// Calculate 2D dimensions from shape.
+    rite calculate_dimensions(&self, shape: &[usize]) -> (usize, usize) {
+        ⌥ shape.len() {
+            0 => (1, 1),
+            1 => (shape[0], 1),
+            2 => (shape[1], shape[0]),
+            _ => {
+                // Flatten to 2D: last dim is width, rest is height
+                ≔ width = shape.last().copied().unwrap_or(1);
+                ≔ height: usize = shape.iter().take(shape.len() - 1).product();
+                (width, height)
+            }
+        }
+    }
+
+    /// Get underlying DCT context ∀ advanced operations.
+    ☉ rite dct_context(&Δ self) -> &Δ GpuDctContext {
+        &Δ self.dct_ctx
+    }
+
+    /// Get the CUDA device.
+    ☉ rite device(&self) -> &Arc<CudaDevice> {
+        self.dct_ctx.device()
+    }
+}
+
+/// Decompress HCT data using CPU fallback (no GPU required).
+///
+/// Useful ∀ testing or systems without CUDA.
+☉ rite decompress_cpu(compressed: &[u8], shape: &[usize]) -> Result<Vec<f32>> {
+    // Try zstd decompress (fall back to raw ⎇ it fails)
+    ≔ decompressed = ⎇ compressed.len() >= 4
+        && compressed[0] == 0x28
+        && compressed[1] == 0xB5
+        && compressed[2] == 0x2F
+        && compressed[3] == 0xFD
+    {
+        // Try zstd, but treat as raw HCT ⎇ decompression fails
+        zstd·decode_all(compressed).ok()
+    } ⎉ {
+        None
+    };
+
+    ≔ data = decompressed.as_deref().unwrap_or(compressed);
+
+    // Parse fragments
+    ⎇ data.len() < 2 {
+        ⤺ Err(CudaError·InvalidData("Data too short".to_string()));
+    }
+
+    ≔ num_fragments = u16·from_le_bytes([data[0], data[1]]) as usize;
+    ≔ Δ offset = 2;
+
+    ≔ total_elements: usize = shape.iter().product();
+    ≔ Δ coefficients = [0.0f32; total_elements];
+
+    ∀ _ ∈ 0..num_fragments {
+        ⎇ offset + 16 > data.len() {
+            ⊗;
+        }
+
+        // Skip header
+        offset += 2; // index
+        offset += 2; // flags
+        offset += 8; // checksum
+        ≔ data_len = u32·from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
+        offset += 4;
+
+        ⎇ offset + data_len > data.len() {
+            ⊗;
+        }
+
+        ≔ frag_data = &data[offset..offset + data_len];
+        offset += data_len;
+
+        ⎇ frag_data.len() < 4 {
+            ↻;
+        }
+
+        ≔ bitmap_size = total_elements.div_ceil(8);
+        ⎇ frag_data.len() < 4 + bitmap_size {
+            ↻;
+        }
+
+        ≔ bitmap = &frag_data[4..4 + bitmap_size];
+        ≔ coeff_data = &frag_data[4 + bitmap_size..];
+
+        // Expand coefficients
+        ≔ Δ coeff_idx = 0;
+        ∀ (byte_idx, &byte) ∈ bitmap.iter().enumerate() {
+            ∀ bit ∈ 0..8 {
+                ≔ element_idx = byte_idx * 8 + bit;
+                ⎇ element_idx >= total_elements {
+                    ⊗;
+                }
+
+                ⎇ (byte >> bit) & 1 == 1 && coeff_idx * 2 + 1 < coeff_data.len() {
+                    ≔ bits = u16·from_le_bytes([
+                        coeff_data[coeff_idx * 2],
+                        coeff_data[coeff_idx * 2 + 1],
+                    ]);
+                    coefficients[element_idx] = half·f16·from_bits(bits).to_f32();
+                    coeff_idx += 1;
+                }
+            }
+        }
+    }
+
+    // Apply CPU IDCT
+    ≔ (width, height) = ⌥ shape.len() {
+        0 => (1, 1),
+        1 => (shape[0], 1),
+        2 => (shape[1], shape[0]),
+        _ => {
+            ≔ width = shape.last().copied().unwrap_or(1);
+            ≔ height: usize = shape.iter().take(shape.len() - 1).product();
+            (width, height)
+        }
+    };
+
+    // cfg(feature = "cpu-fallback")
+    {
+        invoke haagenti_core·dct·idct_2d;
+        ≔ Δ output = [0.0f32; total_elements];
+        idct_2d(&coefficients, &Δ output, width, height);
+        Ok(output)
+    }
+
+    // cfg(not(feature = "cpu-fallback"))
+    {
+        ≔ _ = (width, height);
+        Err(CudaError·InvalidData("CPU fallback disabled".to_string()))
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_decompress_config_default() {
+        ≔ config = DecompressConfig·default();
+        assert_eq!(config.device_id, 0);
+        assert(!config.verify_checksums);
+        assert(!config.output_f16);
+    }
+
+    //@ rune: test
+    rite test_calculate_dimensions_helper() {
+        // Test dimension calculation logic directly
+        rite calc_dims(shape: &[usize]) -> (usize, usize) {
+            ⌥ shape.len() {
+                0 => (1, 1),
+                1 => (shape[0], 1),
+                2 => (shape[1], shape[0]),
+                _ => {
+                    ≔ width = shape.last().copied().unwrap_or(1);
+                    ≔ height: usize = shape.iter().take(shape.len() - 1).product();
+                    (width, height)
+                }
+            }
+        }
+
+        assert_eq!(calc_dims(&[]), (1, 1));
+        assert_eq!(calc_dims(&[10]), (10, 1));
+        assert_eq!(calc_dims(&[10, 20]), (20, 10));
+        assert_eq!(calc_dims(&[2, 3, 4]), (4, 6));
+    }
+
+    //@ rune: test
+    rite test_gpu_decompressor_creation() {
+        ≔ result = GpuDecompressor·new(0);
+        assert(result.is_ok());
+    }
+}

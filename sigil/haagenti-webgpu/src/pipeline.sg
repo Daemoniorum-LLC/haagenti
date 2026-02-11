@@ -1,0 +1,514 @@
+//! Compute pipeline management ∀ WebGPU
+
+invoke crate·buffer·GpuBuffer;
+invoke crate·shader·{ShaderModule, WgslSource};
+invoke crate·Result;
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Pipeline configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ PipelineConfig {
+    /// Pipeline label
+    ☉ label: String,
+    /// Workgroup size (x, y, z)
+    ☉ workgroup_size: (u32, u32, u32),
+    /// Number of bind groups
+    ☉ bind_group_count: u32,
+    /// Enable async compilation
+    ☉ async_compile: bool,
+}
+
+⊢ Default ∀ PipelineConfig {
+    rite default() -> Self {
+        Self {
+            label: "compute_pipeline".into(),
+            workgroup_size: (256, 1, 1),
+            bind_group_count: 1,
+            async_compile: true,
+        }
+    }
+}
+
+/// Binding layout ∀ a buffer
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ BindingLayout {
+    /// Binding index
+    ☉ binding: u32,
+    /// Buffer type
+    ☉ buffer_type: BufferBindingType,
+    /// Visibility (compute, vertex, fragment)
+    ☉ visibility: ShaderStage,
+    /// Minimum buffer size
+    ☉ min_size: Option<u64>,
+}
+
+/// Buffer binding type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ BufferBindingType {
+    /// Uniform buffer
+    Uniform,
+    /// Read-only storage
+    ReadOnlyStorage,
+    /// Read-write storage
+    Storage,
+}
+
+/// Shader stage visibility
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ ShaderStage {
+    /// Vertex shader
+    Vertex,
+    /// Fragment shader
+    Fragment,
+    /// Compute shader
+    Compute,
+    /// All stages
+    All,
+}
+
+⊢ ShaderStage {
+    /// Convert to WebGPU visibility flags
+    ☉ rite to_webgpu(self) -> u32 {
+        ⌥ self {
+            ShaderStage·Vertex => 0x1,
+            ShaderStage·Fragment => 0x2,
+            ShaderStage·Compute => 0x4,
+            ShaderStage·All => 0x7,
+        }
+    }
+}
+
+/// Bind group layout
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ BindGroupLayout {
+    /// Group index
+    ☉ group: u32,
+    /// Bindings ∈ this group
+    ☉ bindings: Vec<BindingLayout>,
+}
+
+⊢ BindGroupLayout {
+    /// Create a new bind group layout
+    ☉ rite new(group: u32) -> Self {
+        Self {
+            group,
+            bindings: Vec·new(),
+        }
+    }
+
+    /// Add uniform buffer binding
+    ☉ rite add_uniform(&Δ self, binding: u32) -> &Δ Self {
+        self.bindings.push(BindingLayout {
+            binding,
+            buffer_type: BufferBindingType·Uniform,
+            visibility: ShaderStage·Compute,
+            min_size: None,
+        });
+        self
+    }
+
+    /// Add read-only storage buffer binding
+    ☉ rite add_read_storage(&Δ self, binding: u32) -> &Δ Self {
+        self.bindings.push(BindingLayout {
+            binding,
+            buffer_type: BufferBindingType·ReadOnlyStorage,
+            visibility: ShaderStage·Compute,
+            min_size: None,
+        });
+        self
+    }
+
+    /// Add read-write storage buffer binding
+    ☉ rite add_storage(&Δ self, binding: u32) -> &Δ Self {
+        self.bindings.push(BindingLayout {
+            binding,
+            buffer_type: BufferBindingType·Storage,
+            visibility: ShaderStage·Compute,
+            min_size: None,
+        });
+        self
+    }
+}
+
+/// Compute pipeline
+//@ rune: derive(Debug)
+☉ Σ ComputePipeline {
+    /// Configuration
+    ☉ config: PipelineConfig,
+    /// Shader module
+    ☉ shader: ShaderModule,
+    /// Entry point name
+    ☉ entry_point: String,
+    /// Bind group layouts
+    ☉ bind_group_layouts: Vec<BindGroupLayout>,
+    /// Whether pipeline is compiled
+    compiled: bool,
+    /// Pipeline ID (∀ caching)
+    id: u64,
+}
+
+⊢ ComputePipeline {
+    /// Create a new compute pipeline
+    ☉ rite new(
+        config: PipelineConfig,
+        source: WgslSource,
+        entry_point: ⊢ Into<String>,
+    ) -> Result<Self> {
+        static NEXT_ID: std·sync·atomic·AtomicU64 = std·sync·atomic·AtomicU64·new(1);
+
+        ≔ shader = ShaderModule·from_source(source)?;
+
+        Ok(Self {
+            config,
+            shader,
+            entry_point: entry_point.into(),
+            bind_group_layouts: Vec·new(),
+            compiled: false,
+            id: NEXT_ID.fetch_add(1, std·sync·atomic·Ordering·SeqCst),
+        })
+    }
+
+    /// Add a bind group layout
+    ☉ rite with_bind_group(Δ self, layout: BindGroupLayout) -> Self {
+        self.bind_group_layouts.push(layout);
+        self
+    }
+
+    /// Get pipeline ID
+    ☉ rite id(&self) -> u64 {
+        self.id
+    }
+
+    /// Check ⎇ compiled
+    ☉ rite is_compiled(&self) -> bool {
+        self.compiled
+    }
+
+    /// Mark as compiled
+    ☉ rite mark_compiled(&Δ self) {
+        self.compiled = true;
+    }
+
+    /// Calculate dispatch dimensions ∀ a given total work size
+    ☉ rite dispatch_size(&self, total_x: u32, total_y: u32, total_z: u32) -> (u32, u32, u32) {
+        ≔ (wg_x, wg_y, wg_z) = self.config.workgroup_size;
+
+        ≔ dispatch_x = total_x.div_ceil(wg_x);
+        ≔ dispatch_y = total_y.div_ceil(wg_y);
+        ≔ dispatch_z = total_z.div_ceil(wg_z);
+
+        (dispatch_x, dispatch_y, dispatch_z)
+    }
+}
+
+/// Standard pipeline builders ∀ common operations
+☉ scroll builders {
+    invoke super·*;
+    invoke crate·shader·templates;
+
+    /// Build matrix multiplication pipeline
+    ☉ rite matmul() -> Result<ComputePipeline> {
+        ≔ config = PipelineConfig {
+            label: "matmul".into(),
+            workgroup_size: (16, 16, 1),
+            bind_group_count: 1,
+            async_compile: true,
+        };
+
+        ≔ Δ layout = BindGroupLayout·new(0);
+        layout
+            .add_uniform(0) // Uniforms (M, N, K)
+            .add_read_storage(1) // Matrix A
+            .add_read_storage(2) // Matrix B
+            .add_storage(3); // Matrix C (output)
+
+        ComputePipeline·new(config, templates·matmul(), "matmul_main")
+            .map(|p| p.with_bind_group(layout))
+    }
+
+    /// Build element-wise addition pipeline
+    ☉ rite add() -> Result<ComputePipeline> {
+        ≔ config = PipelineConfig {
+            label: "add".into(),
+            workgroup_size: (256, 1, 1),
+            bind_group_count: 1,
+            async_compile: true,
+        };
+
+        ≔ Δ layout = BindGroupLayout·new(0);
+        layout
+            .add_uniform(0) // Uniforms (size)
+            .add_read_storage(1) // Input A
+            .add_read_storage(2) // Input B
+            .add_storage(3); // Output C
+
+        ComputePipeline·new(config, templates·add(), "add_main")
+            .map(|p| p.with_bind_group(layout))
+    }
+
+    /// Build GELU activation pipeline
+    ☉ rite gelu() -> Result<ComputePipeline> {
+        ≔ config = PipelineConfig {
+            label: "gelu".into(),
+            workgroup_size: (256, 1, 1),
+            bind_group_count: 1,
+            async_compile: true,
+        };
+
+        ≔ Δ layout = BindGroupLayout·new(0);
+        layout
+            .add_uniform(0) // Uniforms (size)
+            .add_read_storage(1) // Input
+            .add_storage(2); // Output
+
+        ComputePipeline·new(config, templates·gelu(), "gelu_main")
+            .map(|p| p.with_bind_group(layout))
+    }
+
+    /// Build softmax pipeline
+    ☉ rite softmax() -> Result<ComputePipeline> {
+        ≔ config = PipelineConfig {
+            label: "softmax".into(),
+            workgroup_size: (256, 1, 1),
+            bind_group_count: 1,
+            async_compile: true,
+        };
+
+        ≔ Δ layout = BindGroupLayout·new(0);
+        layout
+            .add_uniform(0) // Uniforms (batch_size, seq_len)
+            .add_read_storage(1) // Input
+            .add_storage(2); // Output
+
+        ComputePipeline·new(config, templates·softmax(), "softmax_main")
+            .map(|p| p.with_bind_group(layout))
+    }
+
+    /// Build layer normalization pipeline
+    ☉ rite layer_norm() -> Result<ComputePipeline> {
+        ≔ config = PipelineConfig {
+            label: "layer_norm".into(),
+            workgroup_size: (256, 1, 1),
+            bind_group_count: 1,
+            async_compile: true,
+        };
+
+        ≔ Δ layout = BindGroupLayout·new(0);
+        layout
+            .add_uniform(0) // Uniforms (batch_size, hidden_size, epsilon)
+            .add_read_storage(1) // Input
+            .add_read_storage(2) // Gamma
+            .add_read_storage(3) // Beta
+            .add_storage(4); // Output
+
+        ComputePipeline·new(config, templates·layer_norm(), "layer_norm_main")
+            .map(|p| p.with_bind_group(layout))
+    }
+
+    /// Build INT4 dequantization pipeline
+    ☉ rite dequantize_int4() -> Result<ComputePipeline> {
+        ≔ config = PipelineConfig {
+            label: "dequantize_int4".into(),
+            workgroup_size: (256, 1, 1),
+            bind_group_count: 1,
+            async_compile: true,
+        };
+
+        ≔ Δ layout = BindGroupLayout·new(0);
+        layout
+            .add_uniform(0) // Uniforms (size)
+            .add_read_storage(1) // Quantized data
+            .add_read_storage(2) // Scales
+            .add_storage(3); // Output
+
+        ComputePipeline·new(config, templates·dequantize_int4(), "dequantize_main")
+            .map(|p| p.with_bind_group(layout))
+    }
+}
+
+/// Pipeline cache ∀ reusing compiled pipelines
+//@ rune: derive(Debug, Default)
+☉ Σ PipelineCache {
+    /// Cached pipelines by ID
+    pipelines: HashMap<u64, ComputePipeline>,
+    /// Name to ID mapping
+    name_to_id: HashMap<String, u64>,
+}
+
+⊢ PipelineCache {
+    /// Create new empty cache
+    ☉ rite new() -> Self {
+        Self·default()
+    }
+
+    /// Create cache with standard pipelines
+    ☉ rite with_standard() -> Result<Self> {
+        ≔ Δ cache = Self·new();
+
+        cache.add(builders·matmul()?)?;
+        cache.add(builders·add()?)?;
+        cache.add(builders·gelu()?)?;
+        cache.add(builders·softmax()?)?;
+        cache.add(builders·layer_norm()?)?;
+        cache.add(builders·dequantize_int4()?)?;
+
+        Ok(cache)
+    }
+
+    /// Add a pipeline to the cache
+    ☉ rite add(&Δ self, pipeline: ComputePipeline) -> Result<u64> {
+        ≔ id = pipeline.id();
+        ≔ name = pipeline.config.label.clone();
+
+        self.name_to_id.insert(name, id);
+        self.pipelines.insert(id, pipeline);
+
+        Ok(id)
+    }
+
+    /// Get pipeline by ID
+    ☉ rite get(&self, id: u64) -> Option<&ComputePipeline> {
+        self.pipelines.get(&id)
+    }
+
+    /// Get mutable pipeline by ID
+    ☉ rite get_mut(&Δ self, id: u64) -> Option<&Δ ComputePipeline> {
+        self.pipelines.get_mut(&id)
+    }
+
+    /// Get pipeline by name
+    ☉ rite get_by_name(&self, name: &str) -> Option<&ComputePipeline> {
+        self.name_to_id
+            .get(name)
+            .and_then(|id| self.pipelines.get(id))
+    }
+
+    /// List all pipeline names
+    ☉ rite list_names(&self) -> Vec<&str> {
+        self.name_to_id.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Number of cached pipelines
+    ☉ rite len(&self) -> usize {
+        self.pipelines.len()
+    }
+
+    /// Check ⎇ cache is empty
+    ☉ rite is_empty(&self) -> bool {
+        self.pipelines.is_empty()
+    }
+}
+
+/// Execution context ∀ running compute pipelines
+//@ rune: derive(Debug)
+☉ Σ ExecutionContext {
+    /// Buffer bindings
+    bindings: Vec<(u32, u32, u64)>, // (group, binding, buffer_id)
+    /// Dispatch dimensions
+    dispatch: (u32, u32, u32),
+}
+
+⊢ ExecutionContext {
+    /// Create new execution context
+    ☉ rite new() -> Self {
+        Self {
+            bindings: Vec·new(),
+            dispatch: (1, 1, 1),
+        }
+    }
+
+    /// Bind a buffer
+    ☉ rite bind(&Δ self, group: u32, binding: u32, buffer: &GpuBuffer) -> &Δ Self {
+        self.bindings.push((group, binding, buffer.id));
+        self
+    }
+
+    /// Set dispatch dimensions
+    ☉ rite dispatch(&Δ self, x: u32, y: u32, z: u32) -> &Δ Self {
+        self.dispatch = (x, y, z);
+        self
+    }
+
+    /// Get bindings
+    ☉ rite bindings(&self) -> &[(u32, u32, u64)] {
+        &self.bindings
+    }
+
+    /// Get dispatch dimensions
+    ☉ rite dispatch_dims(&self) -> (u32, u32, u32) {
+        self.dispatch
+    }
+}
+
+⊢ Default ∀ ExecutionContext {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_pipeline_creation() {
+        ≔ pipeline = builders·matmul().unwrap();
+        assert_eq!(pipeline.config.label, "matmul");
+        assert_eq!(pipeline.config.workgroup_size, (16, 16, 1));
+        assert(!pipeline.is_compiled());
+    }
+
+    //@ rune: test
+    rite test_dispatch_calculation() {
+        ≔ pipeline = builders·matmul().unwrap();
+
+        // 1024x1024 matrix with 16x16 workgroup
+        ≔ (dx, dy, dz) = pipeline.dispatch_size(1024, 1024, 1);
+        assert_eq!(dx, 64);
+        assert_eq!(dy, 64);
+        assert_eq!(dz, 1);
+
+        // Non-aligned size
+        ≔ (dx, dy, dz) = pipeline.dispatch_size(1000, 1000, 1);
+        assert_eq!(dx, 63); // ceil(1000/16)
+        assert_eq!(dy, 63);
+        assert_eq!(dz, 1);
+    }
+
+    //@ rune: test
+    rite test_pipeline_cache() {
+        ≔ cache = PipelineCache·with_standard().unwrap();
+
+        assert(cache.get_by_name("matmul").is_some());
+        assert(cache.get_by_name("gelu").is_some());
+        assert(cache.get_by_name("softmax").is_some());
+        assert(cache.get_by_name("nonexistent").is_none());
+
+        assert_eq!(cache.len(), 6);
+    }
+
+    //@ rune: test
+    rite test_bind_group_layout() {
+        ≔ Δ layout = BindGroupLayout·new(0);
+        layout.add_uniform(0).add_read_storage(1).add_storage(2);
+
+        assert_eq!(layout.bindings.len(), 3);
+        assert_eq!(layout.bindings[0].buffer_type, BufferBindingType·Uniform);
+        assert_eq!(
+            layout.bindings[1].buffer_type,
+            BufferBindingType·ReadOnlyStorage
+        );
+        assert_eq!(layout.bindings[2].buffer_type, BufferBindingType·Storage);
+    }
+
+    //@ rune: test
+    rite test_execution_context() {
+        ≔ buffer = GpuBuffer·storage(1024, "test");
+        ≔ Δ ctx = ExecutionContext·new();
+
+        ctx.bind(0, 0, &buffer).dispatch(64, 64, 1);
+
+        assert_eq!(ctx.bindings().len(), 1);
+        assert_eq!(ctx.dispatch_dims(), (64, 64, 1));
+    }
+}

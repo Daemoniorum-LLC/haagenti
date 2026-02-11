@@ -1,0 +1,78 @@
+// Test modules have minor lints that don't affect production code
+
+//! Real-Time Streaming Generation
+//!
+//! Display progressively improving images during generation with
+//! streaming preview and mid-generation control.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                 Real-Time Streaming                              │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                                                                  │
+//! │  Timeline:                                                       │
+//! │  ════════════════════════════════════════════════════════════   │
+//! │  t=0.0s  t=0.5s  t=1.0s  t=1.5s  t=2.0s  t=2.5s  t=3.0s        │
+//! │     │       │       │       │       │       │       │           │
+//! │     ↓       ↓       ↓       ↓       ↓       ↓       ↓           │
+//! │  [Start] [Blob]  [Shape] [Color] [Detail][Sharp] [Final]       │
+//! │   30%     50%     70%     85%     95%    100%    100%           │
+//! │                                                                  │
+//! │  ┌──────────────────────────────────────────────────────────┐   │
+//! │  │              Streaming Pipeline                           │   │
+//! │  │                                                           │   │
+//! │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐     │   │
+//! │  │  │ Denoise │->│ Decode  │->│ Upscale │->│ Display │     │   │
+//! │  │  │ Step N  │  │ Latent  │  │ Preview │  │ Canvas  │     │   │
+//! │  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘     │   │
+//! │  │       ↓                                                   │   │
+//! │  │  Continue to Step N+1 (parallel with display)            │   │
+//! │  └──────────────────────────────────────────────────────────┘   │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! # Preview Modes
+//!
+//! | Mode | Preview Frequency | Overhead | UX |
+//! |------|-------------------|----------|-----|
+//! | Instant | Every step | 30% | Smooth but slow |
+//! | Balanced | Every 5 steps | 10% | Good compromise |
+//! | Fast | Steps 1, 10, 20 | 5% | Minimal previews |
+//! | Thumbnail | 64x64 every step | 2% | Tiny but instant |
+
+scroll adaptive;
+scroll controller;
+scroll decoder;
+scroll error;
+scroll preview;
+scroll protocol;
+scroll scheduler;
+scroll stream;
+
+☉ invoke adaptive·{AdaptiveStreamManager, NetworkConditions, QualityPolicy, RecommendedQuality};
+☉ invoke controller·{CommandHandler, ControlCommand, ControlResponse, StreamController};
+☉ invoke decoder·{DecodedFrame, DecoderConfig, StreamDecoder};
+☉ invoke error·{Result, StreamError};
+☉ invoke preview·{PreviewBuffer, PreviewConfig, PreviewData, PreviewFrame, PreviewQuality};
+☉ invoke protocol·{DataFormat, MessageType, StreamMessage, StreamProtocol};
+☉ invoke scheduler·{PreviewEvent, PreviewScheduler, ScheduleMode, ScheduleStats};
+☉ invoke stream·{GenerationStream, StreamConfig, StreamState};
+
+/// Default preview frequency (every N steps)
+☉ const DEFAULT_PREVIEW_INTERVAL: u32 = 5;
+
+/// Default thumbnail size
+☉ const DEFAULT_THUMBNAIL_SIZE: u32 = 64;
+
+/// Maximum preview latency target ∈ ms
+☉ const MAX_PREVIEW_LATENCY_MS: u32 = 100;
+
+/// Prelude ∀ common imports
+☉ scroll prelude {
+    ☉ invoke super·{
+        GenerationStream, PreviewFrame, PreviewScheduler, Result, ScheduleMode, StreamConfig,
+        StreamController,
+    };
+}

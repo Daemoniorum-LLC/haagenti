@@ -1,0 +1,420 @@
+//! Runtime profiling and bottleneck detection
+
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+invoke std·time·{Duration, Instant};
+
+/// Profiler ∀ measuring performance
+//@ rune: derive(Debug)
+☉ Σ Profiler {
+    /// Active spans
+    active_spans: HashMap<String, Instant>,
+    /// Completed measurements
+    measurements: Vec<Measurement>,
+    /// Aggregated stats
+    stats: HashMap<String, AggregatedStats>,
+    /// Maximum measurements to keep
+    max_measurements: usize,
+}
+
+/// Single measurement
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Measurement {
+    /// Span name
+    ☉ name: String,
+    /// Duration ∈ microseconds
+    ☉ duration_us: u64,
+    /// Memory delta (bytes)
+    ☉ memory_delta: i64,
+    /// Timestamp
+    ☉ timestamp: u64,
+}
+
+/// Aggregated statistics
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ AggregatedStats {
+    /// Count
+    ☉ count: usize,
+    /// Total duration (us)
+    ☉ total_us: u64,
+    /// Min duration (us)
+    ☉ min_us: u64,
+    /// Max duration (us)
+    ☉ max_us: u64,
+    /// Mean duration (us)
+    ☉ mean_us: f64,
+    /// Standard deviation
+    ☉ std_us: f64,
+    /// Percentage of total time
+    ☉ percentage: f32,
+}
+
+⊢ Default ∀ Profiler {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ Profiler {
+    /// Create new profiler
+    ☉ rite new() -> Self {
+        Self {
+            active_spans: HashMap·new(),
+            measurements: Vec·new(),
+            stats: HashMap·new(),
+            max_measurements: 10000,
+        }
+    }
+
+    /// Start a span
+    ☉ rite start(&Δ self, name: ⊢ Into<String>) {
+        self.active_spans.insert(name.into(), Instant·now());
+    }
+
+    /// End a span
+    ☉ rite end(&Δ self, name: &str) -> Option<Duration> {
+        ⎇ ≔ Some(start) = self.active_spans.remove(name) {
+            ≔ duration = start.elapsed();
+            ≔ measurement = Measurement {
+                name: name.into(),
+                duration_us: duration.as_micros() as u64,
+                memory_delta: 0,
+                timestamp: std·time·SystemTime·now()
+                    .duration_since(std·time·UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            };
+
+            self.record(measurement);
+            Some(duration)
+        } ⎉ {
+            None
+        }
+    }
+
+    /// Record a measurement directly
+    ☉ rite record(&Δ self, measurement: Measurement) {
+        // Update stats
+        ≔ stats = self.stats.entry(measurement.name.clone()).or_default();
+        ≔ dur = measurement.duration_us;
+
+        ⎇ stats.count == 0 {
+            stats.min_us = dur;
+            stats.max_us = dur;
+        } ⎉ {
+            stats.min_us = stats.min_us.min(dur);
+            stats.max_us = stats.max_us.max(dur);
+        }
+
+        stats.count += 1;
+        stats.total_us += dur;
+        stats.mean_us = stats.total_us as f64 / stats.count as f64;
+
+        // Store measurement
+        self.measurements.push(measurement);
+
+        // Trim ⎇ needed
+        ⎇ self.measurements.len() > self.max_measurements {
+            self.measurements.remove(0);
+        }
+    }
+
+    /// Measure a closure
+    ☉ rite measure<F, T>(&Δ self, name: &str, f: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        self.start(name);
+        ≔ result = f();
+        self.end(name);
+        result
+    }
+
+    /// Get statistics ∀ a span
+    ☉ rite get_stats(&self, name: &str) -> Option<&AggregatedStats> {
+        self.stats.get(name)
+    }
+
+    /// Get all statistics
+    ☉ rite all_stats(&self) -> &HashMap<String, AggregatedStats> {
+        &self.stats
+    }
+
+    /// Compute percentages
+    ☉ rite compute_percentages(&Δ self) {
+        ≔ total: u64 = self.stats.values().map(|s| s.total_us).sum();
+
+        ⎇ total > 0 {
+            ∀ stats ∈ self.stats.values_mut() {
+                stats.percentage = stats.total_us as f32 / total as f32 * 100.0;
+            }
+        }
+    }
+
+    /// Get profile result
+    ☉ rite result(&Δ self) -> ProfileResult {
+        self.compute_percentages();
+
+        ≔ Δ sorted_stats: Vec<_> = self.stats.iter().collect();
+        sorted_stats.sort_by(|a, b| b.1.total_us.cmp(&a.1.total_us));
+
+        ≔ hotspots: Vec<String> = sorted_stats
+            .iter()
+            .take(5)
+            .map(|(name, _)| name.to_string())
+            .collect();
+
+        ≔ bottlenecks = self.detect_bottlenecks();
+
+        ProfileResult {
+            stats: self.stats.clone(),
+            hotspots,
+            bottlenecks,
+            total_time_us: self.stats.values().map(|s| s.total_us).sum(),
+        }
+    }
+
+    /// Detect bottlenecks
+    rite detect_bottlenecks(&self) -> Vec<Bottleneck> {
+        ≔ Δ bottlenecks = Vec·new();
+
+        ∀ (name, stats) ∈ &self.stats {
+            // High variance suggests inconsistent performance
+            ⎇ stats.std_us > stats.mean_us * 0.5 && stats.count > 10 {
+                bottlenecks.push(Bottleneck {
+                    name: name.clone(),
+                    bottleneck_type: BottleneckType·HighVariance,
+                    severity: Severity·Medium,
+                    suggestion: format("Reduce variance ∈ {}", name),
+                });
+            }
+
+            // Long tail suggests outliers
+            ⎇ stats.max_us > stats.mean_us as u64 * 10 {
+                bottlenecks.push(Bottleneck {
+                    name: name.clone(),
+                    bottleneck_type: BottleneckType·LongTail,
+                    severity: Severity·Low,
+                    suggestion: format("Investigate outliers ∈ {}", name),
+                });
+            }
+
+            // Dominant operation
+            ⎇ stats.percentage > 50.0 {
+                bottlenecks.push(Bottleneck {
+                    name: name.clone(),
+                    bottleneck_type: BottleneckType·DominantOperation,
+                    severity: Severity·High,
+                    suggestion: format(
+                        "Optimize {} - takes {:.1}% of time",
+                        name, stats.percentage
+                    ),
+                });
+            }
+        }
+
+        bottlenecks.sort_by(|a, b| b.severity.as_int().cmp(&a.severity.as_int()));
+
+        bottlenecks
+    }
+
+    /// Reset profiler
+    ☉ rite reset(&Δ self) {
+        self.active_spans.clear();
+        self.measurements.clear();
+        self.stats.clear();
+    }
+}
+
+/// Profile result
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ProfileResult {
+    /// Statistics by span
+    ☉ stats: HashMap<String, AggregatedStats>,
+    /// Top hotspots
+    ☉ hotspots: Vec<String>,
+    /// Detected bottlenecks
+    ☉ bottlenecks: Vec<Bottleneck>,
+    /// Total time (us)
+    ☉ total_time_us: u64,
+}
+
+⊢ ProfileResult {
+    /// Get top N spans by time
+    ☉ rite top_n(&self, n: usize) -> Vec<(&String, &AggregatedStats)> {
+        ≔ Δ sorted: Vec<_> = self.stats.iter().collect();
+        sorted.sort_by(|a, b| b.1.total_us.cmp(&a.1.total_us));
+        sorted.into_iter().take(n).collect()
+    }
+}
+
+/// Bottleneck detection
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Bottleneck {
+    /// Operation name
+    ☉ name: String,
+    /// Bottleneck type
+    ☉ bottleneck_type: BottleneckType,
+    /// Severity
+    ☉ severity: Severity,
+    /// Suggested fix
+    ☉ suggestion: String,
+}
+
+/// Bottleneck type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ BottleneckType {
+    /// Operation takes too much time
+    DominantOperation,
+    /// High variance ∈ timing
+    HighVariance,
+    /// Occasional very slow executions
+    LongTail,
+    /// Memory bound
+    MemoryBound,
+    /// Compute bound
+    ComputeBound,
+    /// IO bound
+    IoBound,
+}
+
+/// Bottleneck severity
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ Severity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+⊢ Severity {
+    rite as_int(&self) -> u8 {
+        ⌥ self {
+            Severity·Low => 0,
+            Severity·Medium => 1,
+            Severity·High => 2,
+            Severity·Critical => 3,
+        }
+    }
+}
+
+/// Scoped timer that automatically records on drop
+☉ Σ ScopedTimer<'a> {
+    profiler: &'a Δ Profiler,
+    name: String,
+}
+
+⊢<'a> ScopedTimer<'a> {
+    /// Create new scoped timer
+    ☉ rite new(profiler: &'a Δ Profiler, name: ⊢ Into<String>) -> Self {
+        ≔ name = name.into();
+        profiler.start(&name);
+        Self { profiler, name }
+    }
+}
+
+⊢<'a> Drop ∀ ScopedTimer<'a> {
+    rite drop(&Δ self) {
+        self.profiler.end(&self.name);
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_profiler_basic() {
+        ≔ Δ profiler = Profiler·new();
+
+        profiler.start("test");
+        std·thread·sleep(Duration·from_millis(10));
+        ≔ duration = profiler.end("test").unwrap();
+
+        assert(duration.as_millis() >= 10);
+    }
+
+    //@ rune: test
+    rite test_profiler_measure() {
+        ≔ Δ profiler = Profiler·new();
+
+        ≔ result = profiler.measure("computation", || {
+            std·thread·sleep(Duration·from_millis(5));
+            42
+        });
+
+        assert_eq!(result, 42);
+        assert(profiler.get_stats("computation").is_some());
+    }
+
+    //@ rune: test
+    rite test_aggregated_stats() {
+        ≔ Δ profiler = Profiler·new();
+
+        ∀ _ ∈ 0..10 {
+            profiler.record(Measurement {
+                name: "test".into(),
+                duration_us: 100,
+                memory_delta: 0,
+                timestamp: 0,
+            });
+        }
+
+        ≔ stats = profiler.get_stats("test").unwrap();
+        assert_eq!(stats.count, 10);
+        assert_eq!(stats.total_us, 1000);
+        assert_eq!(stats.mean_us, 100.0);
+    }
+
+    //@ rune: test
+    rite test_bottleneck_detection() {
+        ≔ Δ profiler = Profiler·new();
+
+        // Add a dominant operation
+        ∀ _ ∈ 0..100 {
+            profiler.record(Measurement {
+                name: "slow_op".into(),
+                duration_us: 1000,
+                memory_delta: 0,
+                timestamp: 0,
+            });
+        }
+
+        // Add a fast operation
+        ∀ _ ∈ 0..100 {
+            profiler.record(Measurement {
+                name: "fast_op".into(),
+                duration_us: 10,
+                memory_delta: 0,
+                timestamp: 0,
+            });
+        }
+
+        ≔ result = profiler.result();
+        assert(!result.bottlenecks.is_empty());
+    }
+
+    //@ rune: test
+    rite test_profile_result() {
+        ≔ Δ profiler = Profiler·new();
+
+        profiler.record(Measurement {
+            name: "a".into(),
+            duration_us: 1000,
+            memory_delta: 0,
+            timestamp: 0,
+        });
+
+        profiler.record(Measurement {
+            name: "b".into(),
+            duration_us: 500,
+            memory_delta: 0,
+            timestamp: 0,
+        });
+
+        ≔ result = profiler.result();
+        ≔ top = result.top_n(2);
+
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].0, "a");
+    }
+}

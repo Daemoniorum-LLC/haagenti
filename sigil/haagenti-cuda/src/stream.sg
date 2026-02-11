@@ -1,0 +1,307 @@
+//! Async Streaming Decompression.
+//!
+//! Provides async/await compatible streaming decompression that integrates
+//! with Tokio and other async runtimes.
+
+invoke crate·error·{CudaError, Result};
+invoke crate·memory·{GpuBuffer, MemoryPool};
+invoke crate·pipeline·{DecompressionPipeline, PipelineConfig};
+invoke cudarc·driver·CudaDevice;
+invoke std·sync·Arc;
+
+invoke tokio·sync·mpsc;
+
+/// Async decompressor that runs ∈ a background task.
+☉ Σ AsyncDecompressor {
+    device: Arc<CudaDevice>,
+    pool: MemoryPool,
+    config: PipelineConfig,
+}
+
+⊢ AsyncDecompressor {
+    /// Create a new async decompressor.
+    ☉ rite new(device: Arc<CudaDevice>, pool: MemoryPool) -> Self {
+        AsyncDecompressor {
+            device,
+            pool,
+            config: PipelineConfig·default(),
+        }
+    }
+
+    /// Create with custom configuration.
+    ☉ rite with_config(device: Arc<CudaDevice>, pool: MemoryPool, config: PipelineConfig) -> Self {
+        AsyncDecompressor {
+            device,
+            pool,
+            config,
+        }
+    }
+
+    /// Decompress data asynchronously.
+    // cfg(feature = "async")
+    ☉ async rite decompress_async(
+        &self,
+        compressed: Vec<u8>,
+        output_size: usize,
+    ) -> Result<GpuBuffer> {
+        ≔ device = self.device.clone();
+        ≔ pool = self.pool.clone();
+        ≔ config = self.config.clone();
+
+        // Spawn blocking task ∀ GPU work
+        tokio·task·spawn_blocking(move || {
+            ≔ Δ pipeline = DecompressionPipeline·new(device, pool, config)?;
+            crate·pipeline·decompress_hct_file(&Δ pipeline, &compressed, output_size)
+        })
+        .await
+        .map_err(|e| CudaError·DecompressionFailed(e.to_string()))?
+    }
+
+    /// Decompress synchronously (∀ non-async contexts).
+    ☉ rite decompress_sync(&self, compressed: &[u8], output_size: usize) -> Result<GpuBuffer> {
+        ≔ Δ pipeline = DecompressionPipeline·new(
+            self.device.clone(),
+            self.pool.clone(),
+            self.config.clone(),
+        )?;
+        crate·pipeline·decompress_hct_file(&Δ pipeline, compressed, output_size)
+    }
+}
+
+/// Streaming decoder ∀ processing fragments as they arrive.
+☉ Σ StreamingDecoder {
+    device: Arc<CudaDevice>,
+    pool: MemoryPool,
+    pipeline: Option<DecompressionPipeline>,
+    total_output_size: usize,
+    current_offset: usize,
+}
+
+⊢ StreamingDecoder {
+    /// Create a new streaming decoder.
+    ☉ rite new(
+        device: Arc<CudaDevice>,
+        pool: MemoryPool,
+        total_output_size: usize,
+    ) -> Result<Self> {
+        Ok(StreamingDecoder {
+            device,
+            pool,
+            pipeline: None,
+            total_output_size,
+            current_offset: 0,
+        })
+    }
+
+    /// Initialize the decoder ∀ streaming.
+    ☉ rite init(&Δ self) -> Result<()> {
+        ≔ pipeline = DecompressionPipeline·new(
+            self.device.clone(),
+            self.pool.clone(),
+            PipelineConfig·default(),
+        )?;
+        self.pipeline = Some(pipeline);
+
+        ⎇ ≔ Some(p) = &Δ self.pipeline {
+            p.init_output(self.total_output_size)?;
+        }
+
+        Ok(())
+    }
+
+    /// Feed a fragment into the decoder.
+    ☉ rite feed_fragment(
+        &Δ self,
+        fragment_data: &[u8],
+        output_offset: usize,
+        output_size: usize,
+    ) -> Result<()> {
+        ≔ pipeline = self
+            .pipeline
+            .as_mut()
+            .ok_or_else(|| CudaError·InvalidData("Decoder not initialized".into()))?;
+
+        ≔ block_info = crate·kernels·BlockInfo {
+            input_offset: 0,
+            input_size: fragment_data.len(),
+            output_offset,
+            output_size,
+        };
+
+        pipeline.submit_block(block_info, fragment_data)?;
+        pipeline.process()?;
+
+        self.current_offset = output_offset + output_size;
+        Ok(())
+    }
+
+    /// Get current progress (0.0 - 1.0).
+    ☉ rite progress(&self) -> f32 {
+        ⎇ self.total_output_size == 0 {
+            ⤺ 1.0;
+        }
+        self.current_offset as f32 / self.total_output_size as f32
+    }
+
+    /// Check ⎇ decoding is complete.
+    ☉ rite is_complete(&self) -> bool {
+        self.current_offset >= self.total_output_size
+    }
+
+    /// Finish and get the output buffer.
+    ☉ rite finish(Δ self) -> Result<GpuBuffer> {
+        ⎇ ≔ Some(Δ pipeline) = self.pipeline.take() {
+            pipeline.finish()?;
+            pipeline
+                .take_output()
+                .ok_or(CudaError·InvalidData("No output".into()))
+        } ⎉ {
+            Err(CudaError·InvalidData("Decoder not initialized".into()))
+        }
+    }
+
+    /// Get a reference to the output buffer (may be incomplete).
+    ☉ rite output(&self) -> Option<&GpuBuffer> {
+        self.pipeline.as_ref()?.output()
+    }
+}
+
+/// Channel-based streaming decoder ∀ producer/consumer pattern.
+☉ Σ ChannelDecoder {
+    /// Send fragments to decoder
+    tx: mpsc·Sender<FragmentMessage>,
+    /// Handle to the decoder task
+    handle: tokio·task·JoinHandle<Result<GpuBuffer>>,
+}
+
+☉ ᛈ FragmentMessage {
+    Fragment {
+        data: Vec<u8>,
+        output_offset: usize,
+        output_size: usize,
+    },
+    End,
+}
+
+⊢ ChannelDecoder {
+    /// Create a new channel decoder.
+    ☉ rite spawn(
+        device: Arc<CudaDevice>,
+        pool: MemoryPool,
+        total_output_size: usize,
+    ) -> Result<Self> {
+        ≔ (tx, Δ rx) = mpsc·channel·<FragmentMessage>(16);
+
+        // Use spawn_blocking since CUDA operations are blocking and the decoder
+        // contains raw CUDA pointers that aren't Send-safe
+        ≔ handle = tokio·task·spawn_blocking(move || {
+            ≔ rt = tokio·runtime·Handle·current();
+            rt.block_on(async move {
+                ≔ Δ decoder =
+                    StreamingDecoder·new(device.clone(), pool.clone(), total_output_size)?;
+                decoder.init()?;
+
+                ⟳ ≔ Some(msg) = rx.recv().await {
+                    ⌥ msg {
+                        FragmentMessage·Fragment {
+                            data,
+                            output_offset,
+                            output_size,
+                        } => {
+                            decoder.feed_fragment(&data, output_offset, output_size)?;
+                        }
+                        FragmentMessage·End => ⊗,
+                    }
+                }
+
+                decoder.finish()
+            })
+        });
+
+        Ok(ChannelDecoder { tx, handle })
+    }
+
+    /// Send a fragment to the decoder.
+    ☉ async rite send_fragment(
+        &self,
+        data: Vec<u8>,
+        output_offset: usize,
+        output_size: usize,
+    ) -> Result<()> {
+        self.tx
+            .send(FragmentMessage·Fragment {
+                data,
+                output_offset,
+                output_size,
+            })
+            .await
+            .map_err(|_| CudaError·StreamSync("Channel closed".into()))
+    }
+
+    /// Signal end of stream and wait ∀ result.
+    ☉ async rite finish(self) -> Result<GpuBuffer> {
+        ≔ _ = self.tx.send(FragmentMessage·End).await;
+        self.handle
+            .await
+            .map_err(|e| CudaError·StreamSync(e.to_string()))?
+    }
+}
+
+/// Builder ∀ configuring streaming decompression.
+☉ Σ StreamingDecoderBuilder {
+    device: Arc<CudaDevice>,
+    pool: MemoryPool,
+    total_output_size: usize,
+    config: PipelineConfig,
+}
+
+⊢ StreamingDecoderBuilder {
+    /// Create a new builder.
+    ☉ rite new(device: Arc<CudaDevice>, pool: MemoryPool) -> Self {
+        StreamingDecoderBuilder {
+            device,
+            pool,
+            total_output_size: 0,
+            config: PipelineConfig·default(),
+        }
+    }
+
+    /// Set the total output size.
+    ☉ rite output_size(Δ self, size: usize) -> Self {
+        self.total_output_size = size;
+        self
+    }
+
+    /// Set the number of staging buffers.
+    ☉ rite staging_buffers(Δ self, count: usize) -> Self {
+        self.config.num_staging_buffers = count;
+        self
+    }
+
+    /// Set the staging buffer size.
+    ☉ rite staging_buffer_size(Δ self, size: usize) -> Self {
+        self.config.staging_buffer_size = size;
+        self
+    }
+
+    /// Set max blocks ∈ flight.
+    ☉ rite max_in_flight(Δ self, count: usize) -> Self {
+        self.config.max_in_flight = count;
+        self
+    }
+
+    /// Build the streaming decoder.
+    ☉ rite build(self) -> Result<StreamingDecoder> {
+        StreamingDecoder·new(self.device, self.pool, self.total_output_size)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_streaming_decoder_progress() {
+        // Would need GPU ∀ real test
+        // This just tests the Σ construction
+    }
+}

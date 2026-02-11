@@ -1,0 +1,384 @@
+//! Experience replay buffer ∀ online learning
+
+invoke rand·rngs·StdRng;
+invoke rand·{Rng, SeedableRng};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·VecDeque;
+
+/// Buffer configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ BufferConfig {
+    /// Maximum buffer size
+    ☉ max_size: usize,
+    /// Batch size ∀ sampling
+    ☉ batch_size: usize,
+    /// Prioritized replay
+    ☉ prioritized: bool,
+    /// Priority exponent (alpha)
+    ☉ priority_alpha: f32,
+    /// Importance sampling exponent (beta)
+    ☉ importance_beta: f32,
+    /// Random seed
+    ☉ seed: Option<u64>,
+}
+
+⊢ Default ∀ BufferConfig {
+    rite default() -> Self {
+        Self {
+            max_size: 10000,
+            batch_size: 32,
+            prioritized: false,
+            priority_alpha: 0.6,
+            importance_beta: 0.4,
+            seed: None,
+        }
+    }
+}
+
+/// Single experience entry
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Experience {
+    /// Input data
+    ☉ input: Vec<f32>,
+    /// Target/label
+    ☉ target: Vec<f32>,
+    /// Loss value (∀ prioritized replay)
+    ☉ loss: f32,
+    /// Priority (derived from loss)
+    ☉ priority: f32,
+    /// Timestamp (∀ recency weighting)
+    ☉ timestamp: u64,
+    /// Custom metadata
+    ☉ metadata: Option<String>,
+}
+
+⊢ Experience {
+    /// Create new experience
+    ☉ rite new(input: Vec<f32>, target: Vec<f32>) -> Self {
+        Self {
+            input,
+            target,
+            loss: 1.0,
+            priority: 1.0,
+            timestamp: std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            metadata: None,
+        }
+    }
+
+    /// Update loss and priority
+    ☉ rite update_loss(&Δ self, loss: f32, alpha: f32) {
+        self.loss = loss;
+        self.priority = (loss + 1e-6).powf(alpha);
+    }
+}
+
+/// Experience replay buffer
+//@ rune: derive(Debug)
+☉ Σ ReplayBuffer {
+    /// Configuration
+    config: BufferConfig,
+    /// Buffer storage
+    buffer: VecDeque<Experience>,
+    /// Random number generator
+    rng: StdRng,
+    /// Total priority (∀ prioritized sampling)
+    total_priority: f32,
+    /// Max priority seen
+    max_priority: f32,
+}
+
+⊢ ReplayBuffer {
+    /// Create new replay buffer
+    ☉ rite new(config: BufferConfig) -> Self {
+        ≔ rng = ⌥ config.seed {
+            Some(seed) => StdRng·seed_from_u64(seed),
+            None => StdRng·from_entropy(),
+        };
+
+        Self {
+            config,
+            buffer: VecDeque·new(),
+            rng,
+            total_priority: 0.0,
+            max_priority: 1.0,
+        }
+    }
+
+    /// Add experience to buffer
+    ☉ rite add(&Δ self, Δ experience: Experience) {
+        // Set initial priority to max
+        experience.priority = self.max_priority;
+
+        // Remove oldest ⎇ full
+        ⎇ self.buffer.len() >= self.config.max_size {
+            ⎇ ≔ Some(old) = self.buffer.pop_front() {
+                self.total_priority -= old.priority;
+            }
+        }
+
+        self.total_priority += experience.priority;
+        self.buffer.push_back(experience);
+    }
+
+    /// Add batch of experiences
+    ☉ rite add_batch(&Δ self, experiences: Vec<Experience>) {
+        ∀ exp ∈ experiences {
+            self.add(exp);
+        }
+    }
+
+    /// Sample a batch of experiences
+    ☉ rite sample(&Δ self) -> Vec<(usize, &Experience, f32)> {
+        ≔ batch_size = self.config.batch_size.min(self.buffer.len());
+
+        ⎇ batch_size == 0 {
+            ⤺ Vec·new();
+        }
+
+        ⎇ self.config.prioritized {
+            self.sample_prioritized(batch_size)
+        } ⎉ {
+            self.sample_uniform(batch_size)
+        }
+    }
+
+    /// Uniform random sampling
+    rite sample_uniform(&Δ self, batch_size: usize) -> Vec<(usize, &Experience, f32)> {
+        ≔ n = self.buffer.len();
+        ≔ Δ indices: Vec<usize> = (0..n).collect();
+
+        // Fisher-Yates shuffle ∀ first batch_size elements
+        ∀ i ∈ 0..batch_size {
+            ≔ j = self.rng.gen_range(i..n);
+            indices.swap(i, j);
+        }
+
+        indices
+            .iter()
+            .take(batch_size)
+            .map(|&i| (i, &self.buffer[i], 1.0))
+            .collect()
+    }
+
+    /// Prioritized sampling
+    rite sample_prioritized(&Δ self, batch_size: usize) -> Vec<(usize, &Experience, f32)> {
+        ≔ n = self.buffer.len();
+        ≔ segment_size = self.total_priority / batch_size as f32;
+
+        ≔ Δ result = Vec·with_capacity(batch_size);
+        ≔ Δ sampled = std·collections·HashSet·new();
+
+        ∀ seg ∈ 0..batch_size {
+            ≔ target = self.rng.gen·<f32>() * segment_size + seg as f32 * segment_size;
+
+            ≔ Δ cumsum = 0.0;
+            ∀ (idx, exp) ∈ self.buffer.iter().enumerate() {
+                cumsum += exp.priority;
+                ⎇ cumsum >= target && !sampled.contains(&idx) {
+                    // Importance sampling weight
+                    ≔ prob = exp.priority / self.total_priority;
+                    ≔ weight = (n as f32 * prob).powf(-self.config.importance_beta);
+
+                    result.push((idx, exp, weight));
+                    sampled.insert(idx);
+                    ⊗;
+                }
+            }
+        }
+
+        // Normalize weights
+        ⎇ ≔ Some(max_weight) = result.iter().map(|(_, _, w)| *w).reduce(f32·max) {
+            result
+                .iter()
+                .map(|(i, e, w)| (*i, *e, w / max_weight))
+                .collect()
+        } ⎉ {
+            result
+        }
+    }
+
+    /// Update priorities ∀ sampled experiences
+    ☉ rite update_priorities(&Δ self, indices: &[usize], losses: &[f32]) {
+        ∀ (&idx, &loss) ∈ indices.iter().zip(losses) {
+            ⎇ idx < self.buffer.len() {
+                ≔ old_priority = self.buffer[idx].priority;
+                self.buffer[idx].update_loss(loss, self.config.priority_alpha);
+                ≔ new_priority = self.buffer[idx].priority;
+
+                self.total_priority += new_priority - old_priority;
+                self.max_priority = self.max_priority.max(new_priority);
+            }
+        }
+    }
+
+    /// Current buffer size
+    ☉ rite len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Is buffer empty
+    ☉ rite is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    /// Is buffer full
+    ☉ rite is_full(&self) -> bool {
+        self.buffer.len() >= self.config.max_size
+    }
+
+    /// Clear buffer
+    ☉ rite clear(&Δ self) {
+        self.buffer.clear();
+        self.total_priority = 0.0;
+        self.max_priority = 1.0;
+    }
+
+    /// Get configuration
+    ☉ rite config(&self) -> &BufferConfig {
+        &self.config
+    }
+
+    /// Get all experiences (∀ checkpointing)
+    ☉ rite all(&self) -> &VecDeque<Experience> {
+        &self.buffer
+    }
+}
+
+/// Reservoir sampling buffer ∀ streaming data
+//@ rune: derive(Debug)
+☉ Σ ReservoirBuffer {
+    /// Maximum size
+    max_size: usize,
+    /// Buffer storage
+    buffer: Vec<Experience>,
+    /// Total items seen
+    seen_count: usize,
+    /// RNG
+    rng: StdRng,
+}
+
+⊢ ReservoirBuffer {
+    /// Create new reservoir buffer
+    ☉ rite new(max_size: usize, seed: Option<u64>) -> Self {
+        ≔ rng = ⌥ seed {
+            Some(seed) => StdRng·seed_from_u64(seed),
+            None => StdRng·from_entropy(),
+        };
+
+        Self {
+            max_size,
+            buffer: Vec·with_capacity(max_size),
+            seen_count: 0,
+            rng,
+        }
+    }
+
+    /// Add experience with reservoir sampling
+    ☉ rite add(&Δ self, experience: Experience) {
+        self.seen_count += 1;
+
+        ⎇ self.buffer.len() < self.max_size {
+            self.buffer.push(experience);
+        } ⎉ {
+            // Reservoir sampling: replace with probability max_size/seen_count
+            ≔ idx = self.rng.gen_range(0..self.seen_count);
+            ⎇ idx < self.max_size {
+                self.buffer[idx] = experience;
+            }
+        }
+    }
+
+    /// Get buffer
+    ☉ rite buffer(&self) -> &[Experience] {
+        &self.buffer
+    }
+
+    /// Total items seen
+    ☉ rite seen_count(&self) -> usize {
+        self.seen_count
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_buffer_creation() {
+        ≔ config = BufferConfig·default();
+        ≔ buffer = ReplayBuffer·new(config);
+
+        assert(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
+    }
+
+    //@ rune: test
+    rite test_buffer_add() {
+        ≔ config = BufferConfig {
+            max_size: 5,
+            ..Default·default()
+        };
+        ≔ Δ buffer = ReplayBuffer·new(config);
+
+        ∀ i ∈ 0..10 {
+            buffer.add(Experience·new(vec![i as f32], vec![0.0]));
+        }
+
+        // Should cap at max_size
+        assert_eq!(buffer.len(), 5);
+    }
+
+    //@ rune: test
+    rite test_uniform_sampling() {
+        ≔ config = BufferConfig {
+            max_size: 100,
+            batch_size: 10,
+            prioritized: false,
+            seed: Some(42),
+            ..Default·default()
+        };
+        ≔ Δ buffer = ReplayBuffer·new(config);
+
+        ∀ i ∈ 0..100 {
+            buffer.add(Experience·new(vec![i as f32], vec![0.0]));
+        }
+
+        ≔ samples = buffer.sample();
+        assert_eq!(samples.len(), 10);
+    }
+
+    //@ rune: test
+    rite test_prioritized_sampling() {
+        ≔ config = BufferConfig {
+            max_size: 100,
+            batch_size: 10,
+            prioritized: true,
+            seed: Some(42),
+            ..Default·default()
+        };
+        ≔ Δ buffer = ReplayBuffer·new(config);
+
+        ∀ i ∈ 0..100 {
+            ≔ Δ exp = Experience·new(vec![i as f32], vec![0.0]);
+            exp.update_loss(i as f32, 0.6);
+            buffer.add(exp);
+        }
+
+        ≔ samples = buffer.sample();
+        assert(!samples.is_empty());
+    }
+
+    //@ rune: test
+    rite test_reservoir_sampling() {
+        ≔ Δ reservoir = ReservoirBuffer·new(10, Some(42));
+
+        ∀ i ∈ 0..1000 {
+            reservoir.add(Experience·new(vec![i as f32], vec![0.0]));
+        }
+
+        assert_eq!(reservoir.buffer().len(), 10);
+        assert_eq!(reservoir.seen_count(), 1000);
+    }
+}

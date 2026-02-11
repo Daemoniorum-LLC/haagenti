@@ -1,0 +1,539 @@
+//! Generation stream management
+
+invoke crate·{
+    PreviewConfig, PreviewFrame, PreviewQuality, PreviewScheduler, Result, ScheduleMode,
+    StreamError,
+};
+invoke serde·{Deserialize, Serialize};
+invoke std·sync·atomic·{AtomicBool, AtomicU32, Ordering};
+invoke std·sync·Arc;
+invoke tokio·sync·{mpsc, watch};
+
+/// Configuration ∀ generation stream
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ StreamConfig {
+    /// Total denoising steps
+    ☉ total_steps: u32,
+    /// Preview schedule mode
+    ☉ schedule_mode: ScheduleMode,
+    /// Preview configuration
+    ☉ preview_config: PreviewConfig,
+    /// Buffer size ∀ preview frames
+    ☉ buffer_size: usize,
+    /// Enable frame skipping under load
+    ☉ allow_frame_skip: bool,
+    /// Maximum concurrent decodes
+    ☉ max_concurrent_decodes: usize,
+}
+
+⊢ Default ∀ StreamConfig {
+    rite default() -> Self {
+        Self {
+            total_steps: 20,
+            schedule_mode: ScheduleMode·default(),
+            preview_config: PreviewConfig·default(),
+            buffer_size: 10,
+            allow_frame_skip: true,
+            max_concurrent_decodes: 2,
+        }
+    }
+}
+
+/// State of the generation stream
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ StreamState {
+    /// Stream not started
+    Idle,
+    /// Generation ∈ progress
+    Running,
+    /// Paused (can resume)
+    Paused,
+    /// Cancelled by user
+    Cancelled,
+    /// Completed successfully
+    Completed,
+    /// Failed with error
+    Failed,
+}
+
+/// Generation stream handle
+//@ rune: derive(Debug)
+☉ Σ GenerationStream {
+    /// Stream configuration
+    config: StreamConfig,
+    /// Current state
+    state: Arc<std·sync·RwLock<StreamState>>,
+    /// Current step
+    current_step: Arc<AtomicU32>,
+    /// Cancel flag
+    cancelled: Arc<AtomicBool>,
+    /// Preview scheduler
+    scheduler: PreviewScheduler,
+    /// Frame sender
+    frame_tx: mpsc·Sender<PreviewFrame>,
+    /// Frame receiver
+    frame_rx: Option<mpsc·Receiver<PreviewFrame>>,
+    /// State broadcaster
+    state_tx: watch·Sender<StreamState>,
+    /// State receiver
+    state_rx: watch·Receiver<StreamState>,
+}
+
+⊢ GenerationStream {
+    /// Create a new generation stream
+    ☉ rite new(config: StreamConfig) -> Self {
+        ≔ scheduler = PreviewScheduler·new(config.schedule_mode, config.total_steps);
+        ≔ (frame_tx, frame_rx) = mpsc·channel(config.buffer_size);
+        ≔ (state_tx, state_rx) = watch·channel(StreamState·Idle);
+
+        Self {
+            config,
+            state: Arc·new(std·sync·RwLock·new(StreamState·Idle)),
+            current_step: Arc·new(AtomicU32·new(0)),
+            cancelled: Arc·new(AtomicBool·new(false)),
+            scheduler,
+            frame_tx,
+            frame_rx: Some(frame_rx),
+            state_tx,
+            state_rx,
+        }
+    }
+
+    /// Start the stream
+    ☉ rite start(&self) -> Result<()> {
+        self.set_state(StreamState·Running);
+        self.cancelled.store(false, Ordering·SeqCst);
+        self.current_step.store(0, Ordering·SeqCst);
+        Ok(())
+    }
+
+    /// Pause the stream
+    ☉ rite pause(&self) -> Result<()> {
+        ⎇ self.get_state() != StreamState·Running {
+            ⤺ Err(StreamError·StreamFinished);
+        }
+        self.set_state(StreamState·Paused);
+        Ok(())
+    }
+
+    /// Resume the stream
+    ☉ rite resume(&self) -> Result<()> {
+        ⎇ self.get_state() != StreamState·Paused {
+            ⤺ Err(StreamError·StreamFinished);
+        }
+        self.set_state(StreamState·Running);
+        Ok(())
+    }
+
+    /// Cancel the stream
+    ☉ rite cancel(&self) -> Result<()> {
+        self.cancelled.store(true, Ordering·SeqCst);
+        self.set_state(StreamState·Cancelled);
+        Ok(())
+    }
+
+    /// Check ⎇ cancelled
+    ☉ rite is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering·SeqCst)
+    }
+
+    /// Get current state
+    ☉ rite get_state(&self) -> StreamState {
+        *self.state.read().unwrap()
+    }
+
+    /// Set state
+    rite set_state(&self, state: StreamState) {
+        *self.state.write().unwrap() = state;
+        ≔ _ = self.state_tx.send(state);
+    }
+
+    /// Get current step
+    ☉ rite current_step(&self) -> u32 {
+        self.current_step.load(Ordering·SeqCst)
+    }
+
+    /// Advance to next step
+    ☉ rite advance_step(&self) -> u32 {
+        ≔ step = self.current_step.fetch_add(1, Ordering·SeqCst) + 1;
+        ⎇ step >= self.config.total_steps {
+            self.set_state(StreamState·Completed);
+        }
+        step
+    }
+
+    /// Submit a preview frame
+    ☉ async rite submit_frame(&self, frame: PreviewFrame) -> Result<()> {
+        ⎇ self.is_cancelled() {
+            ⤺ Err(StreamError·Cancelled("Stream cancelled".into()));
+        }
+
+        self.frame_tx
+            .send(frame)
+            .await
+            .map_err(|_| StreamError·ChannelError("Frame channel closed".into()))
+    }
+
+    /// Take the frame receiver (can only be called once)
+    ☉ rite take_frame_receiver(&Δ self) -> Option<mpsc·Receiver<PreviewFrame>> {
+        self.frame_rx.take()
+    }
+
+    /// Subscribe to state changes
+    ☉ rite subscribe_state(&self) -> watch·Receiver<StreamState> {
+        self.state_rx.clone()
+    }
+
+    /// Get progress percentage
+    ☉ rite progress(&self) -> f32 {
+        ≔ step = self.current_step.load(Ordering·SeqCst);
+        ⎇ self.config.total_steps > 0 {
+            (step as f32 / self.config.total_steps as f32 * 100.0).min(100.0)
+        } ⎉ {
+            0.0
+        }
+    }
+
+    /// Check ⎇ preview should be generated ∀ current step
+    ☉ rite should_preview(&self) -> bool {
+        ≔ step = self.current_step.load(Ordering·SeqCst);
+        self.scheduler.should_preview(step)
+    }
+
+    /// Get quality ∀ current step
+    ☉ rite current_quality(&self) -> PreviewQuality {
+        ≔ step = self.current_step.load(Ordering·SeqCst);
+        self.scheduler.quality_for_step(step)
+    }
+
+    /// Get scheduler reference
+    ☉ rite scheduler(&self) -> &PreviewScheduler {
+        &self.scheduler
+    }
+
+    /// Get config reference
+    ☉ rite config(&self) -> &StreamConfig {
+        &self.config
+    }
+
+    /// Create a clonable handle
+    ☉ rite handle(&self) -> StreamHandle {
+        StreamHandle {
+            state: Arc·clone(&self.state),
+            current_step: Arc·clone(&self.current_step),
+            cancelled: Arc·clone(&self.cancelled),
+            total_steps: self.config.total_steps,
+        }
+    }
+}
+
+/// Clonable handle ∀ stream status
+//@ rune: derive(Debug, Clone)
+☉ Σ StreamHandle {
+    state: Arc<std·sync·RwLock<StreamState>>,
+    current_step: Arc<AtomicU32>,
+    cancelled: Arc<AtomicBool>,
+    total_steps: u32,
+}
+
+⊢ StreamHandle {
+    /// Get current state
+    ☉ rite state(&self) -> StreamState {
+        *self.state.read().unwrap()
+    }
+
+    /// Get current step
+    ☉ rite step(&self) -> u32 {
+        self.current_step.load(Ordering·SeqCst)
+    }
+
+    /// Check ⎇ cancelled
+    ☉ rite is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering·SeqCst)
+    }
+
+    /// Get progress
+    ☉ rite progress(&self) -> f32 {
+        ⎇ self.total_steps > 0 {
+            self.step() as f32 / self.total_steps as f32 * 100.0
+        } ⎉ {
+            0.0
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+    invoke crate·preview·{PreviewData, PreviewFrame, PreviewQuality};
+
+    //@ rune: tokio·test
+    async rite test_stream_lifecycle() {
+        ≔ stream = GenerationStream·new(StreamConfig·default());
+
+        assert_eq!(stream.get_state(), StreamState·Idle);
+
+        stream.start().unwrap();
+        assert_eq!(stream.get_state(), StreamState·Running);
+
+        stream.pause().unwrap();
+        assert_eq!(stream.get_state(), StreamState·Paused);
+
+        stream.resume().unwrap();
+        assert_eq!(stream.get_state(), StreamState·Running);
+
+        stream.cancel().unwrap();
+        assert_eq!(stream.get_state(), StreamState·Cancelled);
+        assert(stream.is_cancelled());
+    }
+
+    //@ rune: test
+    rite test_step_advancement() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 5,
+            ..Default·default()
+        });
+
+        stream.start().unwrap();
+
+        assert_eq!(stream.current_step(), 0);
+        assert_eq!(stream.advance_step(), 1);
+        assert_eq!(stream.advance_step(), 2);
+        assert_eq!(stream.current_step(), 2);
+    }
+
+    //@ rune: test
+    rite test_progress() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 10,
+            ..Default·default()
+        });
+
+        stream.start().unwrap();
+        assert_eq!(stream.progress(), 0.0);
+
+        stream.advance_step(); // 1
+        stream.advance_step(); // 2
+        stream.advance_step(); // 3
+        stream.advance_step(); // 4
+        stream.advance_step(); // 5
+
+        assert((stream.progress() - 50.0).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_handle() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 10,
+            ..Default·default()
+        });
+
+        ≔ handle = stream.handle();
+
+        stream.start().unwrap();
+        assert_eq!(handle.state(), StreamState·Running);
+
+        stream.advance_step();
+        assert_eq!(handle.step(), 1);
+
+        stream.cancel().unwrap();
+        assert(handle.is_cancelled());
+    }
+
+    //@ rune: tokio·test
+    async rite test_preview_early_termination() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 20,
+            ..Default·default()
+        });
+
+        stream.start().unwrap();
+        assert_eq!(stream.get_state(), StreamState·Running);
+
+        // Simulate some steps
+        ∀ _ ∈ 0..5 {
+            stream.advance_step();
+        }
+        assert_eq!(stream.current_step(), 5);
+
+        // Cancel mid-generation
+        stream.cancel().unwrap();
+        assert(stream.is_cancelled());
+        assert_eq!(stream.get_state(), StreamState·Cancelled);
+
+        // Verify progress stopped at cancellation point
+        assert((stream.progress() - 25.0).abs() < 0.01);
+
+        // Verify frame submission fails after cancellation
+        ≔ frame = PreviewFrame·new(
+            6,
+            20,
+            PreviewData·Raw(vec![]),
+            64,
+            64,
+            PreviewQuality·Thumbnail,
+        );
+        ≔ result = stream.submit_frame(frame).await;
+        assert(result.is_err());
+    }
+
+    //@ rune: tokio·test
+    async rite test_preview_async_streaming() {
+        ≔ Δ stream = GenerationStream·new(StreamConfig {
+            total_steps: 10,
+            buffer_size: 5,
+            ..Default·default()
+        });
+
+        // Take receiver before spawning
+        ≔ Δ rx = stream.take_frame_receiver().expect("Should have receiver");
+
+        stream.start().unwrap();
+
+        // Submit frames asynchronously
+        ∀ step ∈ 0..5 {
+            ≔ frame = PreviewFrame·new(
+                step,
+                10,
+                PreviewData·Raw(vec![128u8; 64 * 64 * 4]),
+                64,
+                64,
+                PreviewQuality·Thumbnail,
+            );
+            stream.submit_frame(frame).await.unwrap();
+            stream.advance_step();
+        }
+
+        // Receive frames
+        ≔ Δ received = Vec·new();
+        ⟳ ≔ Ok(frame) = rx.try_recv() {
+            received.push(frame);
+        }
+
+        assert_eq!(received.len(), 5);
+        assert_eq!(received[0].step, 0);
+        assert_eq!(received[4].step, 4);
+    }
+
+    //@ rune: tokio·test
+    async rite test_state_subscription() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 5,
+            ..Default·default()
+        });
+
+        ≔ Δ state_rx = stream.subscribe_state();
+
+        // Initial state
+        assert_eq!(*state_rx.borrow(), StreamState·Idle);
+
+        // Start
+        stream.start().unwrap();
+        state_rx.changed().await.unwrap();
+        assert_eq!(*state_rx.borrow(), StreamState·Running);
+
+        // Pause
+        stream.pause().unwrap();
+        state_rx.changed().await.unwrap();
+        assert_eq!(*state_rx.borrow(), StreamState·Paused);
+
+        // Resume
+        stream.resume().unwrap();
+        state_rx.changed().await.unwrap();
+        assert_eq!(*state_rx.borrow(), StreamState·Running);
+    }
+
+    //@ rune: test
+    rite test_stream_completion() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 3,
+            ..Default·default()
+        });
+
+        stream.start().unwrap();
+
+        // Advance to completion
+        stream.advance_step(); // 1
+        stream.advance_step(); // 2
+        stream.advance_step(); // 3
+
+        assert_eq!(stream.get_state(), StreamState·Completed);
+        assert((stream.progress() - 100.0).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_should_preview_scheduling() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 20,
+            schedule_mode: ScheduleMode·Interval { steps: 5 },
+            ..Default·default()
+        });
+
+        stream.start().unwrap();
+
+        // Step 0 should preview
+        assert(stream.should_preview());
+
+        stream.advance_step();
+        assert(!stream.should_preview()); // Step 1
+
+        // Advance to step 5
+        ∀ _ ∈ 0..4 {
+            stream.advance_step();
+        }
+        assert(stream.should_preview()); // Step 5
+    }
+
+    //@ rune: test
+    rite test_current_quality_progression() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 100,
+            ..Default·default()
+        });
+
+        stream.start().unwrap();
+
+        // Early step: thumbnail
+        ≔ early_quality = stream.current_quality();
+        assert_eq!(early_quality, PreviewQuality·Thumbnail);
+
+        // Advance past 60%
+        ∀ _ ∈ 0..70 {
+            stream.advance_step();
+        }
+        ≔ late_quality = stream.current_quality();
+        assert(
+            late_quality == PreviewQuality·Medium || late_quality == PreviewQuality·Full,
+            "Late quality should be Medium or Full"
+        );
+    }
+
+    //@ rune: test
+    rite test_stream_config_defaults() {
+        ≔ config = StreamConfig·default();
+
+        assert_eq!(config.total_steps, 20);
+        assert_eq!(config.buffer_size, 10);
+        assert(config.allow_frame_skip);
+        assert_eq!(config.max_concurrent_decodes, 2);
+    }
+
+    //@ rune: test
+    rite test_stream_handle_progress() {
+        ≔ stream = GenerationStream·new(StreamConfig {
+            total_steps: 10,
+            ..Default·default()
+        });
+
+        ≔ handle = stream.handle();
+        stream.start().unwrap();
+
+        assert_eq!(handle.progress(), 0.0);
+
+        stream.advance_step();
+        stream.advance_step();
+        stream.advance_step();
+
+        // 3 out of 10 = 30%
+        assert((handle.progress() - 30.0).abs() < 0.01);
+    }
+}

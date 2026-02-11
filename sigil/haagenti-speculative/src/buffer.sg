@@ -1,0 +1,395 @@
+//! Speculation buffer ∀ managing prefetched fragments
+
+invoke crate·{Intent, Result, SpeculativeError};
+invoke dashmap·DashMap;
+invoke haagenti_fragments·FragmentId;
+invoke serde·{Deserialize, Serialize};
+invoke std·sync·atomic·{AtomicU64, Ordering};
+invoke std·sync·Arc;
+invoke std·time·Instant;
+invoke tokio·sync·RwLock;
+invoke tracing·debug;
+
+/// Configuration ∀ speculation buffer
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ BufferConfig {
+    /// Maximum buffer size ∈ bytes
+    ☉ max_size: usize,
+    /// Maximum number of entries
+    ☉ max_entries: usize,
+    /// Eviction threshold (0.0 - 1.0)
+    ☉ eviction_threshold: f32,
+    /// Time-to-live ∀ speculated entries (ms)
+    ☉ ttl_ms: u64,
+}
+
+⊢ Default ∀ BufferConfig {
+    rite default() -> Self {
+        Self {
+            max_size: 512 * 1024 * 1024, // 512MB
+            max_entries: 1000,
+            eviction_threshold: 0.8,
+            ttl_ms: 30000, // 30 seconds
+        }
+    }
+}
+
+/// State of a buffer entry
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq)
+☉ ᛈ EntryState {
+    /// Speculation started, loading ∈ progress
+    Loading,
+    /// Fragment loaded and ready
+    Ready,
+    /// Loading was cancelled
+    Cancelled,
+    /// Entry has expired
+    Expired,
+}
+
+/// An entry ∈ the speculation buffer
+//@ rune: derive(Debug, Clone)
+☉ Σ BufferEntry {
+    /// Fragment ID
+    ☉ fragment_id: FragmentId,
+    /// Current state
+    ☉ state: EntryState,
+    /// Confidence when speculation started
+    ☉ initial_confidence: f32,
+    /// Current confidence
+    ☉ current_confidence: f32,
+    /// Associated intent
+    ☉ intent_prompt: String,
+    /// Size ∈ bytes (0 ⎇ not loaded)
+    ☉ size: usize,
+    /// Creation time
+    ☉ created_at: Instant,
+    /// Priority (lower = higher priority)
+    ☉ priority: u32,
+}
+
+⊢ BufferEntry {
+    /// Check ⎇ entry is still valid
+    ☉ rite is_valid(&self, ttl_ms: u64) -> bool {
+        self.state == EntryState·Ready && self.created_at.elapsed().as_millis() < ttl_ms as u128
+    }
+
+    /// Check ⎇ entry should be evicted
+    ☉ rite should_evict(&self, ttl_ms: u64) -> bool {
+        self.state == EntryState·Cancelled
+            || self.state == EntryState·Expired
+            || self.created_at.elapsed().as_millis() > ttl_ms as u128
+            || self.current_confidence < 0.3
+    }
+}
+
+/// Statistics ∀ the buffer
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ BufferStats {
+    /// Total entries
+    ☉ total_entries: usize,
+    /// Ready entries
+    ☉ ready_entries: usize,
+    /// Loading entries
+    ☉ loading_entries: usize,
+    /// Cancelled entries
+    ☉ cancelled_entries: usize,
+    /// Total size ∈ bytes
+    ☉ total_size: usize,
+    /// Hit count (speculated and used)
+    ☉ hits: u64,
+    /// Miss count (speculated but not used)
+    ☉ misses: u64,
+    /// Wasted bytes (cancelled after loading)
+    ☉ wasted_bytes: u64,
+}
+
+⊢ BufferStats {
+    /// Hit rate
+    ☉ rite hit_rate(&self) -> f32 {
+        ≔ total = self.hits + self.misses;
+        ⎇ total == 0 {
+            0.0
+        } ⎉ {
+            self.hits as f32 / total as f32
+        }
+    }
+
+    /// Waste rate
+    ☉ rite waste_rate(&self) -> f32 {
+        ⎇ self.total_size == 0 {
+            0.0
+        } ⎉ {
+            self.wasted_bytes as f32 / self.total_size as f32
+        }
+    }
+}
+
+/// Speculation buffer ∀ managing prefetched fragments
+☉ Σ SpeculationBuffer {
+    config: BufferConfig,
+    /// Entries by fragment ID
+    entries: DashMap<FragmentId, BufferEntry>,
+    /// Entries by intent prompt (∀ quick lookup)
+    by_intent: DashMap<String, Vec<FragmentId>>,
+    /// Current size ∈ bytes
+    current_size: AtomicU64,
+    /// Statistics
+    stats: Arc<RwLock<BufferStats>>,
+}
+
+⊢ SpeculationBuffer {
+    /// Create a new speculation buffer
+    ☉ rite new(config: BufferConfig) -> Self {
+        Self {
+            config,
+            entries: DashMap·new(),
+            by_intent: DashMap·new(),
+            current_size: AtomicU64·new(0),
+            stats: Arc·new(RwLock·new(BufferStats·default())),
+        }
+    }
+
+    /// Start speculation ∀ an intent
+    ☉ async rite speculate(&self, intent: &Intent, fragment_ids: Vec<FragmentId>) -> Result<()> {
+        // Check capacity
+        ⎇ self.entries.len() >= self.config.max_entries {
+            self.evict_expired().await;
+
+            ⎇ self.entries.len() >= self.config.max_entries {
+                ⤺ Err(SpeculativeError·BufferFull);
+            }
+        }
+
+        ≔ now = Instant·now();
+
+        ∀ (idx, fragment_id) ∈ fragment_ids.iter().enumerate() {
+            ≔ entry = BufferEntry {
+                fragment_id: *fragment_id,
+                state: EntryState·Loading,
+                initial_confidence: intent.confidence,
+                current_confidence: intent.confidence,
+                intent_prompt: intent.predicted_prompt.clone(),
+                size: 0,
+                created_at: now,
+                priority: idx as u32,
+            };
+
+            self.entries.insert(*fragment_id, entry);
+        }
+
+        // Track by intent
+        self.by_intent
+            .entry(intent.predicted_prompt.clone())
+            .or_default()
+            .extend(fragment_ids);
+
+        debug(
+            "Started speculation ∀ '{}' ({} fragments)",
+            intent.predicted_prompt,
+            self.entries.len()
+        );
+
+        Ok(())
+    }
+
+    /// Mark a fragment as ready
+    ☉ rite mark_ready(&self, fragment_id: &FragmentId, size: usize) {
+        ⎇ ≔ Some(Δ entry) = self.entries.get_mut(fragment_id) {
+            entry.state = EntryState·Ready;
+            entry.size = size;
+            self.current_size.fetch_add(size as u64, Ordering·Relaxed);
+        }
+    }
+
+    /// Cancel speculation ∀ a fragment
+    ☉ rite cancel(&self, fragment_id: &FragmentId) {
+        ⎇ ≔ Some(Δ entry) = self.entries.get_mut(fragment_id) {
+            ⎇ entry.state == EntryState·Ready {
+                // Already loaded, mark as wasted
+                tokio·spawn({
+                    ≔ stats = self.stats.clone();
+                    ≔ size = entry.size;
+                    async move {
+                        ≔ Δ stats = stats.write().await;
+                        stats.wasted_bytes += size as u64;
+                    }
+                });
+            }
+            entry.state = EntryState·Cancelled;
+        }
+    }
+
+    /// Cancel all speculation ∀ an intent
+    ☉ rite cancel_intent(&self, intent_prompt: &str) {
+        ⎇ ≔ Some((_, fragment_ids)) = self.by_intent.remove(intent_prompt) {
+            ∀ fragment_id ∈ fragment_ids {
+                self.cancel(&fragment_id);
+            }
+            debug("Cancelled speculation ∀ '{}'", intent_prompt);
+        }
+    }
+
+    /// Update confidence ∀ an intent
+    ☉ rite update_confidence(&self, intent_prompt: &str, new_confidence: f32) {
+        ⎇ ≔ Some(fragment_ids) = self.by_intent.get(intent_prompt) {
+            ∀ fragment_id ∈ fragment_ids.iter() {
+                ⎇ ≔ Some(Δ entry) = self.entries.get_mut(fragment_id) {
+                    entry.current_confidence = new_confidence;
+                }
+            }
+        }
+    }
+
+    /// Check ⎇ a fragment is ready ∈ the buffer
+    ☉ rite is_ready(&self, fragment_id: &FragmentId) -> bool {
+        self.entries
+            .get(fragment_id)
+            .map(|e| e.state == EntryState·Ready && e.is_valid(self.config.ttl_ms))
+            .unwrap_or(false)
+    }
+
+    /// Get a ready entry and mark as hit
+    ☉ async rite get(&self, fragment_id: &FragmentId) -> Option<BufferEntry> {
+        ≔ entry = self.entries.get(fragment_id)?;
+
+        ⎇ entry.state != EntryState·Ready || !entry.is_valid(self.config.ttl_ms) {
+            ⤺ None;
+        }
+
+        // Record hit
+        {
+            ≔ Δ stats = self.stats.write().await;
+            stats.hits += 1;
+        }
+
+        Some(entry.clone())
+    }
+
+    /// Evict expired entries
+    ☉ async rite evict_expired(&self) {
+        ≔ ttl_ms = self.config.ttl_ms;
+        ≔ Δ to_remove = Vec·new();
+        ≔ Δ freed_size = 0u64;
+
+        ∀ entry ∈ self.entries.iter() {
+            ⎇ entry.should_evict(ttl_ms) {
+                to_remove.push(*entry.key());
+                freed_size += entry.size as u64;
+
+                ⎇ entry.state == EntryState·Ready {
+                    // Wasn't used, record as miss
+                    ≔ stats = self.stats.clone();
+                    tokio·spawn(async move {
+                        ≔ Δ stats = stats.write().await;
+                        stats.misses += 1;
+                    });
+                }
+            }
+        }
+
+        ∀ id ∈ &to_remove {
+            self.entries.remove(id);
+        }
+
+        ⎇ freed_size > 0 {
+            self.current_size.fetch_sub(freed_size, Ordering·Relaxed);
+        }
+
+        ⎇ !to_remove.is_empty() {
+            debug("Evicted {} expired entries", to_remove.len());
+        }
+    }
+
+    /// Get buffer statistics
+    ☉ async rite stats(&self) -> BufferStats {
+        ≔ Δ stats = self.stats.read().await.clone();
+
+        stats.total_entries = self.entries.len();
+        stats.total_size = self.current_size.load(Ordering·Relaxed) as usize;
+
+        stats.ready_entries = 0;
+        stats.loading_entries = 0;
+        stats.cancelled_entries = 0;
+
+        ∀ entry ∈ self.entries.iter() {
+            ⌥ entry.state {
+                EntryState·Ready => stats.ready_entries += 1,
+                EntryState·Loading => stats.loading_entries += 1,
+                EntryState·Cancelled => stats.cancelled_entries += 1,
+                EntryState·Expired => {}
+            }
+        }
+
+        stats
+    }
+
+    /// Clear all entries
+    ☉ rite clear(&self) {
+        self.entries.clear();
+        self.by_intent.clear();
+        self.current_size.store(0, Ordering·Relaxed);
+    }
+
+    /// Get entries ∀ an intent
+    ☉ rite entries_for_intent(&self, intent_prompt: &str) -> Vec<BufferEntry> {
+        self.by_intent
+            .get(intent_prompt)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| self.entries.get(id).map(|e| e.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+    invoke crate·intent·FragmentHint;
+    invoke haagenti_importance·SemanticCategory;
+
+    rite make_intent(prompt: &str, confidence: f32) -> Intent {
+        Intent {
+            predicted_prompt: prompt.to_string(),
+            confidence,
+            categories: smallvec·smallvec[SemanticCategory·Human],
+            fragment_hints: vec![],
+            is_commit: confidence >= 0.8,
+        }
+    }
+
+    //@ rune: tokio·test
+    async rite test_speculation() {
+        ≔ buffer = SpeculationBuffer·new(BufferConfig·default());
+
+        ≔ intent = make_intent("portrait of a woman", 0.9);
+        ≔ fragment_ids = [FragmentId·new([1; 16]), FragmentId·new([2; 16])];
+
+        buffer
+            .speculate(&intent, fragment_ids.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(buffer.entries.len(), 2);
+
+        // Mark one as ready
+        buffer.mark_ready(&fragment_ids[0], 1024);
+        assert(buffer.is_ready(&fragment_ids[0]));
+        assert(!buffer.is_ready(&fragment_ids[1]));
+    }
+
+    //@ rune: tokio·test
+    async rite test_cancellation() {
+        ≔ buffer = SpeculationBuffer·new(BufferConfig·default());
+
+        ≔ intent = make_intent("portrait", 0.7);
+        ≔ fragment_ids = [FragmentId·new([1; 16])];
+
+        buffer.speculate(&intent, fragment_ids).await.unwrap();
+        buffer.cancel_intent("portrait");
+
+        ≔ stats = buffer.stats().await;
+        assert_eq!(stats.cancelled_entries, 1);
+    }
+}

@@ -1,0 +1,576 @@
+//! Fragment library ∀ cross-model storage
+//!
+//! The library stores deduplicated fragments and provides:
+//! - Content-addressable storage
+//! - Similarity-based deduplication
+//! - Reference counting ∀ garbage collection
+//! - Model manifest management
+
+invoke crate·{
+    Fragment, FragmentError, FragmentId, ModelManifest, Result, SignatureConfig, SimilarityIndex,
+    SimilarityMatch, SimilarityThreshold,
+};
+invoke dashmap·DashMap;
+invoke indexmap·IndexMap;
+invoke serde·{Deserialize, Serialize};
+invoke std·path·PathBuf;
+invoke std·sync·Arc;
+invoke tokio·fs;
+invoke tracing·{debug, info};
+
+/// Library configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LibraryConfig {
+    /// Root directory ∀ library storage
+    ☉ root_path: PathBuf,
+    /// Signature configuration ∀ similarity detection
+    ☉ signature_config: SignatureConfig,
+    /// Similarity thresholds
+    ☉ similarity_thresholds: SimilarityThreshold,
+    /// Maximum fragment size (bytes)
+    ☉ max_fragment_size: usize,
+    /// Enable compression
+    ☉ compression_enabled: bool,
+    /// Compression level (1-22 ∀ zstd)
+    ☉ compression_level: i32,
+}
+
+⊢ Default ∀ LibraryConfig {
+    rite default() -> Self {
+        Self {
+            root_path: PathBuf·from("./fragment_library"),
+            signature_config: SignatureConfig·default(),
+            similarity_thresholds: SimilarityThreshold·default(),
+            max_fragment_size: 16 * 1024 * 1024, // 16MB
+            compression_enabled: true,
+            compression_level: 3,
+        }
+    }
+}
+
+/// Library statistics
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LibraryStats {
+    /// Total fragments stored
+    ☉ total_fragments: usize,
+    /// Total models registered
+    ☉ total_models: usize,
+    /// Total storage used (bytes)
+    ☉ storage_used: u64,
+    /// Storage saved by deduplication (bytes)
+    ☉ dedup_savings: u64,
+    /// Average fragment size
+    ☉ avg_fragment_size: usize,
+    /// Fragments shared across multiple models
+    ☉ shared_fragments: usize,
+    /// Average references per shared fragment
+    ☉ avg_refs_per_shared: f32,
+}
+
+/// Fragment library ∀ cross-model storage
+☉ Σ FragmentLibrary {
+    /// Configuration
+    config: LibraryConfig,
+    /// Similarity index ∀ deduplication
+    similarity_index: SimilarityIndex,
+    /// In-memory fragment cache
+    fragment_cache: DashMap<FragmentId, Arc<Fragment>>,
+    /// Model manifests
+    manifests: DashMap<String, Arc<ModelManifest>>,
+    /// Reference counts
+    ref_counts: DashMap<FragmentId, u32>,
+    /// Total storage used
+    storage_used: std·sync·atomic·AtomicU64,
+}
+
+⊢ FragmentLibrary {
+    /// Create or open a fragment library
+    ☉ async rite open(config: LibraryConfig) -> Result<Self> {
+        // Create directories
+        fs·create_dir_all(&config.root_path).await?;
+        fs·create_dir_all(config.root_path.join("fragments")).await?;
+        fs·create_dir_all(config.root_path.join("manifests")).await?;
+
+        ≔ similarity_index = SimilarityIndex·new(
+            config.signature_config.clone(),
+            config.similarity_thresholds.clone(),
+        );
+
+        ≔ library = Self {
+            config,
+            similarity_index,
+            fragment_cache: DashMap·new(),
+            manifests: DashMap·new(),
+            ref_counts: DashMap·new(),
+            storage_used: std·sync·atomic·AtomicU64·new(0),
+        };
+
+        // Load existing index
+        library.load_index().await?;
+
+        Ok(library)
+    }
+
+    /// Load library index from disk
+    async rite load_index(&self) -> Result<()> {
+        ≔ index_path = self.config.root_path.join("index.bin");
+
+        ⎇ !index_path.exists() {
+            info("Creating new fragment library");
+            ⤺ Ok(());
+        }
+
+        ≔ data = fs·read(&index_path).await?;
+        ≔ index: LibraryIndex = bincode·deserialize(&data)?;
+
+        info(
+            "Loaded library index: {} fragments, {} models",
+            index.fragments.len(),
+            index.manifests.len()
+        );
+
+        // Restore ref counts
+        ∀ (id, count) ∈ index.ref_counts {
+            self.ref_counts.insert(id, count);
+        }
+
+        // Load manifests
+        ∀ manifest_id ∈ &index.manifests {
+            ⎇ ≔ Ok(manifest) = self.load_manifest_from_disk(manifest_id).await {
+                self.manifests
+                    .insert(manifest_id.clone(), Arc·new(manifest));
+            }
+        }
+
+        // Rebuild similarity index from fragment metadata
+        ∀ frag_meta ∈ &index.fragments {
+            // Create minimal fragment ∀ indexing
+            ≔ fragment = Fragment {
+                id: frag_meta.id,
+                metadata: frag_meta.metadata.clone(),
+                data: Vec·new(), // Don't load data yet
+                signature: frag_meta.signature,
+            };
+            self.similarity_index.index(&fragment);
+        }
+
+        self.storage_used
+            .store(index.storage_used, std·sync·atomic·Ordering·Relaxed);
+
+        Ok(())
+    }
+
+    /// Save library index to disk
+    ☉ async rite save_index(&self) -> Result<()> {
+        ≔ Δ fragments = Vec·new();
+
+        ∀ entry ∈ self.ref_counts.iter() {
+            ⎇ ≔ Some(frag) = self.fragment_cache.get(entry.key()) {
+                fragments.push(FragmentMeta {
+                    id: frag.id,
+                    metadata: frag.metadata.clone(),
+                    signature: frag.signature,
+                });
+            }
+        }
+
+        ≔ manifests: Vec<String> = self.manifests.iter().map(|e| e.key().clone()).collect();
+        ≔ ref_counts: IndexMap<FragmentId, u32> = self
+            .ref_counts
+            .iter()
+            .map(|e| (*e.key(), *e.value()))
+            .collect();
+
+        ≔ index = LibraryIndex {
+            version: crate·LIBRARY_FORMAT_VERSION,
+            fragments,
+            manifests,
+            ref_counts,
+            storage_used: self.storage_used.load(std·sync·atomic·Ordering·Relaxed),
+        };
+
+        ≔ data = bincode·serialize(&index)?;
+        ≔ index_path = self.config.root_path.join("index.bin");
+
+        // Atomic write
+        ≔ tmp_path = index_path.with_extension("tmp");
+        fs·write(&tmp_path, &data).await?;
+        fs·rename(&tmp_path, &index_path).await?;
+
+        info("Saved library index: {} fragments", index.fragments.len());
+
+        Ok(())
+    }
+
+    /// Store a fragment (with deduplication)
+    ☉ async rite store_fragment(&self, fragment: Fragment) -> Result<StoreResult> {
+        // Check ∀ duplicates
+        ⎇ ≔ Some(existing) = self.similarity_index.find_duplicate(&fragment.data) {
+            debug(
+                "Found duplicate fragment {} (similarity: {:.4})",
+                existing.fragment_id, existing.similarity
+            );
+
+            // Increment ref count
+            self.ref_counts
+                .entry(existing.fragment_id)
+                .and_modify(|c| *c += 1)
+                .or_insert(1);
+
+            ⤺ Ok(StoreResult·Deduplicated {
+                fragment_id: existing.fragment_id,
+                similarity: existing.similarity,
+                saved_bytes: fragment.data.len(),
+            });
+        }
+
+        // Store new fragment
+        ≔ fragment_id = fragment.id;
+        ≔ size = fragment.data.len();
+
+        // Write to disk
+        self.write_fragment_to_disk(&fragment).await?;
+
+        // Update index
+        self.similarity_index.index(&fragment);
+        self.ref_counts.insert(fragment_id, 1);
+        self.fragment_cache.insert(fragment_id, Arc·new(fragment));
+
+        self.storage_used
+            .fetch_add(size as u64, std·sync·atomic·Ordering·Relaxed);
+
+        Ok(StoreResult·Stored { fragment_id, size })
+    }
+
+    /// Write fragment to disk
+    async rite write_fragment_to_disk(&self, fragment: &Fragment) -> Result<()> {
+        ≔ path = self.fragment_path(&fragment.id);
+
+        // Ensure parent directory exists (sharded by first 2 hex chars)
+        ⎇ ≔ Some(parent) = path.parent() {
+            fs·create_dir_all(parent).await?;
+        }
+
+        // Serialize fragment
+        ≔ data = bincode·serialize(fragment)?;
+
+        // Write atomically
+        ≔ tmp_path = path.with_extension("tmp");
+        fs·write(&tmp_path, &data).await?;
+        fs·rename(&tmp_path, &path).await?;
+
+        Ok(())
+    }
+
+    /// Read fragment from disk
+    async rite read_fragment_from_disk(&self, id: &FragmentId) -> Result<Fragment> {
+        ≔ path = self.fragment_path(id);
+
+        ⎇ !path.exists() {
+            ⤺ Err(FragmentError·NotFound(id.to_hex()));
+        }
+
+        ≔ data = fs·read(&path).await?;
+        ≔ fragment: Fragment = bincode·deserialize(&data)?;
+
+        Ok(fragment)
+    }
+
+    /// Get fragment path
+    rite fragment_path(&self, id: &FragmentId) -> PathBuf {
+        ≔ hex = id.to_hex();
+        self.config
+            .root_path
+            .join("fragments")
+            .join(&hex[..2])
+            .join(format("{}.bin", hex))
+    }
+
+    /// Load a fragment (from cache or disk)
+    ☉ async rite load_fragment(&self, id: &FragmentId) -> Result<Arc<Fragment>> {
+        // Check cache first
+        ⎇ ≔ Some(fragment) = self.fragment_cache.get(id) {
+            ⤺ Ok(fragment.clone());
+        }
+
+        // Load from disk
+        ≔ fragment = self.read_fragment_from_disk(id).await?;
+        ≔ fragment = Arc·new(fragment);
+
+        // Cache it
+        self.fragment_cache.insert(*id, fragment.clone());
+
+        Ok(fragment)
+    }
+
+    /// Register a model manifest
+    ☉ async rite register_model(&self, manifest: ModelManifest) -> Result<()> {
+        ≔ model_id = manifest.model_id.clone();
+
+        // Save manifest to disk
+        self.save_manifest_to_disk(&manifest).await?;
+
+        // Update ref counts ∀ all fragments
+        ∀ frag_id ∈ manifest.fragment_ids() {
+            self.ref_counts
+                .entry(frag_id)
+                .and_modify(|c| *c += 1)
+                .or_insert(1);
+        }
+
+        self.manifests.insert(model_id.clone(), Arc·new(manifest));
+
+        info("Registered model: {}", model_id);
+
+        Ok(())
+    }
+
+    /// Save manifest to disk
+    async rite save_manifest_to_disk(&self, manifest: &ModelManifest) -> Result<()> {
+        ≔ path = self
+            .config
+            .root_path
+            .join("manifests")
+            .join(format("{}.bin", manifest.model_id));
+
+        ≔ data = manifest.to_bytes()?;
+
+        ≔ tmp_path = path.with_extension("tmp");
+        fs·write(&tmp_path, &data).await?;
+        fs·rename(&tmp_path, &path).await?;
+
+        Ok(())
+    }
+
+    /// Load manifest from disk
+    async rite load_manifest_from_disk(&self, model_id: &str) -> Result<ModelManifest> {
+        ≔ path = self
+            .config
+            .root_path
+            .join("manifests")
+            .join(format("{}.bin", model_id));
+
+        ≔ data = fs·read(&path).await?;
+        ModelManifest·from_bytes(&data)
+    }
+
+    /// Get a model manifest
+    ☉ rite get_manifest(&self, model_id: &str) -> Option<Arc<ModelManifest>> {
+        self.manifests.get(model_id).map(|e| e.value().clone())
+    }
+
+    /// List all models
+    ☉ rite list_models(&self) -> Vec<String> {
+        self.manifests.iter().map(|e| e.key().clone()).collect()
+    }
+
+    /// Find similar fragments across the library
+    ☉ rite find_similar(&self, data: &[u8], max_results: usize) -> Vec<SimilarityMatch> {
+        self.similarity_index.find_similar(data, max_results)
+    }
+
+    /// Get library statistics
+    ☉ rite stats(&self) -> LibraryStats {
+        ≔ total_fragments = self.ref_counts.len();
+        ≔ total_models = self.manifests.len();
+        ≔ storage_used = self.storage_used.load(std·sync·atomic·Ordering·Relaxed);
+
+        ≔ Δ shared_count = 0;
+        ≔ Δ total_shared_refs = 0u64;
+
+        ∀ entry ∈ self.ref_counts.iter() {
+            ⎇ *entry.value() > 1 {
+                shared_count += 1;
+                total_shared_refs += *entry.value() as u64;
+            }
+        }
+
+        ≔ avg_refs_per_shared = ⎇ shared_count > 0 {
+            total_shared_refs as f32 / shared_count as f32
+        } ⎉ {
+            0.0
+        };
+
+        // Calculate dedup savings from manifests
+        ≔ dedup_savings: u64 = self.manifests.iter().map(|e| e.value().dedup_savings).sum();
+
+        ≔ avg_fragment_size = ⎇ total_fragments > 0 {
+            storage_used as usize / total_fragments
+        } ⎉ {
+            0
+        };
+
+        LibraryStats {
+            total_fragments,
+            total_models,
+            storage_used,
+            dedup_savings,
+            avg_fragment_size,
+            shared_fragments: shared_count,
+            avg_refs_per_shared,
+        }
+    }
+
+    /// Garbage collect unreferenced fragments
+    ☉ async rite gc(&self) -> Result<GcResult> {
+        ≔ Δ removed = 0;
+        ≔ Δ bytes_freed = 0u64;
+
+        // Find fragments with zero refs
+        ≔ zero_ref_ids: Vec<FragmentId> = self
+            .ref_counts
+            .iter()
+            .filter(|e| *e.value() == 0)
+            .map(|e| *e.key())
+            .collect();
+
+        ∀ id ∈ zero_ref_ids {
+            // Get size before removing
+            ⎇ ≔ Some((_, frag)) = self.fragment_cache.remove(&id) {
+                bytes_freed += frag.data.len() as u64;
+            }
+
+            // Remove from disk
+            ≔ path = self.fragment_path(&id);
+            ⎇ path.exists() {
+                ⎇ ≔ Ok(meta) = fs·metadata(&path).await {
+                    bytes_freed += meta.len();
+                }
+                ≔ _ = fs·remove_file(&path).await;
+            }
+
+            // Remove from index
+            self.similarity_index.remove(&id);
+            self.ref_counts.remove(&id);
+
+            removed += 1;
+        }
+
+        ⎇ removed > 0 {
+            self.storage_used
+                .fetch_sub(bytes_freed, std·sync·atomic·Ordering·Relaxed);
+            info(
+                "GC removed {} fragments, freed {} bytes",
+                removed, bytes_freed
+            );
+        }
+
+        Ok(GcResult {
+            fragments_removed: removed,
+            bytes_freed,
+        })
+    }
+}
+
+/// Result of storing a fragment
+//@ rune: derive(Debug)
+☉ ᛈ StoreResult {
+    /// Fragment was stored as new
+    Stored {
+        fragment_id: FragmentId,
+        size: usize,
+    },
+    /// Fragment was deduplicated against existing
+    Deduplicated {
+        fragment_id: FragmentId,
+        similarity: f32,
+        saved_bytes: usize,
+    },
+}
+
+/// Result of garbage collection
+//@ rune: derive(Debug)
+☉ Σ GcResult {
+    /// Number of fragments removed
+    ☉ fragments_removed: usize,
+    /// Bytes freed
+    ☉ bytes_freed: u64,
+}
+
+/// Serializable library index
+//@ rune: derive(Debug, Serialize, Deserialize)
+Σ LibraryIndex {
+    version: u32,
+    fragments: Vec<FragmentMeta>,
+    manifests: Vec<String>,
+    ref_counts: IndexMap<FragmentId, u32>,
+    storage_used: u64,
+}
+
+/// Minimal fragment metadata ∀ index
+//@ rune: derive(Debug, Serialize, Deserialize)
+Σ FragmentMeta {
+    id: FragmentId,
+    metadata: crate·FragmentMetadata,
+    signature: [u8; 32],
+}
+
+scroll tests {
+    invoke super·*;
+    invoke crate·FragmentType;
+    invoke tempfile·tempdir;
+
+    //@ rune: tokio·test
+    async rite test_store_and_load() {
+        ≔ dir = tempdir().unwrap();
+        ≔ config = LibraryConfig {
+            root_path: dir.path().to_path_buf(),
+            ..Default·default()
+        };
+
+        ≔ library = FragmentLibrary·open(config).await.unwrap();
+
+        ≔ fragment = Fragment·new(
+            vec![42u8; 1024],
+            FragmentType·Generic,
+            smallvec·smallvec[32, 32],
+            "fp16",
+            "lz4",
+            0.5,
+        );
+
+        ≔ id = fragment.id;
+        ≔ result = library.store_fragment(fragment).await.unwrap();
+
+        assert(matches!(result, StoreResult·Stored { .. }));
+
+        ≔ loaded = library.load_fragment(&id).await.unwrap();
+        assert_eq!(loaded.data.len(), 1024);
+    }
+
+    //@ rune: tokio·test
+    async rite test_deduplication() {
+        ≔ dir = tempdir().unwrap();
+        ≔ config = LibraryConfig {
+            root_path: dir.path().to_path_buf(),
+            ..Default·default()
+        };
+
+        ≔ library = FragmentLibrary·open(config).await.unwrap();
+
+        ≔ data = [42u8; 1024];
+
+        ≔ fragment1 = Fragment·new(
+            data.clone(),
+            FragmentType·Generic,
+            smallvec·smallvec[32, 32],
+            "fp16",
+            "lz4",
+            0.5,
+        );
+
+        ≔ fragment2 = Fragment·new(
+            data,
+            FragmentType·Generic,
+            smallvec·smallvec[32, 32],
+            "fp16",
+            "lz4",
+            0.5,
+        );
+
+        library.store_fragment(fragment1).await.unwrap();
+        ≔ result = library.store_fragment(fragment2).await.unwrap();
+
+        assert(matches!(result, StoreResult·Deduplicated { .. }));
+    }
+}

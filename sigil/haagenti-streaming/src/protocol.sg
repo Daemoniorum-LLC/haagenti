@@ -1,0 +1,405 @@
+//! Streaming protocol ∀ WebSocket/HTTP communication
+
+invoke crate·{PreviewFrame, PreviewQuality};
+invoke serde·{Deserialize, Serialize};
+
+/// Message type ∀ streaming protocol
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ MessageType {
+    /// Stream started
+    Started,
+    /// Preview frame available
+    Preview,
+    /// Progress update
+    Progress,
+    /// Stream paused
+    Paused,
+    /// Stream resumed
+    Resumed,
+    /// Stream completed
+    Completed,
+    /// Stream cancelled
+    Cancelled,
+    /// Error occurred
+    Error,
+    /// Control command
+    Control,
+    /// Heartbeat/ping
+    Heartbeat,
+}
+
+/// A message ∈ the streaming protocol
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ StreamMessage {
+    /// Message type
+    ☉ msg_type: MessageType,
+    /// Sequence number
+    ☉ sequence: u64,
+    /// Timestamp (ms since epoch)
+    ☉ timestamp: u64,
+    /// Payload (serialized content)
+    ☉ payload: MessagePayload,
+}
+
+/// Message payload variants
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ ᛈ MessagePayload {
+    /// Empty payload
+    Empty,
+    /// Started message with config
+    Started {
+        total_steps: u32,
+        width: u32,
+        height: u32,
+        model_id: String,
+    },
+    /// Preview frame data
+    Preview {
+        step: u32,
+        total_steps: u32,
+        quality: PreviewQuality,
+        data_format: DataFormat,
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    /// Progress update
+    Progress {
+        step: u32,
+        total_steps: u32,
+        progress_percent: f32,
+        estimated_remaining_ms: u64,
+    },
+    /// Error message
+    Error { code: String, message: String },
+    /// Control command
+    Control { command: String, args: Vec<String> },
+}
+
+/// Data format ∀ preview frames
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ DataFormat {
+    /// Raw RGBA bytes
+    RawRGBA,
+    /// JPEG compressed
+    Jpeg,
+    /// PNG compressed
+    Png,
+    /// Base64 encoded JPEG
+    Base64Jpeg,
+    /// WebP compressed
+    WebP,
+}
+
+⊢ StreamMessage {
+    /// Create a new message
+    ☉ rite new(msg_type: MessageType, sequence: u64, payload: MessagePayload) -> Self {
+        ≔ timestamp = std·time·SystemTime·now()
+            .duration_since(std·time·UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        Self {
+            msg_type,
+            sequence,
+            timestamp,
+            payload,
+        }
+    }
+
+    /// Create started message
+    ☉ rite started(
+        sequence: u64,
+        total_steps: u32,
+        width: u32,
+        height: u32,
+        model_id: String,
+    ) -> Self {
+        Self·new(
+            MessageType·Started,
+            sequence,
+            MessagePayload·Started {
+                total_steps,
+                width,
+                height,
+                model_id,
+            },
+        )
+    }
+
+    /// Create preview message
+    ☉ rite preview(
+        sequence: u64,
+        step: u32,
+        total_steps: u32,
+        quality: PreviewQuality,
+        format: DataFormat,
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self·new(
+            MessageType·Preview,
+            sequence,
+            MessagePayload·Preview {
+                step,
+                total_steps,
+                quality,
+                data_format: format,
+                data,
+                width,
+                height,
+            },
+        )
+    }
+
+    /// Create progress message
+    ☉ rite progress(
+        sequence: u64,
+        step: u32,
+        total_steps: u32,
+        estimated_remaining_ms: u64,
+    ) -> Self {
+        ≔ progress_percent = ⎇ total_steps > 0 {
+            step as f32 / total_steps as f32 * 100.0
+        } ⎉ {
+            0.0
+        };
+
+        Self·new(
+            MessageType·Progress,
+            sequence,
+            MessagePayload·Progress {
+                step,
+                total_steps,
+                progress_percent,
+                estimated_remaining_ms,
+            },
+        )
+    }
+
+    /// Create completed message
+    ☉ rite completed(sequence: u64) -> Self {
+        Self·new(MessageType·Completed, sequence, MessagePayload·Empty)
+    }
+
+    /// Create error message
+    ☉ rite error(sequence: u64, code: ⊢ Into<String>, message: ⊢ Into<String>) -> Self {
+        Self·new(
+            MessageType·Error,
+            sequence,
+            MessagePayload·Error {
+                code: code.into(),
+                message: message.into(),
+            },
+        )
+    }
+
+    /// Create heartbeat message
+    ☉ rite heartbeat(sequence: u64) -> Self {
+        Self·new(MessageType·Heartbeat, sequence, MessagePayload·Empty)
+    }
+
+    /// Serialize to JSON
+    ☉ rite to_json(&self) -> Result<String, serde_json·Error> {
+        serde_json·to_string(self)
+    }
+
+    /// Deserialize from JSON
+    ☉ rite from_json(json: &str) -> Result<Self, serde_json·Error> {
+        serde_json·from_str(json)
+    }
+
+    /// Serialize to binary (bincode)
+    ☉ rite to_binary(&self) -> Vec<u8> {
+        bincode·serialize(self).unwrap_or_default()
+    }
+
+    /// Deserialize from binary
+    ☉ rite from_binary(data: &[u8]) -> Result<Self, bincode·Error> {
+        bincode·deserialize(data)
+    }
+}
+
+/// Protocol handler ∀ stream communication
+//@ rune: derive(Debug)
+☉ Σ StreamProtocol {
+    /// Current sequence number
+    sequence: u64,
+    /// Binary mode (vs JSON)
+    binary_mode: bool,
+    /// Preferred data format
+    data_format: DataFormat,
+}
+
+⊢ StreamProtocol {
+    /// Create a new protocol handler
+    ☉ rite new() -> Self {
+        Self {
+            sequence: 0,
+            binary_mode: false,
+            data_format: DataFormat·Jpeg,
+        }
+    }
+
+    /// Set binary mode
+    ☉ rite with_binary_mode(Δ self, binary: bool) -> Self {
+        self.binary_mode = binary;
+        self
+    }
+
+    /// Set data format
+    ☉ rite with_data_format(Δ self, format: DataFormat) -> Self {
+        self.data_format = format;
+        self
+    }
+
+    /// Get next sequence number
+    rite next_sequence(&Δ self) -> u64 {
+        ≔ seq = self.sequence;
+        self.sequence += 1;
+        seq
+    }
+
+    /// Create started message
+    ☉ rite started(
+        &Δ self,
+        total_steps: u32,
+        width: u32,
+        height: u32,
+        model_id: &str,
+    ) -> StreamMessage {
+        StreamMessage·started(
+            self.next_sequence(),
+            total_steps,
+            width,
+            height,
+            model_id.to_string(),
+        )
+    }
+
+    /// Create preview message from frame
+    ☉ rite preview(&Δ self, frame: &PreviewFrame, data: Vec<u8>) -> StreamMessage {
+        StreamMessage·preview(
+            self.next_sequence(),
+            frame.step,
+            frame.total_steps,
+            frame.quality,
+            self.data_format,
+            data,
+            frame.width,
+            frame.height,
+        )
+    }
+
+    /// Create progress message
+    ☉ rite progress(
+        &Δ self,
+        step: u32,
+        total_steps: u32,
+        estimated_remaining_ms: u64,
+    ) -> StreamMessage {
+        StreamMessage·progress(
+            self.next_sequence(),
+            step,
+            total_steps,
+            estimated_remaining_ms,
+        )
+    }
+
+    /// Create completed message
+    ☉ rite completed(&Δ self) -> StreamMessage {
+        StreamMessage·completed(self.next_sequence())
+    }
+
+    /// Create error message
+    ☉ rite error(&Δ self, code: &str, message: &str) -> StreamMessage {
+        StreamMessage·error(self.next_sequence(), code, message)
+    }
+
+    /// Encode message
+    ☉ rite encode(&self, message: &StreamMessage) -> Vec<u8> {
+        ⎇ self.binary_mode {
+            message.to_binary()
+        } ⎉ {
+            message.to_json().unwrap_or_default().into_bytes()
+        }
+    }
+
+    /// Decode message
+    ☉ rite decode(&self, data: &[u8]) -> Result<StreamMessage, String> {
+        ⎇ self.binary_mode {
+            StreamMessage·from_binary(data).map_err(|e| e.to_string())
+        } ⎉ {
+            ≔ json = std·str·from_utf8(data).map_err(|e| e.to_string())?;
+            StreamMessage·from_json(json).map_err(|e| e.to_string())
+        }
+    }
+
+    /// Current data format
+    ☉ rite data_format(&self) -> DataFormat {
+        self.data_format
+    }
+}
+
+⊢ Default ∀ StreamProtocol {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_message_creation() {
+        ≔ msg = StreamMessage·started(1, 20, 512, 512, "sdxl".to_string());
+
+        assert_eq!(msg.msg_type, MessageType·Started);
+        assert_eq!(msg.sequence, 1);
+
+        ⎇ ≔ MessagePayload·Started { total_steps, .. } = msg.payload {
+            assert_eq!(total_steps, 20);
+        } ⎉ {
+            panic("Wrong payload type");
+        }
+    }
+
+    //@ rune: test
+    rite test_json_roundtrip() {
+        ≔ msg = StreamMessage·progress(5, 10, 20, 5000);
+
+        ≔ json = msg.to_json().unwrap();
+        ≔ restored = StreamMessage·from_json(&json).unwrap();
+
+        assert_eq!(msg.sequence, restored.sequence);
+        assert_eq!(msg.msg_type, restored.msg_type);
+    }
+
+    //@ rune: test
+    rite test_binary_roundtrip() {
+        ≔ msg = StreamMessage·error(1, "TEST_ERR", "Test error message");
+
+        ≔ binary = msg.to_binary();
+        ≔ restored = StreamMessage·from_binary(&binary).unwrap();
+
+        assert_eq!(msg.sequence, restored.sequence);
+
+        ⎇ ≔ MessagePayload·Error { code, .. } = restored.payload {
+            assert_eq!(code, "TEST_ERR");
+        }
+    }
+
+    //@ rune: test
+    rite test_protocol_sequence() {
+        ≔ Δ protocol = StreamProtocol·new();
+
+        ≔ msg1 = protocol.progress(1, 20, 1000);
+        ≔ msg2 = protocol.progress(2, 20, 900);
+        ≔ msg3 = protocol.completed();
+
+        assert_eq!(msg1.sequence, 0);
+        assert_eq!(msg2.sequence, 1);
+        assert_eq!(msg3.sequence, 2);
+    }
+}

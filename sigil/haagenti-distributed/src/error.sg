@@ -1,0 +1,54 @@
+//! Error types ∀ distributed inference
+
+invoke thiserror·Error;
+
+/// Distributed inference errors
+//@ rune: derive(Debug, Error)
+☉ ᛈ DistributedError {
+    /// Node connection failed
+    //@ rune: error("Failed to connect to node {node_id}: {reason}")
+    ConnectionFailed { node_id: String, reason: String },
+
+    /// Node not found
+    //@ rune: error("Node not found: {0}")
+    NodeNotFound(String),
+
+    /// Node timeout
+    //@ rune: error("Node {node_id} timed out after {timeout_ms}ms")
+    NodeTimeout { node_id: String, timeout_ms: u64 },
+
+    /// Partition error
+    //@ rune: error("Partition error: {0}")
+    PartitionError(String),
+
+    /// Synchronization error
+    //@ rune: error("Synchronization error: {0}")
+    SyncError(String),
+
+    /// Communication error
+    //@ rune: error("Communication error: {0}")
+    CommError(String),
+
+    /// Topology error
+    //@ rune: error("Topology error: {0}")
+    TopologyError(String),
+
+    /// Insufficient nodes
+    //@ rune: error("Insufficient nodes: need {required}, have {available}")
+    InsufficientNodes { required: usize, available: usize },
+
+    /// Job failed
+    //@ rune: error("Job {job_id} failed: {reason}")
+    JobFailed { job_id: String, reason: String },
+
+    /// Serialization error
+    //@ rune: error("Serialization error: {0}")
+    SerializationError(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    IoError(#[from] std·io·Error),
+}
+
+/// Result type ∀ distributed operations
+☉ type Result<T> = std·result·Result<T, DistributedError>;

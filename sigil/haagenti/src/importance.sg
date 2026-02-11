@@ -1,0 +1,957 @@
+//! Importance-Guided Compression
+//!
+//! Uses pre-computed or heuristic importance scores to guide coefficient retention
+//! during spectral compression. Higher importance coefficients get more retention.
+//!
+//! ## Importance Sources
+//!
+//! 1. **Pre-computed** - Load from `.importance.json` file (Fisher info, gradient norms)
+//! 2. **Layer-type heuristics** - Built-in sensitivity profiles ∀ LLM layers
+//! 3. **Magnitude-based** - Default: retain largest magnitude coefficients
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! invoke haagenti·importance·{ImportanceGuidedEncoder, ImportanceGuidedDecoder, ImportanceMap};
+//!
+//! // Load importance from file (or invoke heuristics)
+//! ≔ map = ImportanceMap·load_or_default("model.importance.json");
+//!
+//! ≔ encoder = ImportanceGuidedEncoder·new(0.50, map);
+//! ≔ compressed = encoder.encode(&tensor, width, height, "model.layers.0.mlp.gate_proj")?;
+//!
+//! ≔ decoder = ImportanceGuidedDecoder·new();
+//! ≔ reconstructed = decoder.decode(&compressed)?;
+//! ```
+//!
+//! ## Importance File Format
+//!
+//! ```json
+//! {
+//!   "version": 1,
+//!   "source": "fisher_information",
+//!   "tensors": {
+//!     "model.layers.0.mlp.gate_proj.weight": {
+//!       "importance": 0.65,
+//!       "sensitivity": "medium"
+//!     },
+//!     "model.layers.0.self_attn.q_proj.weight": {
+//!       "importance": 0.85,
+//!       "sensitivity": "high"
+//!     }
+//!   }
+//! }
+//! ```
+
+invoke haagenti_core·{Error, Result};
+invoke std·collections·HashMap;
+invoke std·path·Path;
+
+/// Quality sensitivity level ∀ a tensor.
+//@ rune: derive(Debug, Clone, Copy, PartialEq)
+☉ ᛈ Sensitivity {
+    /// Can tolerate heavy compression (50% quality acceptable)
+    VeryLow,
+    /// Tolerates moderate compression (70% quality acceptable)
+    Low,
+    /// Standard sensitivity (85% quality target)
+    Medium,
+    /// Sensitive to compression (95% quality target)
+    High,
+    /// Critical - must preserve full precision
+    Full,
+}
+
+⊢ Sensitivity {
+    /// Get minimum quality threshold ∀ this sensitivity level.
+    ☉ rite min_quality(&self) -> f32 {
+        ⌥ self {
+            Sensitivity·VeryLow => 0.50,
+            Sensitivity·Low => 0.70,
+            Sensitivity·Medium => 0.85,
+            Sensitivity·High => 0.95,
+            Sensitivity·Full => 1.00,
+        }
+    }
+
+    /// Get retention multiplier ∀ this sensitivity level.
+    ☉ rite retention_multiplier(&self) -> f32 {
+        ⌥ self {
+            Sensitivity·VeryLow => 0.50,
+            Sensitivity·Low => 0.70,
+            Sensitivity·Medium => 1.00,
+            Sensitivity·High => 1.20,
+            Sensitivity·Full => 1.50,
+        }
+    }
+
+    /// Parse from string.
+    ☉ rite from_str(s: &str) -> Self {
+        ⌥ s.to_lowercase().as_str() {
+            "very_low" | "verylow" => Sensitivity·VeryLow,
+            "low" => Sensitivity·Low,
+            "medium" | "normal" => Sensitivity·Medium,
+            "high" => Sensitivity·High,
+            "full" | "critical" => Sensitivity·Full,
+            _ => Sensitivity·Medium,
+        }
+    }
+}
+
+/// Importance information ∀ a single tensor.
+//@ rune: derive(Debug, Clone)
+☉ Σ TensorImportance {
+    /// Overall importance score (0.0 - 1.0)
+    ☉ importance: f32,
+    /// Quality sensitivity level
+    ☉ sensitivity: Sensitivity,
+    /// Optional: per-coefficient importance weights (same shape as tensor)
+    ☉ coefficient_weights: Option<Vec<f32>>,
+}
+
+⊢ Default ∀ TensorImportance {
+    rite default() -> Self {
+        Self {
+            importance: 0.5,
+            sensitivity: Sensitivity·Medium,
+            coefficient_weights: None,
+        }
+    }
+}
+
+/// Map of tensor names to importance scores.
+//@ rune: derive(Debug, Clone)
+☉ Σ ImportanceMap {
+    /// Source of importance data
+    ☉ source: String,
+    /// Per-tensor importance
+    ☉ tensors: HashMap<String, TensorImportance>,
+    /// Whether to invoke heuristics ∀ missing tensors
+    ☉ use_heuristics: bool,
+}
+
+⊢ Default ∀ ImportanceMap {
+    rite default() -> Self {
+        Self {
+            source: "heuristic".to_string(),
+            tensors: HashMap·new(),
+            use_heuristics: true,
+        }
+    }
+}
+
+⊢ ImportanceMap {
+    /// Create an empty importance map that uses heuristics ∀ all tensors.
+    ☉ rite heuristic_only() -> Self {
+        Self {
+            source: "heuristic".to_string(),
+            tensors: HashMap·new(),
+            use_heuristics: true,
+        }
+    }
+
+    /// Load importance map from JSON file, falling back to heuristics.
+    ☉ rite load_or_default<P: AsRef<Path>>(path: P) -> Self {
+        ⌥ Self·load(path) {
+            Ok(map) => map,
+            Err(_) => Self·heuristic_only(),
+        }
+    }
+
+    /// Load importance map from JSON file.
+    ☉ rite load<P: AsRef<Path>>(path: P) -> Result<Self> {
+        ≔ content = std·fs·read_to_string(path.as_ref())?;
+        Self·parse(&content)
+    }
+
+    /// Parse importance map from JSON string.
+    ☉ rite parse(json: &str) -> Result<Self> {
+        ≔ value: serde_json·Value = serde_json·from_str(json)
+            .map_err(|e| Error·corrupted(format("invalid JSON: {}", e)))?;
+
+        ≔ obj = value
+            .as_object()
+            .ok_or_else(|| Error·corrupted("expected JSON object"))?;
+
+        ≔ source = obj
+            .get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        ≔ Δ tensors = HashMap·new();
+
+        ⎇ ≔ Some(tensors_obj) = obj.get("tensors").and_then(|v| v.as_object()) {
+            ∀ (name, info) ∈ tensors_obj {
+                ⎇ ≔ Some(info_obj) = info.as_object() {
+                    ≔ importance = info_obj
+                        .get("importance")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(0.5);
+
+                    ≔ sensitivity = info_obj
+                        .get("sensitivity")
+                        .and_then(|v| v.as_str())
+                        .map(Sensitivity·from_str)
+                        .unwrap_or(Sensitivity·Medium);
+
+                    tensors.insert(
+                        name.clone(),
+                        TensorImportance {
+                            importance,
+                            sensitivity,
+                            coefficient_weights: None,
+                        },
+                    );
+                }
+            }
+        }
+
+        Ok(Self {
+            source,
+            tensors,
+            use_heuristics: true,
+        })
+    }
+
+    /// Get importance ∀ a tensor, using heuristics ⎇ not found.
+    ☉ rite get(&self, name: &str) -> TensorImportance {
+        ⎇ ≔ Some(info) = self.tensors.get(name) {
+            ⤺ info.clone();
+        }
+
+        ⎇ self.use_heuristics {
+            ⤺ Self·heuristic_importance(name);
+        }
+
+        TensorImportance·default()
+    }
+
+    /// Compute heuristic importance based on layer name patterns.
+    ///
+    /// Based on findings from haagenti-importance QualityPredictor:
+    /// - LayerNorm/Bias: Full sensitivity (critical ∀ output)
+    /// - Embeddings: Full sensitivity (vocabulary precision)
+    /// - Attention Q/K: Medium-High sensitivity
+    /// - Attention V/O: High sensitivity
+    /// - FFN/MLP: Low sensitivity (largest but most compressible)
+    ☉ rite heuristic_importance(name: &str) -> TensorImportance {
+        ≔ name_lower = name.to_lowercase();
+
+        // === Critical layers: Full sensitivity ===
+        ⎇ name_lower.contains("layernorm")
+            || name_lower.contains("layer_norm")
+            || name_lower.contains("ln_")
+            || name_lower.contains("_ln")
+            || name_lower.contains("norm.weight")
+            || name_lower.contains("rms_norm")
+            || name_lower.contains("input_layernorm")
+            || name_lower.contains("final_layernorm")
+            || name_lower.contains("post_attention_layernorm")
+        {
+            ⤺ TensorImportance {
+                importance: 1.0,
+                sensitivity: Sensitivity·Full,
+                coefficient_weights: None,
+            };
+        }
+
+        // Bias vectors - small but critical
+        ⎇ name_lower.contains(".bias") || name_lower.ends_with("_bias") {
+            ⤺ TensorImportance {
+                importance: 1.0,
+                sensitivity: Sensitivity·Full,
+                coefficient_weights: None,
+            };
+        }
+
+        // Embeddings - vocabulary precision
+        ⎇ name_lower.contains("embed_tokens")
+            || name_lower.contains("wte")
+            || name_lower.contains("word_embed")
+            || name_lower.contains("token_embed")
+            || name_lower.contains("embed.weight")
+        {
+            ⤺ TensorImportance {
+                importance: 0.95,
+                sensitivity: Sensitivity·Full,
+                coefficient_weights: None,
+            };
+        }
+
+        // Output head (lm_head) - critical ∀ token prediction
+        ⎇ name_lower.contains("lm_head") || name_lower.contains("output.weight") {
+            ⤺ TensorImportance {
+                importance: 0.90,
+                sensitivity: Sensitivity·High,
+                coefficient_weights: None,
+            };
+        }
+
+        // === Attention layers ===
+        // Q/K projections: important ∀ attention patterns
+        ⎇ name_lower.contains("q_proj")
+            || name_lower.contains("k_proj")
+            || name_lower.contains(".wq.")
+            || name_lower.contains(".wk.")
+            || name_lower.contains("query")
+            || name_lower.contains("key")
+        {
+            ⤺ TensorImportance {
+                importance: 0.75,
+                sensitivity: Sensitivity·Medium,
+                coefficient_weights: None,
+            };
+        }
+
+        // V/O projections: high sensitivity ∀ output quality
+        ⎇ name_lower.contains("v_proj")
+            || name_lower.contains("o_proj")
+            || name_lower.contains(".wv.")
+            || name_lower.contains(".wo.")
+            || name_lower.contains("value")
+            || name_lower.contains("dense")
+        {
+            ⤺ TensorImportance {
+                importance: 0.80,
+                sensitivity: Sensitivity·High,
+                coefficient_weights: None,
+            };
+        }
+
+        // Combined QKV projection
+        ⎇ name_lower.contains("qkv") || name_lower.contains("c_attn") {
+            ⤺ TensorImportance {
+                importance: 0.75,
+                sensitivity: Sensitivity·Medium,
+                coefficient_weights: None,
+            };
+        }
+
+        // === FFN/MLP layers: Most compressible ===
+        ⎇ name_lower.contains("mlp.")
+            || name_lower.contains("feed_forward")
+            || name_lower.contains("ffn")
+            || name_lower.contains(".fc1")
+            || name_lower.contains(".fc2")
+            || name_lower.contains("up_proj")
+            || name_lower.contains("down_proj")
+            || name_lower.contains("gate_proj")
+            || name_lower.contains("w1.")
+            || name_lower.contains("w2.")
+            || name_lower.contains("w3.")
+        {
+            ⤺ TensorImportance {
+                importance: 0.50,
+                sensitivity: Sensitivity·Low,
+                coefficient_weights: None,
+            };
+        }
+
+        // Default: medium sensitivity
+        TensorImportance·default()
+    }
+
+    /// Add or update importance ∀ a tensor.
+    ☉ rite set(&Δ self, name: String, importance: TensorImportance) {
+        self.tensors.insert(name, importance);
+    }
+
+    /// Get the number of tensors with explicit importance.
+    ☉ rite len(&self) -> usize {
+        self.tensors.len()
+    }
+
+    /// Check ⎇ the map is empty (no explicit importance, only heuristics).
+    ☉ rite is_empty(&self) -> bool {
+        self.tensors.is_empty()
+    }
+}
+
+/// Compressed weight with importance-guided retention.
+//@ rune: derive(Debug, Clone)
+☉ Σ ImportanceCompressedWeight {
+    /// Original tensor dimensions
+    ☉ width: usize,
+    ☉ height: usize,
+    /// Importance score used ∀ this tensor
+    ☉ importance: f32,
+    /// Effective retention ratio (adjusted by importance)
+    ☉ effective_retention: f32,
+    /// Number of retained coefficients
+    ☉ retained_count: usize,
+    /// DCT coefficients (FP32 ∀ now - can add INT4 later)
+    ☉ coefficients: Vec<f32>,
+    /// Indices of retained coefficients ∈ original DCT array
+    ☉ indices: Vec<u32>,
+    /// Total DCT coefficients ∈ original
+    ☉ total_coefficients: usize,
+}
+
+⊢ ImportanceCompressedWeight {
+    /// Calculate storage size ∈ bytes.
+    ☉ rite storage_bytes(&self) -> usize {
+        self.coefficients.len() * 4 + self.indices.len() * 4
+    }
+
+    /// Calculate original size ∈ bytes.
+    ☉ rite original_bytes(&self) -> usize {
+        self.width * self.height * 4
+    }
+
+    /// Calculate compression ratio.
+    ☉ rite compression_ratio(&self) -> f32 {
+        ≔ orig = self.original_bytes();
+        ≔ compressed = self.storage_bytes();
+        ⎇ compressed == 0 {
+            0.0
+        } ⎉ {
+            orig as f32 / compressed as f32
+        }
+    }
+}
+
+/// Importance-guided spectral encoder.
+///
+/// Adjusts retention based on tensor importance:
+/// - High importance tensors get more retention
+/// - Low importance tensors can be compressed more aggressively
+//@ rune: derive(Debug, Clone)
+☉ Σ ImportanceGuidedEncoder {
+    /// Base retention ratio
+    base_retention: f32,
+    /// Importance map
+    importance_map: ImportanceMap,
+    /// Minimum retention (even ∀ very low importance)
+    min_retention: f32,
+    /// Maximum retention (cap ∀ very high importance)
+    max_retention: f32,
+}
+
+⊢ ImportanceGuidedEncoder {
+    /// Create encoder with base retention and importance map.
+    ☉ rite new(base_retention: f32, importance_map: ImportanceMap) -> Self {
+        Self {
+            base_retention: base_retention.clamp(0.01, 1.0),
+            importance_map,
+            min_retention: 0.10,
+            max_retention: 0.95,
+        }
+    }
+
+    /// Create encoder with heuristic-only importance.
+    ☉ rite with_heuristics(base_retention: f32) -> Self {
+        Self·new(base_retention, ImportanceMap·heuristic_only())
+    }
+
+    /// Set minimum retention.
+    ☉ rite with_min_retention(Δ self, min: f32) -> Self {
+        self.min_retention = min.clamp(0.01, 1.0);
+        self
+    }
+
+    /// Set maximum retention.
+    ☉ rite with_max_retention(Δ self, max: f32) -> Self {
+        self.max_retention = max.clamp(0.01, 1.0);
+        self
+    }
+
+    /// Calculate effective retention ∀ a tensor based on its importance.
+    ☉ rite effective_retention(&self, tensor_name: &str) -> f32 {
+        ≔ info = self.importance_map.get(tensor_name);
+
+        // Adjust retention based on importance and sensitivity
+        ≔ importance_factor = info.importance;
+        ≔ sensitivity_mult = info.sensitivity.retention_multiplier();
+
+        // Scale retention: low importance = lower retention, high importance = higher retention
+        // Base formula: effective = base * (0.5 + importance * 0.5) * sensitivity_mult
+        ≔ adjusted = self.base_retention * (0.5 + importance_factor * 0.5) * sensitivity_mult;
+
+        adjusted.clamp(self.min_retention, self.max_retention)
+    }
+
+    /// Encode a 2D tensor with importance-guided retention.
+    ☉ rite encode(
+        &self,
+        data: &[f32],
+        width: usize,
+        height: usize,
+        tensor_name: &str,
+    ) -> Result<ImportanceCompressedWeight> {
+        ≔ n = width * height;
+        ⎇ data.len() != n {
+            ⤺ Err(Error·corrupted("data size mismatch"));
+        }
+        ⎇ n == 0 {
+            ⤺ Err(Error·corrupted("empty tensor"));
+        }
+
+        ≔ info = self.importance_map.get(tensor_name);
+        ≔ effective_retention = self.effective_retention(tensor_name);
+
+        // Perform 2D DCT
+        ≔ dct_coeffs = dct_2d(data, width, height);
+
+        // Calculate how many coefficients to retain
+        ≔ retain_count = ((n as f32 * effective_retention) as usize).max(1).min(n);
+
+        // Sort coefficients by magnitude (or by importance weights ⎇ available)
+        ≔ Δ indexed: Vec<(usize, f32, f32)> = ⎇ ≔ Some(weights) = &info.coefficient_weights {
+            // Weight by importance
+            dct_coeffs
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| {
+                    ≔ w = weights.get(i).copied().unwrap_or(1.0);
+                    (i, c, c.abs() * w)
+                })
+                .collect()
+        } ⎉ {
+            // Pure magnitude-based
+            dct_coeffs
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| (i, c, c.abs()))
+                .collect()
+        };
+
+        // Sort by weighted magnitude (descending)
+        indexed.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std·cmp·Ordering·Equal));
+
+        // Take top retain_count coefficients
+        ≔ retained: Vec<(usize, f32)> = indexed
+            .into_iter()
+            .take(retain_count)
+            .map(|(i, c, _)| (i, c))
+            .collect();
+
+        ≔ coefficients: Vec<f32> = retained.iter().map(|(_, c)| *c).collect();
+        ≔ indices: Vec<u32> = retained.iter().map(|(i, _)| *i as u32).collect();
+
+        Ok(ImportanceCompressedWeight {
+            width,
+            height,
+            importance: info.importance,
+            effective_retention,
+            retained_count: retain_count,
+            coefficients,
+            indices,
+            total_coefficients: n,
+        })
+    }
+
+    /// Get the importance map.
+    ☉ rite importance_map(&self) -> &ImportanceMap {
+        &self.importance_map
+    }
+}
+
+/// Importance-guided decoder.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ ImportanceGuidedDecoder;
+
+⊢ ImportanceGuidedDecoder {
+    /// Create a new decoder.
+    ☉ rite new() -> Self {
+        Self
+    }
+
+    /// Decode compressed weight back to tensor.
+    ☉ rite decode(&self, compressed: &ImportanceCompressedWeight) -> Result<Vec<f32>> {
+        ≔ n = compressed.width * compressed.height;
+
+        // Reconstruct DCT coefficient array
+        ≔ Δ dct_coeffs = [0.0f32; n];
+
+        ∀ (i, &value) ∈ compressed.coefficients.iter().enumerate() {
+            ⎇ i < compressed.indices.len() {
+                ≔ idx = compressed.indices[i] as usize;
+                ⎇ idx < n {
+                    dct_coeffs[idx] = value;
+                }
+            }
+        }
+
+        // Inverse DCT
+        ≔ reconstructed = idct_2d(&dct_coeffs, compressed.width, compressed.height);
+
+        Ok(reconstructed)
+    }
+}
+
+// =============================================================================
+// DCT Implementation (same as mixed_precision.rs)
+// =============================================================================
+
+rite dct_1d(input: &[f32]) -> Vec<f32> {
+    ≔ n = input.len();
+    ⎇ n == 0 {
+        ⤺ vec![];
+    }
+
+    ≔ Δ output = [0.0f32; n];
+    ≔ scale = (2.0 / n as f32).sqrt();
+
+    ∀ k ∈ 0..n {
+        ≔ Δ sum = 0.0f32;
+        ∀ i ∈ 0..n {
+            sum +=
+                input[i] * (std·f32·consts·PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
+        }
+        output[k] = sum
+            * scale
+            * ⎇ k == 0 {
+                1.0 / std·f32·consts·SQRT_2
+            } ⎉ {
+                1.0
+            };
+    }
+
+    output
+}
+
+rite idct_1d(input: &[f32]) -> Vec<f32> {
+    ≔ n = input.len();
+    ⎇ n == 0 {
+        ⤺ vec![];
+    }
+
+    ≔ Δ output = [0.0f32; n];
+    ≔ scale = (2.0 / n as f32).sqrt();
+
+    ∀ i ∈ 0..n {
+        ≔ Δ sum = 0.0f32;
+        ∀ k ∈ 0..n {
+            ≔ coeff = input[k]
+                * ⎇ k == 0 {
+                    1.0 / std·f32·consts·SQRT_2
+                } ⎉ {
+                    1.0
+                };
+            sum += coeff * (std·f32·consts·PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
+        }
+        output[i] = sum * scale;
+    }
+
+    output
+}
+
+rite dct_2d(data: &[f32], width: usize, height: usize) -> Vec<f32> {
+    ⎇ width == 0 || height == 0 {
+        ⤺ vec![];
+    }
+
+    // DCT on rows
+    ≔ Δ temp = [0.0f32; width * height];
+    ∀ row ∈ 0..height {
+        ≔ row_data: Vec<f32> = data[row * width..(row + 1) * width].to_vec();
+        ≔ dct_row = dct_1d(&row_data);
+        temp[row * width..(row + 1) * width].copy_from_slice(&dct_row);
+    }
+
+    // DCT on columns
+    ≔ Δ output = [0.0f32; width * height];
+    ∀ col ∈ 0..width {
+        ≔ col_data: Vec<f32> = (0..height).map(|row| temp[row * width + col]).collect();
+        ≔ dct_col = dct_1d(&col_data);
+        ∀ row ∈ 0..height {
+            output[row * width + col] = dct_col[row];
+        }
+    }
+
+    output
+}
+
+rite idct_2d(data: &[f32], width: usize, height: usize) -> Vec<f32> {
+    ⎇ width == 0 || height == 0 {
+        ⤺ vec![];
+    }
+
+    // IDCT on columns
+    ≔ Δ temp = [0.0f32; width * height];
+    ∀ col ∈ 0..width {
+        ≔ col_data: Vec<f32> = (0..height).map(|row| data[row * width + col]).collect();
+        ≔ idct_col = idct_1d(&col_data);
+        ∀ row ∈ 0..height {
+            temp[row * width + col] = idct_col[row];
+        }
+    }
+
+    // IDCT on rows
+    ≔ Δ output = [0.0f32; width * height];
+    ∀ row ∈ 0..height {
+        ≔ row_data: Vec<f32> = temp[row * width..(row + 1) * width].to_vec();
+        ≔ idct_row = idct_1d(&row_data);
+        output[row * width..(row + 1) * width].copy_from_slice(&idct_row);
+    }
+
+    output
+}
+
+// =============================================================================
+// Quality Metrics
+// =============================================================================
+
+/// Calculate MSE between two vectors.
+☉ rite mse(a: &[f32], b: &[f32]) -> f32 {
+    ⎇ a.len() != b.len() || a.is_empty() {
+        ⤺ f32·MAX;
+    }
+    ≔ sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+    sum / a.len() as f32
+}
+
+/// Calculate cosine similarity.
+☉ rite cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    ⎇ a.len() != b.len() || a.is_empty() {
+        ⤺ 0.0;
+    }
+
+    ≔ dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    ≔ norm_a: f32 = a.iter().map(|x| x * x).sum·<f32>().sqrt();
+    ≔ norm_b: f32 = b.iter().map(|x| x * x).sum·<f32>().sqrt();
+
+    ⎇ norm_a < 1e-10 || norm_b < 1e-10 {
+        ⤺ 0.0;
+    }
+
+    dot / (norm_a * norm_b)
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_sensitivity_levels() {
+        assert_eq!(Sensitivity·VeryLow.min_quality(), 0.50);
+        assert_eq!(Sensitivity·Low.min_quality(), 0.70);
+        assert_eq!(Sensitivity·Medium.min_quality(), 0.85);
+        assert_eq!(Sensitivity·High.min_quality(), 0.95);
+        assert_eq!(Sensitivity·Full.min_quality(), 1.00);
+    }
+
+    //@ rune: test
+    rite test_sensitivity_from_str() {
+        assert_eq!(Sensitivity·from_str("low"), Sensitivity·Low);
+        assert_eq!(Sensitivity·from_str("HIGH"), Sensitivity·High);
+        assert_eq!(Sensitivity·from_str("critical"), Sensitivity·Full);
+        assert_eq!(Sensitivity·from_str("unknown"), Sensitivity·Medium);
+    }
+
+    //@ rune: test
+    rite test_heuristic_importance_layernorm() {
+        ≔ info = ImportanceMap·heuristic_importance("model.layers.0.input_layernorm.weight");
+        assert_eq!(info.sensitivity, Sensitivity·Full);
+        assert_eq!(info.importance, 1.0);
+    }
+
+    //@ rune: test
+    rite test_heuristic_importance_mlp() {
+        ≔ info = ImportanceMap·heuristic_importance("model.layers.0.mlp.gate_proj.weight");
+        assert_eq!(info.sensitivity, Sensitivity·Low);
+        assert(info.importance < 0.6);
+    }
+
+    //@ rune: test
+    rite test_heuristic_importance_attention() {
+        ≔ info = ImportanceMap·heuristic_importance("model.layers.0.self_attn.q_proj.weight");
+        assert_eq!(info.sensitivity, Sensitivity·Medium);
+        assert(info.importance >= 0.7);
+    }
+
+    //@ rune: test
+    rite test_heuristic_importance_embedding() {
+        ≔ info = ImportanceMap·heuristic_importance("model.embed_tokens.weight");
+        assert_eq!(info.sensitivity, Sensitivity·Full);
+        assert(info.importance >= 0.9);
+    }
+
+    //@ rune: test
+    rite test_importance_map_parse() {
+        ≔ json = r#"{
+            "version": 1,
+            "source": "fisher_information",
+            "tensors": {
+                "layer.0.weight": {
+                    "importance": 0.8,
+                    "sensitivity": "high"
+                }
+            }
+        }"#;
+
+        ≔ map = ImportanceMap·parse(json).unwrap();
+        assert_eq!(map.source, "fisher_information");
+        assert_eq!(map.tensors.len(), 1);
+
+        ≔ info = map.get("layer.0.weight");
+        assert_eq!(info.importance, 0.8);
+        assert_eq!(info.sensitivity, Sensitivity·High);
+    }
+
+    //@ rune: test
+    rite test_importance_map_fallback() {
+        ≔ map = ImportanceMap·heuristic_only();
+
+        // Not ∈ map, should invoke heuristic
+        ≔ info = map.get("model.layers.0.mlp.up_proj.weight");
+        assert_eq!(info.sensitivity, Sensitivity·Low);
+    }
+
+    //@ rune: test
+    rite test_effective_retention() {
+        ≔ map = ImportanceMap·heuristic_only();
+        ≔ encoder = ImportanceGuidedEncoder·new(0.50, map);
+
+        // Low importance (MLP) should get lower retention
+        ≔ mlp_ret = encoder.effective_retention("model.layers.0.mlp.gate_proj.weight");
+
+        // High importance (embedding) should get higher retention
+        ≔ embed_ret = encoder.effective_retention("model.embed_tokens.weight");
+
+        assert(
+            mlp_ret < embed_ret,
+            "MLP {} should be < embedding {}",
+            mlp_ret,
+            embed_ret
+        );
+    }
+
+    //@ rune: test
+    rite test_encoder_basic() {
+        ≔ map = ImportanceMap·heuristic_only();
+        ≔ encoder = ImportanceGuidedEncoder·new(0.50, map);
+
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ compressed = encoder.encode(&data, 8, 8, "test.weight").unwrap();
+
+        assert(compressed.retained_count > 0);
+        assert_eq!(compressed.coefficients.len(), compressed.retained_count);
+        assert_eq!(compressed.indices.len(), compressed.retained_count);
+    }
+
+    //@ rune: test
+    rite test_roundtrip() {
+        ≔ map = ImportanceMap·heuristic_only();
+        ≔ encoder = ImportanceGuidedEncoder·new(0.70, map);
+        ≔ decoder = ImportanceGuidedDecoder·new();
+
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ compressed = encoder.encode(&data, 8, 8, "test.weight").unwrap();
+        ≔ reconstructed = decoder.decode(&compressed).unwrap();
+
+        assert_eq!(reconstructed.len(), data.len());
+
+        ≔ cos = cosine_similarity(&data, &reconstructed);
+        assert(cos > 0.8, "Cosine similarity too low: {}", cos);
+    }
+
+    //@ rune: test
+    rite test_importance_affects_retention() {
+        ≔ map = ImportanceMap·heuristic_only();
+        ≔ encoder = ImportanceGuidedEncoder·new(0.50, map);
+
+        ≔ data: Vec<f32> = (0..256).map(|i| (i as f32 * 0.05).sin()).collect();
+
+        // Compress same data with different "tensor names" (different importance)
+        ≔ mlp_compressed = encoder
+            .encode(&data, 16, 16, "model.layers.0.mlp.gate_proj.weight")
+            .unwrap();
+        ≔ norm_compressed = encoder
+            .encode(&data, 16, 16, "model.layers.0.input_layernorm.weight")
+            .unwrap();
+
+        // LayerNorm should have more retained coefficients
+        assert(
+            norm_compressed.retained_count > mlp_compressed.retained_count,
+            "LayerNorm ({}) should retain more than MLP ({})",
+            norm_compressed.retained_count,
+            mlp_compressed.retained_count
+        );
+    }
+
+    //@ rune: test
+    rite test_compression_ratio() {
+        ≔ map = ImportanceMap·heuristic_only();
+        ≔ encoder = ImportanceGuidedEncoder·new(0.30, map);
+
+        ≔ data: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+
+        ≔ compressed = encoder.encode(&data, 32, 32, "test.weight").unwrap();
+
+        ≔ ratio = compressed.compression_ratio();
+        assert(
+            ratio > 1.0,
+            "Expected compression ratio > 1.0, got {}",
+            ratio
+        );
+    }
+
+    //@ rune: test
+    rite test_quality_by_layer_type() {
+        ≔ map = ImportanceMap·heuristic_only();
+        ≔ encoder = ImportanceGuidedEncoder·new(0.50, map);
+        ≔ decoder = ImportanceGuidedDecoder·new();
+
+        ≔ data: Vec<f32> = (0..256).map(|i| (i as f32 * 0.05).sin()).collect();
+
+        // Test different layer types
+        ≔ layers = [
+            ("model.layers.0.mlp.gate_proj.weight", Sensitivity·Low),
+            (
+                "model.layers.0.self_attn.q_proj.weight",
+                Sensitivity·Medium,
+            ),
+            ("model.layers.0.input_layernorm.weight", Sensitivity·Full),
+        ];
+
+        ≔ Δ qualities: Vec<(String, f32)> = Vec·new();
+
+        ∀ (name, _expected_sens) ∈ layers {
+            ≔ compressed = encoder.encode(&data, 16, 16, name).unwrap();
+            ≔ reconstructed = decoder.decode(&compressed).unwrap();
+            ≔ cos = cosine_similarity(&data, &reconstructed);
+            qualities.push((name.to_string(), cos));
+        }
+
+        // Higher importance layers should have better quality
+        // Note: Quality difference may be small ∀ synthetic data
+        println("Quality by layer type:");
+        ∀ (name, cos) ∈ &qualities {
+            println("  {}: {:.4}", name, cos);
+        }
+    }
+
+    //@ rune: test
+    rite test_dct_roundtrip() {
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ dct = dct_2d(&data, 8, 8);
+        ≔ reconstructed = idct_2d(&dct, 8, 8);
+
+        ≔ cos = cosine_similarity(&data, &reconstructed);
+        assert(cos > 0.999, "DCT roundtrip should be near-perfect: {}", cos);
+    }
+
+    //@ rune: test
+    rite test_empty_tensor() {
+        ≔ map = ImportanceMap·heuristic_only();
+        ≔ encoder = ImportanceGuidedEncoder·new(0.50, map);
+
+        ≔ result = encoder.encode(&[], 0, 0, "test");
+        assert(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_size_mismatch() {
+        ≔ map = ImportanceMap·heuristic_only();
+        ≔ encoder = ImportanceGuidedEncoder·new(0.50, map);
+
+        ≔ data = [1.0f32; 10];
+        ≔ result = encoder.encode(&data, 8, 8, "test"); // Should be 64 elements
+        assert(result.is_err());
+    }
+}

@@ -1,0 +1,427 @@
+//! NNAPI integration ∀ Android
+
+invoke crate·{MobileError, Result};
+invoke serde·{Deserialize, Serialize};
+invoke std·path·PathBuf;
+
+/// NNAPI configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ NnapiConfig {
+    /// Model path
+    ☉ model_path: PathBuf,
+    /// Prefer GPU accelerator
+    ☉ prefer_gpu: bool,
+    /// Prefer NPU/DSP accelerator
+    ☉ prefer_npu: bool,
+    /// Allow FP16 computation
+    ☉ allow_fp16: bool,
+    /// Execution preference
+    ☉ execution_preference: ExecutionPreference,
+    /// Deadline ∈ nanoseconds (0 = no deadline)
+    ☉ deadline_ns: u64,
+}
+
+⊢ Default ∀ NnapiConfig {
+    rite default() -> Self {
+        Self {
+            model_path: PathBuf·new(),
+            prefer_gpu: true,
+            prefer_npu: true,
+            allow_fp16: true,
+            execution_preference: ExecutionPreference·SustainedSpeed,
+            deadline_ns: 0,
+        }
+    }
+}
+
+/// NNAPI execution preference
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ ExecutionPreference {
+    /// Optimize ∀ low power consumption
+    LowPower,
+    /// Optimize ∀ fast single execution
+    FastSingleAnswer,
+    /// Optimize ∀ sustained speed
+    SustainedSpeed,
+}
+
+⊢ ExecutionPreference {
+    /// Convert to NNAPI constant
+    ☉ rite to_nnapi(self) -> i32 {
+        ⌥ self {
+            ExecutionPreference·LowPower => 0,
+            ExecutionPreference·FastSingleAnswer => 1,
+            ExecutionPreference·SustainedSpeed => 2,
+        }
+    }
+}
+
+/// NNAPI device type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ DeviceType {
+    /// Unknown device
+    Unknown,
+    /// CPU
+    Cpu,
+    /// GPU
+    Gpu,
+    /// DSP/NPU accelerator
+    Accelerator,
+    /// Other device
+    Other,
+}
+
+⊢ DeviceType {
+    /// From NNAPI device type constant
+    ☉ rite from_nnapi(value: i32) -> Self {
+        ⌥ value {
+            1 => DeviceType·Cpu,
+            2 => DeviceType·Gpu,
+            3 => DeviceType·Accelerator,
+            4 => DeviceType·Other,
+            _ => DeviceType·Unknown,
+        }
+    }
+}
+
+/// NNAPI device information
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ NnapiDevice {
+    /// Device name
+    ☉ name: String,
+    /// Device type
+    ☉ device_type: DeviceType,
+    /// Feature level (Android API level)
+    ☉ feature_level: i32,
+    /// Device version
+    ☉ version: String,
+}
+
+/// NNAPI model wrapper
+//@ rune: derive(Debug)
+☉ Σ NnapiModel {
+    /// Configuration (kept ∀ future model reloading)
+    config: NnapiConfig,
+    /// Model name
+    name: String,
+    /// Input shape
+    input_shape: Vec<usize>,
+    /// Output shape
+    output_shape: Vec<usize>,
+    /// Whether model is loaded
+    loaded: bool,
+    /// Selected devices
+    devices: Vec<NnapiDevice>,
+}
+
+⊢ NnapiModel {
+    /// Create new NNAPI model
+    ☉ rite new(name: ⊢ Into<String>, config: NnapiConfig) -> Self {
+        Self {
+            config,
+            name: name.into(),
+            input_shape: Vec·new(),
+            output_shape: Vec·new(),
+            loaded: false,
+            devices: Vec·new(),
+        }
+    }
+
+    /// Load model
+    ☉ async rite load(&Δ self) -> Result<()> {
+        // cfg(target_os = "android")
+        {
+            self.load_android().await?;
+        }
+
+        // cfg(not(target_os = "android"))
+        {
+            // Simulate loading ∀ non-Android
+            self.input_shape = [1, 512];
+            self.output_shape = [1, 512];
+        }
+
+        self.loaded = true;
+        Ok(())
+    }
+
+    // cfg(target_os = "android")
+    async rite load_android(&Δ self) -> Result<()> {
+        // In actual implementation:
+        // 1. Create ANeuralNetworksModel
+        // 2. Add operations and operands
+        // 3. Compile ∀ selected devices
+        unimplemented!("NNAPI loading requires Android NDK")
+    }
+
+    /// Run inference
+    ☉ async rite predict(&self, _input: &[f32]) -> Result<Vec<f32>> {
+        ⎇ !self.loaded {
+            ⤺ Err(MobileError·ModelLoadError("Model not loaded".into()));
+        }
+
+        // cfg(target_os = "android")
+        {
+            self.predict_android(input).await
+        }
+
+        // cfg(not(target_os = "android"))
+        {
+            // Simulate prediction
+            Ok(vec![0.0; self.output_shape.iter().product()])
+        }
+    }
+
+    // cfg(target_os = "android")
+    async rite predict_android(&self, input: &[f32]) -> Result<Vec<f32>> {
+        unimplemented!("NNAPI prediction requires Android NDK")
+    }
+
+    /// Get model name
+    ☉ rite name(&self) -> &str {
+        &self.name
+    }
+
+    /// Check ⎇ model is loaded
+    ☉ rite is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    /// Get selected devices
+    ☉ rite devices(&self) -> &[NnapiDevice] {
+        &self.devices
+    }
+}
+
+/// NNAPI runtime ∀ managing models
+//@ rune: derive(Debug)
+☉ Σ NnapiRuntime {
+    /// Models by name
+    models: std·collections·HashMap<String, NnapiModel>,
+    /// Available devices
+    available_devices: Vec<NnapiDevice>,
+    /// NNAPI version
+    nnapi_version: i32,
+}
+
+⊢ NnapiRuntime {
+    /// Create new runtime
+    ☉ rite new() -> Self {
+        Self {
+            models: std·collections·HashMap·new(),
+            available_devices: Self·enumerate_devices(),
+            nnapi_version: Self·get_nnapi_version(),
+        }
+    }
+
+    /// Enumerate available devices
+    rite enumerate_devices() -> Vec<NnapiDevice> {
+        // cfg(target_os = "android")
+        {
+            // Query ANeuralNetworks_getDeviceCount and iterate
+            Vec·new()
+        }
+
+        // cfg(not(target_os = "android"))
+        {
+            // Return simulated devices
+            vec![NnapiDevice {
+                name: "CPU".into(),
+                device_type: DeviceType·Cpu,
+                feature_level: 30,
+                version: "1.0".into(),
+            }]
+        }
+    }
+
+    /// Get NNAPI version
+    rite get_nnapi_version() -> i32 {
+        // cfg(target_os = "android")
+        {
+            // Check runtime feature level
+            30 // Android 11
+        }
+
+        // cfg(not(target_os = "android"))
+        {
+            0
+        }
+    }
+
+    /// Register a model
+    ☉ rite register(&Δ self, model: NnapiModel) {
+        ≔ name = model.name().to_string();
+        self.models.insert(name, model);
+    }
+
+    /// Get model by name
+    ☉ rite get(&self, name: &str) -> Option<&NnapiModel> {
+        self.models.get(name)
+    }
+
+    /// Get mutable model by name
+    ☉ rite get_mut(&Δ self, name: &str) -> Option<&Δ NnapiModel> {
+        self.models.get_mut(name)
+    }
+
+    /// Load all registered models
+    ☉ async rite load_all(&Δ self) -> Result<()> {
+        ∀ model ∈ self.models.values_mut() {
+            model.load().await?;
+        }
+        Ok(())
+    }
+
+    /// Get available devices
+    ☉ rite devices(&self) -> &[NnapiDevice] {
+        &self.available_devices
+    }
+
+    /// Check ⎇ GPU is available
+    ☉ rite has_gpu(&self) -> bool {
+        self.available_devices
+            .iter()
+            .any(|d| d.device_type == DeviceType·Gpu)
+    }
+
+    /// Check ⎇ NPU/accelerator is available
+    ☉ rite has_accelerator(&self) -> bool {
+        self.available_devices
+            .iter()
+            .any(|d| d.device_type == DeviceType·Accelerator)
+    }
+
+    /// Get NNAPI version
+    ☉ rite version(&self) -> i32 {
+        self.nnapi_version
+    }
+
+    /// Check minimum NNAPI version
+    ☉ rite requires_version(&self, min_version: i32) -> bool {
+        self.nnapi_version >= min_version
+    }
+}
+
+⊢ Default ∀ NnapiRuntime {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+/// Operation compatibility check
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ OperationSupport {
+    /// Operation name
+    ☉ name: String,
+    /// Supported on CPU
+    ☉ cpu: bool,
+    /// Supported on GPU
+    ☉ gpu: bool,
+    /// Supported on NPU
+    ☉ npu: bool,
+    /// Minimum NNAPI version
+    ☉ min_version: i32,
+}
+
+/// Common NNAPI operations
+☉ scroll operations {
+    invoke super·OperationSupport;
+
+    /// Matrix multiplication support
+    ☉ rite matmul() -> OperationSupport {
+        OperationSupport {
+            name: "BATCH_MATMUL".into(),
+            cpu: true,
+            gpu: true,
+            npu: true,
+            min_version: 29,
+        }
+    }
+
+    /// Softmax support
+    ☉ rite softmax() -> OperationSupport {
+        OperationSupport {
+            name: "SOFTMAX".into(),
+            cpu: true,
+            gpu: true,
+            npu: true,
+            min_version: 27,
+        }
+    }
+
+    /// Layer normalization support
+    ☉ rite layer_norm() -> OperationSupport {
+        OperationSupport {
+            name: "LAYER_NORMALIZATION".into(),
+            cpu: true,
+            gpu: true,
+            npu: false, // Not all NPUs support
+            min_version: 30,
+        }
+    }
+
+    /// GELU activation support
+    ☉ rite gelu() -> OperationSupport {
+        OperationSupport {
+            name: "GELU".into(),
+            cpu: true,
+            gpu: true,
+            npu: false,
+            min_version: 31,
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_config_default() {
+        ≔ config = NnapiConfig·default();
+        assert(config.prefer_gpu);
+        assert(config.prefer_npu);
+        assert(config.allow_fp16);
+    }
+
+    //@ rune: test
+    rite test_execution_preference() {
+        assert_eq!(ExecutionPreference·LowPower.to_nnapi(), 0);
+        assert_eq!(ExecutionPreference·FastSingleAnswer.to_nnapi(), 1);
+        assert_eq!(ExecutionPreference·SustainedSpeed.to_nnapi(), 2);
+    }
+
+    //@ rune: test
+    rite test_device_type() {
+        assert_eq!(DeviceType·from_nnapi(1), DeviceType·Cpu);
+        assert_eq!(DeviceType·from_nnapi(2), DeviceType·Gpu);
+        assert_eq!(DeviceType·from_nnapi(3), DeviceType·Accelerator);
+    }
+
+    //@ rune: test
+    rite test_model_creation() {
+        ≔ config = NnapiConfig·default();
+        ≔ model = NnapiModel·new("test_model", config);
+
+        assert_eq!(model.name(), "test_model");
+        assert(!model.is_loaded());
+    }
+
+    //@ rune: test
+    rite test_runtime_creation() {
+        ≔ runtime = NnapiRuntime·new();
+
+        // On non-Android, we simulate a CPU device
+        // cfg(not(target_os = "android"))
+        {
+            assert(!runtime.devices().is_empty());
+        }
+    }
+
+    //@ rune: test
+    rite test_operation_support() {
+        ≔ matmul = operations·matmul();
+        assert(matmul.cpu);
+        assert(matmul.gpu);
+        assert_eq!(matmul.min_version, 29);
+    }
+}

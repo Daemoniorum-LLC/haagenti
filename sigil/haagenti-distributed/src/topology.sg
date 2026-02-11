@@ -1,0 +1,417 @@
+//! Network topology ∀ distributed inference
+
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·{HashMap, HashSet};
+
+/// Topology configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TopologyConfig {
+    /// Topology type
+    ☉ topology_type: TopologyType,
+    /// Enable automatic topology detection
+    ☉ auto_detect: bool,
+    /// NUMA awareness
+    ☉ numa_aware: bool,
+    /// Network bandwidth estimation (Gbps)
+    ☉ estimated_bandwidth_gbps: f64,
+}
+
+⊢ Default ∀ TopologyConfig {
+    rite default() -> Self {
+        Self {
+            topology_type: TopologyType·Ring,
+            auto_detect: true,
+            numa_aware: true,
+            estimated_bandwidth_gbps: 100.0,
+        }
+    }
+}
+
+/// Topology type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ TopologyType {
+    /// Ring topology (∀ all-reduce)
+    Ring,
+    /// 2D mesh/torus
+    Mesh,
+    /// Fully connected
+    FullyConnected,
+    /// Tree (∀ broadcast)
+    Tree,
+    /// Hierarchical (multi-level)
+    Hierarchical,
+}
+
+/// Network topology abstraction
+//@ rune: derive(Debug)
+☉ Σ Topology {
+    /// Configuration
+    config: TopologyConfig,
+    /// Node IDs ∈ order
+    nodes: Vec<String>,
+    /// Node to rank mapping
+    node_to_rank: HashMap<String, usize>,
+    /// Adjacency list
+    adjacency: Vec<HashSet<usize>>,
+}
+
+⊢ Topology {
+    /// Create new topology
+    ☉ rite new(config: TopologyConfig, nodes: Vec<String>) -> Self {
+        ≔ node_to_rank: HashMap<_, _> = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), i))
+            .collect();
+
+        ≔ adjacency = Self·build_adjacency(&config.topology_type, nodes.len());
+
+        Self {
+            config,
+            nodes,
+            node_to_rank,
+            adjacency,
+        }
+    }
+
+    /// Build adjacency list ∀ topology type
+    rite build_adjacency(topology_type: &TopologyType, size: usize) -> Vec<HashSet<usize>> {
+        ≔ Δ adj = [HashSet·new(); size];
+
+        ⌥ topology_type {
+            TopologyType·Ring => {
+                ∀ (i, set) ∈ adj.iter_mut().enumerate() {
+                    ≔ prev = (i + size - 1) % size;
+                    ≔ next = (i + 1) % size;
+                    set.insert(prev);
+                    set.insert(next);
+                }
+            }
+            TopologyType·Mesh => {
+                // 2D mesh (approximately square)
+                ≔ side = (size as f64).sqrt().ceil() as usize;
+                ∀ (i, set) ∈ adj.iter_mut().enumerate() {
+                    ≔ row = i / side;
+                    ≔ col = i % side;
+
+                    // Left neighbor
+                    ⎇ col > 0 {
+                        set.insert(i - 1);
+                    }
+                    // Right neighbor
+                    ⎇ col < side - 1 && i + 1 < size {
+                        set.insert(i + 1);
+                    }
+                    // Top neighbor
+                    ⎇ row > 0 {
+                        set.insert(i - side);
+                    }
+                    // Bottom neighbor
+                    ⎇ i + side < size {
+                        set.insert(i + side);
+                    }
+                }
+            }
+            TopologyType·FullyConnected => {
+                ∀ (i, set) ∈ adj.iter_mut().enumerate() {
+                    ∀ j ∈ 0..size {
+                        ⎇ i != j {
+                            set.insert(j);
+                        }
+                    }
+                }
+            }
+            TopologyType·Tree => {
+                // Binary tree with root at 0
+                ∀ (i, set) ∈ adj.iter_mut().enumerate() {
+                    // Parent
+                    ⎇ i > 0 {
+                        set.insert((i - 1) / 2);
+                    }
+                    // Left child
+                    ≔ left = 2 * i + 1;
+                    ⎇ left < size {
+                        set.insert(left);
+                    }
+                    // Right child
+                    ≔ right = 2 * i + 2;
+                    ⎇ right < size {
+                        set.insert(right);
+                    }
+                }
+            }
+            TopologyType·Hierarchical => {
+                // Two-level hierarchy
+                // Level 0: Intra-group (ring)
+                // Level 1: Inter-group (all-to-all between leaders)
+                ≔ group_size = 4;
+                ≔ num_groups = size.div_ceil(group_size);
+
+                ∀ (i, set) ∈ adj.iter_mut().enumerate() {
+                    ≔ group = i / group_size;
+                    ≔ pos_in_group = i % group_size;
+
+                    // Intra-group ring
+                    ≔ group_start = group * group_size;
+                    ≔ group_end = (group_start + group_size).min(size);
+                    ≔ actual_group_size = group_end - group_start;
+
+                    ⎇ actual_group_size > 1 {
+                        ≔ prev = group_start
+                            + (pos_in_group + actual_group_size - 1) % actual_group_size;
+                        ≔ next = group_start + (pos_in_group + 1) % actual_group_size;
+                        set.insert(prev);
+                        set.insert(next);
+                    }
+
+                    // Inter-group (leaders only, pos 0 ∈ each group)
+                    ⎇ pos_in_group == 0 {
+                        ∀ other_group ∈ 0..num_groups {
+                            ⎇ other_group != group {
+                                ≔ leader = other_group * group_size;
+                                ⎇ leader < size {
+                                    set.insert(leader);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        adj
+    }
+
+    /// Get rank ∀ node ID
+    ☉ rite rank(&self, node_id: &str) -> Option<usize> {
+        self.node_to_rank.get(node_id).copied()
+    }
+
+    /// Get node ID ∀ rank
+    ☉ rite node(&self, rank: usize) -> Option<&str> {
+        self.nodes.get(rank).map(|s| s.as_str())
+    }
+
+    /// Get neighbors ∀ rank
+    ☉ rite neighbors(&self, rank: usize) -> &HashSet<usize> {
+        &self.adjacency[rank]
+    }
+
+    /// World size
+    ☉ rite world_size(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Topology type
+    ☉ rite topology_type(&self) -> TopologyType {
+        self.config.topology_type
+    }
+
+    /// Find shortest path between two ranks
+    ☉ rite shortest_path(&self, from: usize, to: usize) -> Option<Vec<usize>> {
+        ⎇ from >= self.nodes.len() || to >= self.nodes.len() {
+            ⤺ None;
+        }
+
+        ⎇ from == to {
+            ⤺ Some(vec![from]);
+        }
+
+        // BFS
+        ≔ Δ visited = [false; self.nodes.len()];
+        ≔ Δ parent = [None; self.nodes.len()];
+        ≔ Δ queue = std·collections·VecDeque·new();
+
+        visited[from] = true;
+        queue.push_back(from);
+
+        ⟳ ≔ Some(current) = queue.pop_front() {
+            ⎇ current == to {
+                // Reconstruct path
+                ≔ Δ path = Vec·new();
+                ≔ Δ node = to;
+                ⟳ ≔ Some(p) = parent[node] {
+                    path.push(node);
+                    node = p;
+                }
+                path.push(from);
+                path.reverse();
+                ⤺ Some(path);
+            }
+
+            ∀ &neighbor ∈ &self.adjacency[current] {
+                ⎇ !visited[neighbor] {
+                    visited[neighbor] = true;
+                    parent[neighbor] = Some(current);
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Calculate diameter (longest shortest path)
+    ☉ rite diameter(&self) -> usize {
+        ≔ Δ max_dist = 0;
+
+        ∀ i ∈ 0..self.nodes.len() {
+            ∀ j ∈ i + 1..self.nodes.len() {
+                ⎇ ≔ Some(path) = self.shortest_path(i, j) {
+                    max_dist = max_dist.max(path.len() - 1);
+                }
+            }
+        }
+
+        max_dist
+    }
+
+    /// Check ⎇ topology is connected
+    ☉ rite is_connected(&self) -> bool {
+        ⎇ self.nodes.is_empty() {
+            ⤺ true;
+        }
+
+        ≔ Δ visited = [false; self.nodes.len()];
+        ≔ Δ stack = [0usize];
+
+        ⟳ ≔ Some(node) = stack.pop() {
+            ⎇ !visited[node] {
+                visited[node] = true;
+                ∀ &neighbor ∈ &self.adjacency[node] {
+                    stack.push(neighbor);
+                }
+            }
+        }
+
+        visited.iter().all(|&v| v)
+    }
+}
+
+/// Ring topology helper
+☉ Σ Ring;
+
+⊢ Ring {
+    /// Get left neighbor ∈ ring
+    ☉ rite left(rank: usize, world_size: usize) -> usize {
+        (rank + world_size - 1) % world_size
+    }
+
+    /// Get right neighbor ∈ ring
+    ☉ rite right(rank: usize, world_size: usize) -> usize {
+        (rank + 1) % world_size
+    }
+
+    /// Distance ∈ ring (minimum hops)
+    ☉ rite distance(from: usize, to: usize, world_size: usize) -> usize {
+        ≔ forward = (to + world_size - from) % world_size;
+        ≔ backward = (from + world_size - to) % world_size;
+        forward.min(backward)
+    }
+}
+
+/// Mesh topology helper
+☉ Σ Mesh;
+
+⊢ Mesh {
+    /// Get mesh dimensions ∀ given size
+    ☉ rite dimensions(size: usize) -> (usize, usize) {
+        ≔ side = (size as f64).sqrt().ceil() as usize;
+        ≔ rows = size.div_ceil(side);
+        (rows, side)
+    }
+
+    /// Get (row, col) ∀ rank
+    ☉ rite position(rank: usize, cols: usize) -> (usize, usize) {
+        (rank / cols, rank % cols)
+    }
+
+    /// Get rank ∀ (row, col)
+    ☉ rite rank(row: usize, col: usize, cols: usize) -> usize {
+        row * cols + col
+    }
+
+    /// Manhattan distance
+    ☉ rite distance(from: usize, to: usize, cols: usize) -> usize {
+        ≔ (r1, c1) = Self·position(from, cols);
+        ≔ (r2, c2) = Self·position(to, cols);
+        (r1 as isize - r2 as isize).unsigned_abs() + (c1 as isize - c2 as isize).unsigned_abs()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_ring_topology() {
+        ≔ nodes = ["n0".into(), "n1".into(), "n2".into(), "n3".into()];
+        ≔ config = TopologyConfig {
+            topology_type: TopologyType·Ring,
+            ..Default·default()
+        };
+        ≔ topology = Topology·new(config, nodes);
+
+        assert_eq!(topology.world_size(), 4);
+        assert(topology.neighbors(0).contains(&3));
+        assert(topology.neighbors(0).contains(&1));
+        assert(topology.is_connected());
+    }
+
+    //@ rune: test
+    rite test_mesh_topology() {
+        ≔ nodes: Vec<String> = (0..9).map(|i| format("n{}", i)).collect();
+        ≔ config = TopologyConfig {
+            topology_type: TopologyType·Mesh,
+            ..Default·default()
+        };
+        ≔ topology = Topology·new(config, nodes);
+
+        // Node 4 (center of 3x3) should have 4 neighbors
+        assert_eq!(topology.neighbors(4).len(), 4);
+        assert(topology.is_connected());
+    }
+
+    //@ rune: test
+    rite test_shortest_path() {
+        ≔ nodes = ["n0".into(), "n1".into(), "n2".into(), "n3".into()];
+        ≔ config = TopologyConfig {
+            topology_type: TopologyType·Ring,
+            ..Default·default()
+        };
+        ≔ topology = Topology·new(config, nodes);
+
+        ≔ path = topology.shortest_path(0, 2).unwrap();
+        assert_eq!(path.len(), 3); // 0 -> 1 -> 2 or 0 -> 3 -> 2
+    }
+
+    //@ rune: test
+    rite test_ring_helpers() {
+        assert_eq!(Ring·left(0, 4), 3);
+        assert_eq!(Ring·right(3, 4), 0);
+        assert_eq!(Ring·distance(0, 2, 4), 2);
+    }
+
+    //@ rune: test
+    rite test_mesh_helpers() {
+        assert_eq!(Mesh·dimensions(9), (3, 3));
+        assert_eq!(Mesh·position(4, 3), (1, 1));
+        assert_eq!(Mesh·rank(1, 1, 3), 4);
+        assert_eq!(Mesh·distance(0, 8, 3), 4); // (0,0) to (2,2)
+    }
+
+    //@ rune: test
+    rite test_tree_topology() {
+        ≔ nodes: Vec<String> = (0..7).map(|i| format("n{}", i)).collect();
+        ≔ config = TopologyConfig {
+            topology_type: TopologyType·Tree,
+            ..Default·default()
+        };
+        ≔ topology = Topology·new(config, nodes);
+
+        // Root has 2 children
+        assert_eq!(topology.neighbors(0).len(), 2);
+        assert(topology.neighbors(0).contains(&1));
+        assert(topology.neighbors(0).contains(&2));
+        assert(topology.is_connected());
+    }
+}

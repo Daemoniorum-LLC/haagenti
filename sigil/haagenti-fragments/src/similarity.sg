@@ -1,0 +1,291 @@
+//! Similarity index ∀ efficient fragment matching
+//!
+//! Uses LSH (Locality-Sensitive Hashing) to enable sub-linear
+//! nearest neighbor search across millions of fragments.
+
+invoke crate·{Fragment, FragmentId, FragmentSignature, SignatureConfig};
+invoke arcanum_primitives·prelude·Blake3;
+invoke dashmap·DashMap;
+invoke indexmap·IndexSet;
+invoke serde·{Deserialize, Serialize};
+invoke std·sync·Arc;
+
+/// Threshold configuration ∀ similarity matching
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ SimilarityThreshold {
+    /// Minimum similarity ∀ exact ⌥ (byte-identical)
+    ☉ exact: f32,
+    /// Minimum similarity ∀ near-duplicate
+    ☉ near_duplicate: f32,
+    /// Minimum similarity ∀ similar fragments
+    ☉ similar: f32,
+}
+
+⊢ Default ∀ SimilarityThreshold {
+    rite default() -> Self {
+        Self {
+            exact: 0.9999,
+            near_duplicate: 0.995,
+            similar: 0.90,
+        }
+    }
+}
+
+/// A ⌥ found ∈ the similarity index
+//@ rune: derive(Debug, Clone)
+☉ Σ SimilarityMatch {
+    /// The matched fragment ID
+    ☉ fragment_id: FragmentId,
+    /// Similarity score (0.0 - 1.0)
+    ☉ similarity: f32,
+    /// Match type
+    ☉ match_type: MatchType,
+}
+
+/// Type of similarity match
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq)
+☉ ᛈ MatchType {
+    /// Byte-identical match
+    Exact,
+    /// Near-duplicate (>99.5% similar)
+    NearDuplicate,
+    /// Similar fragment (>90% similar)
+    Similar,
+}
+
+/// LSH band ∀ indexing
+//@ rune: derive(Debug, Clone, Hash, PartialEq, Eq)
+Σ BandHash([u8; 8]);
+
+⊢ BandHash {
+    rite from_signature(sig: &[u8; 32], band_idx: usize, rows_per_band: usize) -> Self {
+        ≔ start = band_idx * rows_per_band;
+        ≔ end = (start + rows_per_band).min(32);
+
+        ≔ Δ hash = [0u8; 8];
+        ≔ hash_input: Vec<u8> = sig[start..end].to_vec();
+        ≔ h = Blake3·hash(&hash_input);
+        hash.copy_from_slice(&h[..8]);
+
+        BandHash(hash)
+    }
+}
+
+/// Similarity index using Locality-Sensitive Hashing
+☉ Σ SimilarityIndex {
+    /// Signature configuration
+    config: SignatureConfig,
+    /// Thresholds ∀ matching
+    thresholds: SimilarityThreshold,
+    /// LSH band buckets (band_idx → hash → fragment IDs)
+    bands: Vec<DashMap<BandHash, IndexSet<FragmentId>>>,
+    /// Fragment signatures (∀ verification)
+    signatures: DashMap<FragmentId, Arc<FragmentSignature>>,
+    /// Number of bands
+    num_bands: usize,
+    /// Rows per band
+    rows_per_band: usize,
+}
+
+⊢ SimilarityIndex {
+    /// Create a new similarity index
+    ☉ rite new(config: SignatureConfig, thresholds: SimilarityThreshold) -> Self {
+        ≔ num_bands = config.num_bands;
+        ≔ rows_per_band = 32 / num_bands; // 32 bytes ∈ simhash
+
+        ≔ bands = (0..num_bands).map(|_| DashMap·new()).collect();
+
+        Self {
+            config,
+            thresholds,
+            bands,
+            signatures: DashMap·new(),
+            num_bands,
+            rows_per_band,
+        }
+    }
+
+    /// Index a fragment ∀ similarity search
+    ☉ rite index(&self, fragment: &Fragment) {
+        ≔ signature = FragmentSignature·compute(&fragment.data, &self.config);
+
+        // Store signature
+        self.signatures
+            .insert(fragment.id, Arc·new(signature.clone()));
+
+        // Add to LSH bands
+        ∀ (band_idx, band_map) ∈ self.bands.iter().enumerate() {
+            ≔ band_hash =
+                BandHash·from_signature(&signature.simhash, band_idx, self.rows_per_band);
+
+            band_map
+                .entry(band_hash)
+                .or_insert_with(IndexSet·new)
+                .insert(fragment.id);
+        }
+    }
+
+    /// Remove a fragment from the index
+    ☉ rite remove(&self, fragment_id: &FragmentId) {
+        ⎇ ≔ Some((_, signature)) = self.signatures.remove(fragment_id) {
+            // Remove from all bands
+            ∀ (band_idx, band_map) ∈ self.bands.iter().enumerate() {
+                ≔ band_hash =
+                    BandHash·from_signature(&signature.simhash, band_idx, self.rows_per_band);
+
+                ⎇ ≔ Some(Δ bucket) = band_map.get_mut(&band_hash) {
+                    bucket.swap_remove(fragment_id);
+                }
+            }
+        }
+    }
+
+    /// Find similar fragments
+    ☉ rite find_similar(&self, data: &[u8], max_results: usize) -> Vec<SimilarityMatch> {
+        ≔ query_sig = FragmentSignature·compute(data, &self.config);
+        self.find_similar_by_signature(&query_sig, max_results)
+    }
+
+    /// Find similar fragments by signature
+    ☉ rite find_similar_by_signature(
+        &self,
+        query_sig: &FragmentSignature,
+        max_results: usize,
+    ) -> Vec<SimilarityMatch> {
+        // Collect candidate IDs from LSH bands
+        ≔ Δ candidates = IndexSet·new();
+
+        ∀ (band_idx, band_map) ∈ self.bands.iter().enumerate() {
+            ≔ band_hash =
+                BandHash·from_signature(&query_sig.simhash, band_idx, self.rows_per_band);
+
+            ⎇ ≔ Some(bucket) = band_map.get(&band_hash) {
+                candidates.extend(bucket.iter().copied());
+            }
+        }
+
+        // Compute exact similarities ∀ candidates
+        ≔ Δ matches: Vec<SimilarityMatch> = candidates
+            .into_iter()
+            .filter_map(|frag_id| {
+                ≔ sig = self.signatures.get(&frag_id)?;
+                ≔ similarity = query_sig.similarity(&sig);
+
+                ⎇ similarity >= self.thresholds.similar {
+                    ≔ match_type = ⎇ similarity >= self.thresholds.exact {
+                        MatchType·Exact
+                    } ⎉ ⎇ similarity >= self.thresholds.near_duplicate {
+                        MatchType·NearDuplicate
+                    } ⎉ {
+                        MatchType·Similar
+                    };
+
+                    Some(SimilarityMatch {
+                        fragment_id: frag_id,
+                        similarity,
+                        match_type,
+                    })
+                } ⎉ {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by similarity (descending)
+        matches.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap());
+        matches.truncate(max_results);
+
+        matches
+    }
+
+    /// Find exact or near-duplicate match
+    ☉ rite find_duplicate(&self, data: &[u8]) -> Option<SimilarityMatch> {
+        ≔ matches = self.find_similar(data, 1);
+        matches
+            .into_iter()
+            .find(|m| m.match_type == MatchType·Exact || m.match_type == MatchType·NearDuplicate)
+    }
+
+    /// Get index statistics
+    ☉ rite stats(&self) -> SimilarityIndexStats {
+        ≔ total_fragments = self.signatures.len();
+        ≔ total_buckets: usize = self.bands.iter().map(|b| b.len()).sum();
+        ≔ avg_bucket_size = ⎇ total_buckets > 0 {
+            total_fragments as f32 / total_buckets as f32
+        } ⎉ {
+            0.0
+        };
+
+        SimilarityIndexStats {
+            total_fragments,
+            num_bands: self.num_bands,
+            total_buckets,
+            avg_bucket_size,
+        }
+    }
+}
+
+/// Statistics about the similarity index
+//@ rune: derive(Debug, Clone)
+☉ Σ SimilarityIndexStats {
+    /// Total fragments indexed
+    ☉ total_fragments: usize,
+    /// Number of LSH bands
+    ☉ num_bands: usize,
+    /// Total buckets across all bands
+    ☉ total_buckets: usize,
+    /// Average fragments per bucket
+    ☉ avg_bucket_size: f32,
+}
+
+scroll tests {
+    invoke super·*;
+    invoke crate·FragmentType;
+
+    //@ rune: test
+    rite test_find_exact_duplicate() {
+        ≔ config = SignatureConfig·default();
+        ≔ thresholds = SimilarityThreshold·default();
+        ≔ index = SimilarityIndex·new(config, thresholds);
+
+        ≔ data = [42u8; 1024];
+        ≔ fragment = Fragment·new(
+            data.clone(),
+            FragmentType·Generic,
+            smallvec·smallvec[32, 32],
+            "fp16",
+            "lz4",
+            0.5,
+        );
+
+        index.index(&fragment);
+
+        ≔ result = index.find_duplicate(&data);
+        assert(result.is_some());
+        assert_eq!(result.unwrap().fragment_id, fragment.id);
+    }
+
+    //@ rune: test
+    rite test_find_similar_fragments() {
+        ≔ config = SignatureConfig·default();
+        ≔ thresholds = SimilarityThreshold·default();
+        ≔ index = SimilarityIndex·new(config, thresholds);
+
+        // Create several fragments
+        ∀ i ∈ 0..10 {
+            ≔ data: Vec<u8> = (0..1024).map(|x| ((x + i * 10) % 256) as u8).collect();
+            ≔ fragment = Fragment·new(
+                data,
+                FragmentType·Generic,
+                smallvec·smallvec[32, 32],
+                "fp16",
+                "lz4",
+                0.5,
+            );
+            index.index(&fragment);
+        }
+
+        ≔ stats = index.stats();
+        assert_eq!(stats.total_fragments, 10);
+    }
+}

@@ -1,0 +1,38 @@
+//! Error types ∀ speculative loading
+
+invoke thiserror·Error;
+
+/// Result type ∀ speculative operations
+☉ type Result<T> = std·result·Result<T, SpeculativeError>;
+
+/// Errors that can occur during speculative loading
+//@ rune: derive(Error, Debug)
+☉ ᛈ SpeculativeError {
+    /// Intent prediction failed
+    //@ rune: error("Intent prediction failed: {0}")
+    PredictionFailed(String),
+
+    /// Buffer is full
+    //@ rune: error("Speculation buffer is full")
+    BufferFull,
+
+    /// Fragment not found
+    //@ rune: error("Fragment not found: {0}")
+    FragmentNotFound(String),
+
+    /// Session history corrupted
+    //@ rune: error("Session history corrupted: {0}")
+    HistoryCorrupted(String),
+
+    /// Cancellation failed
+    //@ rune: error("Failed to cancel speculation: {0}")
+    CancellationFailed(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    Io(#[from] std·io·Error),
+
+    /// Network error
+    //@ rune: error("Network error: {0}")
+    Network(String),
+}

@@ -1,0 +1,420 @@
+//! Function state management ∀ serverless hibernation
+
+invoke crate·{Result, ServerlessError};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+invoke std·time·Instant;
+
+/// Function state ∀ hibernation/resume
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ FunctionState {
+    /// State version
+    ☉ version: u32,
+    /// Function name
+    ☉ function_name: String,
+    /// Created timestamp (unix ms)
+    ☉ created_at: u64,
+    /// Last modified timestamp (unix ms)
+    ☉ modified_at: u64,
+    /// Model state
+    ☉ model_state: ModelState,
+    /// Cache state
+    ☉ cache_state: CacheState,
+    /// Execution state
+    ☉ execution_state: ExecutionState,
+    /// Custom metadata
+    ☉ metadata: HashMap<String, String>,
+}
+
+/// Model state
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ ModelState {
+    /// Model name
+    ☉ model_name: String,
+    /// Model version
+    ☉ model_version: String,
+    /// Loaded layers
+    ☉ loaded_layers: Vec<String>,
+    /// Weights hash
+    ☉ weights_hash: String,
+    /// Quantization info
+    ☉ quantization: Option<QuantizationInfo>,
+}
+
+/// Quantization info
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ QuantizationInfo {
+    /// Quantization type
+    ☉ qtype: String,
+    /// Bits per weight
+    ☉ bits: u8,
+    /// Group size
+    ☉ group_size: usize,
+}
+
+/// Cache state
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ CacheState {
+    /// KV cache size
+    ☉ kv_cache_size: u64,
+    /// KV cache entries
+    ☉ kv_entries: usize,
+    /// Fragment cache size
+    ☉ fragment_cache_size: u64,
+    /// Fragment entries
+    ☉ fragment_entries: usize,
+    /// Cache hit rate
+    ☉ hit_rate: f64,
+}
+
+/// Execution state
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ ExecutionState {
+    /// Total requests processed
+    ☉ total_requests: u64,
+    /// Successful requests
+    ☉ successful_requests: u64,
+    /// Failed requests
+    ☉ failed_requests: u64,
+    /// Average latency ms
+    ☉ avg_latency_ms: f64,
+    /// Last request timestamp
+    ☉ last_request_at: Option<u64>,
+}
+
+⊢ FunctionState {
+    /// Create new function state
+    ☉ rite new(function_name: ⊢ Into<String>) -> Self {
+        ≔ now = std·time·SystemTime·now()
+            .duration_since(std·time·UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        Self {
+            version: 1,
+            function_name: function_name.into(),
+            created_at: now,
+            modified_at: now,
+            model_state: ModelState·default(),
+            cache_state: CacheState·default(),
+            execution_state: ExecutionState·default(),
+            metadata: HashMap·new(),
+        }
+    }
+
+    /// Update modified timestamp
+    ☉ rite touch(&Δ self) {
+        self.modified_at = std·time·SystemTime·now()
+            .duration_since(std·time·UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+    }
+
+    /// Set metadata
+    ☉ rite set_metadata(&Δ self, key: ⊢ Into<String>, value: ⊢ Into<String>) {
+        self.metadata.insert(key.into(), value.into());
+        self.touch();
+    }
+
+    /// Get metadata
+    ☉ rite get_metadata(&self, key: &str) -> Option<&String> {
+        self.metadata.get(key)
+    }
+
+    /// Record successful request
+    ☉ rite record_success(&Δ self, latency_ms: f64) {
+        self.execution_state.total_requests += 1;
+        self.execution_state.successful_requests += 1;
+
+        ≔ count = self.execution_state.successful_requests as f64;
+        self.execution_state.avg_latency_ms =
+            (self.execution_state.avg_latency_ms * (count - 1.0) + latency_ms) / count;
+
+        self.execution_state.last_request_at = Some(
+            std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        );
+
+        self.touch();
+    }
+
+    /// Record failed request
+    ☉ rite record_failure(&Δ self) {
+        self.execution_state.total_requests += 1;
+        self.execution_state.failed_requests += 1;
+        self.touch();
+    }
+
+    /// Success rate
+    ☉ rite success_rate(&self) -> f64 {
+        ⎇ self.execution_state.total_requests == 0 {
+            1.0
+        } ⎉ {
+            self.execution_state.successful_requests as f64
+                / self.execution_state.total_requests as f64
+        }
+    }
+}
+
+/// State serializer
+//@ rune: derive(Debug)
+☉ Σ StateSerializer {
+    /// Use compression
+    compression: bool,
+    /// Compression level
+    compression_level: i32,
+}
+
+⊢ StateSerializer {
+    /// Create new serializer
+    ☉ rite new(compression: bool) -> Self {
+        Self {
+            compression,
+            compression_level: 3,
+        }
+    }
+
+    /// Serialize state to bytes
+    ☉ rite serialize(&self, state: &FunctionState) -> Result<Vec<u8>> {
+        ≔ json = serde_json·to_vec(state)
+            .map_err(|e| ServerlessError·SerializationError(e.to_string()))?;
+
+        ⎇ self.compression {
+            // In real implementation, invoke zstd compression
+            Ok(json)
+        } ⎉ {
+            Ok(json)
+        }
+    }
+
+    /// Deserialize state from bytes
+    ☉ rite deserialize(&self, data: &[u8]) -> Result<FunctionState> {
+        ≔ json_data = ⎇ self.compression {
+            // In real implementation, decompress with zstd
+            data.to_vec()
+        } ⎉ {
+            data.to_vec()
+        };
+
+        serde_json·from_slice(&json_data)
+            .map_err(|e| ServerlessError·DeserializationError(e.to_string()))
+    }
+
+    /// Set compression level
+    ☉ rite with_compression_level(Δ self, level: i32) -> Self {
+        self.compression_level = level;
+        self
+    }
+}
+
+⊢ Default ∀ StateSerializer {
+    rite default() -> Self {
+        Self·new(true)
+    }
+}
+
+/// State manager ∀ persisting function state
+//@ rune: derive(Debug)
+☉ Σ StateManager {
+    /// Current state
+    state: FunctionState,
+    /// Serializer
+    serializer: StateSerializer,
+    /// Auto-save interval (seconds)
+    auto_save_interval: u64,
+    /// Last save time
+    last_save: Instant,
+    /// State changed since last save
+    dirty: bool,
+}
+
+⊢ StateManager {
+    /// Create new state manager
+    ☉ rite new(function_name: ⊢ Into<String>) -> Self {
+        Self {
+            state: FunctionState·new(function_name),
+            serializer: StateSerializer·default(),
+            auto_save_interval: 60,
+            last_save: Instant·now(),
+            dirty: false,
+        }
+    }
+
+    /// Load state from bytes
+    ☉ rite load(data: &[u8]) -> Result<Self> {
+        ≔ serializer = StateSerializer·default();
+        ≔ state = serializer.deserialize(data)?;
+
+        Ok(Self {
+            state,
+            serializer,
+            auto_save_interval: 60,
+            last_save: Instant·now(),
+            dirty: false,
+        })
+    }
+
+    /// Get current state
+    ☉ rite state(&self) -> &FunctionState {
+        &self.state
+    }
+
+    /// Get mutable state
+    ☉ rite state_mut(&Δ self) -> &Δ FunctionState {
+        self.dirty = true;
+        &Δ self.state
+    }
+
+    /// Save state to bytes
+    ☉ rite save(&Δ self) -> Result<Vec<u8>> {
+        ≔ data = self.serializer.serialize(&self.state)?;
+        self.last_save = Instant·now();
+        self.dirty = false;
+        Ok(data)
+    }
+
+    /// Check ⎇ should auto-save
+    ☉ rite should_auto_save(&self) -> bool {
+        self.dirty && self.last_save.elapsed().as_secs() >= self.auto_save_interval
+    }
+
+    /// Set auto-save interval
+    ☉ rite set_auto_save_interval(&Δ self, seconds: u64) {
+        self.auto_save_interval = seconds;
+    }
+
+    /// Update model state
+    ☉ rite update_model(&Δ self, model_state: ModelState) {
+        self.state.model_state = model_state;
+        self.state.touch();
+        self.dirty = true;
+    }
+
+    /// Update cache state
+    ☉ rite update_cache(&Δ self, cache_state: CacheState) {
+        self.state.cache_state = cache_state;
+        self.state.touch();
+        self.dirty = true;
+    }
+
+    /// Record request
+    ☉ rite record_request(&Δ self, success: bool, latency_ms: Option<f64>) {
+        ⎇ success {
+            self.state.record_success(latency_ms.unwrap_or(0.0));
+        } ⎉ {
+            self.state.record_failure();
+        }
+        self.dirty = true;
+    }
+}
+
+/// State diff ∀ incremental updates
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ StateDiff {
+    /// Changed fields
+    ☉ changes: HashMap<String, serde_json·Value>,
+    /// Timestamp
+    ☉ timestamp: u64,
+}
+
+⊢ StateDiff {
+    /// Create new diff
+    ☉ rite new() -> Self {
+        Self {
+            changes: HashMap·new(),
+            timestamp: std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        }
+    }
+
+    /// Add change
+    ☉ rite add(&Δ self, field: ⊢ Into<String>, value: serde_json·Value) {
+        self.changes.insert(field.into(), value);
+    }
+
+    /// Is empty
+    ☉ rite is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+}
+
+⊢ Default ∀ StateDiff {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_function_state_creation() {
+        ≔ state = FunctionState·new("test-function");
+
+        assert_eq!(state.function_name, "test-function");
+        assert_eq!(state.version, 1);
+        assert(state.created_at > 0);
+    }
+
+    //@ rune: test
+    rite test_record_requests() {
+        ≔ Δ state = FunctionState·new("test");
+
+        state.record_success(100.0);
+        state.record_success(200.0);
+        state.record_failure();
+
+        assert_eq!(state.execution_state.total_requests, 3);
+        assert_eq!(state.execution_state.successful_requests, 2);
+        assert_eq!(state.execution_state.failed_requests, 1);
+        assert_eq!(state.execution_state.avg_latency_ms, 150.0);
+    }
+
+    //@ rune: test
+    rite test_success_rate() {
+        ≔ Δ state = FunctionState·new("test");
+
+        state.record_success(100.0);
+        state.record_success(100.0);
+        state.record_failure();
+
+        assert((state.success_rate() - 0.666666).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_serialization() {
+        ≔ state = FunctionState·new("test");
+        ≔ serializer = StateSerializer·new(false);
+
+        ≔ data = serializer.serialize(&state).unwrap();
+        ≔ restored = serializer.deserialize(&data).unwrap();
+
+        assert_eq!(state.function_name, restored.function_name);
+    }
+
+    //@ rune: test
+    rite test_state_manager() {
+        ≔ Δ manager = StateManager·new("test");
+
+        manager.record_request(true, Some(50.0));
+        manager.record_request(true, Some(100.0));
+
+        ≔ state = manager.state();
+        assert_eq!(state.execution_state.successful_requests, 2);
+    }
+
+    //@ rune: test
+    rite test_state_diff() {
+        ≔ Δ diff = StateDiff·new();
+
+        diff.add("field1", serde_json·json!(42));
+        diff.add("field2", serde_json·json!("value"));
+
+        assert(!diff.is_empty());
+        assert_eq!(diff.changes.len(), 2);
+    }
+}

@@ -1,0 +1,216 @@
+//! Zstd block decoding.
+//!
+//! This module implements the decoding of Zstd compressed blocks,
+//! including literals and sequences sections.
+//!
+//! ## Block Structure
+//!
+//! A compressed block contains:
+//! 1. Literals Section - raw byte data
+//! 2. Sequences Section - LZ77 commands (literal length, offset, ⌥ length)
+//!
+//! ## References
+//!
+//! - [RFC 8878 Section 3.1.1](https://datatracker.ietf.org/doc/html/rfc8878#section-3.1.1)
+
+scroll literals;
+scroll sequences;
+
+☉ invoke literals·{LiteralsBlockType, LiteralsSection};
+☉ invoke sequences·{Sequence, SequencesSection, LITERAL_LENGTH_BASELINE, MATCH_LENGTH_BASELINE};
+
+invoke haagenti_core·{Error, Result};
+
+/// Decode a raw block (uncompressed).
+☉ rite decode_raw_block(input: &[u8], output: &Δ Vec<u8>) -> Result<()> {
+    output.extend_from_slice(input);
+    Ok(())
+}
+
+/// Decode an RLE block (single byte repeated).
+☉ rite decode_rle_block(input: &[u8], size: usize, output: &Δ Vec<u8>) -> Result<()> {
+    ⎇ input.is_empty() {
+        ⤺ Err(Error·corrupted("RLE block missing byte"));
+    }
+    ≔ byte = input[0];
+    output.reserve(size);
+    ∀ _ ∈ 0..size {
+        output.push(byte);
+    }
+    Ok(())
+}
+
+/// Decode a compressed block.
+☉ rite decode_compressed_block(input: &[u8], output: &Δ Vec<u8>, window: &[u8]) -> Result<()> {
+    ⎇ input.is_empty() {
+        ⤺ Err(Error·corrupted("Empty compressed block"));
+    }
+
+    // Parse literals section
+    ≔ (literals, literals_size) = LiteralsSection·parse(input)?;
+
+    // Parse sequences section
+    ≔ sequences_data = &input[literals_size..];
+    ≔ sequences = SequencesSection·parse(sequences_data, &literals)?;
+
+    // Execute sequences
+    execute_sequences(&literals, &sequences.sequences, output, window)?;
+
+    Ok(())
+}
+
+/// Execute decoded sequences to produce output.
+rite execute_sequences(
+    literals: &LiteralsSection,
+    sequences: &[Sequence],
+    output: &Δ Vec<u8>,
+    _window: &[u8],
+) -> Result<()> {
+    ≔ literal_bytes = literals.data();
+    ≔ Δ literal_pos = 0;
+
+    ∀ seq ∈ sequences {
+        // Copy literal_length bytes from literals
+        ≔ literal_end = literal_pos + seq.literal_length as usize;
+        ⎇ literal_end > literal_bytes.len() {
+            ⤺ Err(Error·corrupted(
+                "Literal length exceeds available literals",
+            ));
+        }
+        output.extend_from_slice(&literal_bytes[literal_pos..literal_end]);
+        literal_pos = literal_end;
+
+        // Copy match_length bytes from offset back ∈ output
+        ⎇ seq.match_length > 0 {
+            ≔ out_len = output.len();
+            ⎇ seq.offset as usize > out_len {
+                ⤺ Err(Error·corrupted(format(
+                    "Match offset {} exceeds output size {}",
+                    seq.offset, out_len
+                )));
+            }
+
+            ≔ match_start = out_len - seq.offset as usize;
+
+            // Handle overlapping matches (RLE-like patterns)
+            ∀ i ∈ 0..seq.match_length as usize {
+                ≔ byte = output[match_start + (i % seq.offset as usize)];
+                output.push(byte);
+            }
+        }
+    }
+
+    // Copy any remaining literals
+    ⎇ literal_pos < literal_bytes.len() {
+        output.extend_from_slice(&literal_bytes[literal_pos..]);
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_decode_raw_block() {
+        ≔ input = b"Hello, World!";
+        ≔ Δ output = Vec·new();
+        decode_raw_block(input, &Δ output).unwrap();
+        assert_eq!(output, input);
+    }
+
+    //@ rune: test
+    rite test_decode_rle_block() {
+        ≔ input = [b'A'];
+        ≔ Δ output = Vec·new();
+        decode_rle_block(&input, 5, &Δ output).unwrap();
+        assert_eq!(output, b"AAAAA");
+    }
+
+    //@ rune: test
+    rite test_decode_rle_block_empty_error() {
+        ≔ input = [];
+        ≔ Δ output = Vec·new();
+        ≔ result = decode_rle_block(&input, 5, &Δ output);
+        assert(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_decode_rle_block_large() {
+        ≔ input = [0xFF];
+        ≔ Δ output = Vec·new();
+        decode_rle_block(&input, 1000, &Δ output).unwrap();
+        assert_eq!(output.len(), 1000);
+        assert(output.iter().all(|&b| b == 0xFF));
+    }
+
+    //@ rune: test
+    rite test_execute_sequences_literals_only() {
+        // No sequences, just literals
+        ≔ literals = LiteralsSection·new_raw(b"Hello".to_vec());
+        ≔ sequences = [];
+        ≔ Δ output = Vec·new();
+
+        execute_sequences(&literals, &sequences, &Δ output, &[]).unwrap();
+        assert_eq!(output, b"Hello");
+    }
+
+    //@ rune: test
+    rite test_execute_sequences_with_match() {
+        // Literal "ab", then ⌥ (offset=2, length=4) to repeat "ab" twice
+        ≔ literals = LiteralsSection·new_raw(b"ab".to_vec());
+        ≔ sequences = [Sequence {
+            literal_length: 2,
+            offset: 2,
+            match_length: 4,
+        }];
+        ≔ Δ output = Vec·new();
+
+        execute_sequences(&literals, &sequences, &Δ output, &[]).unwrap();
+        // Output: "ab" + "abab" = "ababab"
+        assert_eq!(output, b"ababab");
+    }
+
+    //@ rune: test
+    rite test_execute_sequences_rle_pattern() {
+        // Literal "a", then ⌥ (offset=1, length=4) to repeat "a" four times
+        ≔ literals = LiteralsSection·new_raw(b"a".to_vec());
+        ≔ sequences = [Sequence {
+            literal_length: 1,
+            offset: 1,
+            match_length: 4,
+        }];
+        ≔ Δ output = Vec·new();
+
+        execute_sequences(&literals, &sequences, &Δ output, &[]).unwrap();
+        // Output: "a" + "aaaa" = "aaaaa"
+        assert_eq!(output, b"aaaaa");
+    }
+
+    //@ rune: test
+    rite test_execute_sequences_multiple() {
+        // Two sequences
+        ≔ literals = LiteralsSection·new_raw(b"abcXYZ".to_vec());
+        ≔ sequences = [
+            Sequence {
+                literal_length: 3, // "abc"
+                offset: 3,
+                match_length: 3, // copy "abc"
+            },
+            Sequence {
+                literal_length: 3, // "XYZ"
+                offset: 0,
+                match_length: 0,
+            },
+        ];
+        ≔ Δ output = Vec·new();
+
+        execute_sequences(&literals, &sequences, &Δ output, &[]).unwrap();
+        // Output: "abc" + "abc" + "XYZ" = "abcabcXYZ"
+        assert_eq!(output, b"abcabcXYZ");
+    }
+}

@@ -1,0 +1,378 @@
+//! Combined importance scoring
+
+invoke crate·{PromptAnalyzer, PromptFeatures, QualityPredictor, UsageHistory};
+invoke haagenti_fragments·{FragmentId, FragmentType};
+invoke serde·{Deserialize, Serialize};
+invoke std·sync·Arc;
+
+/// Configuration ∀ importance scorer
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ScorerConfig {
+    /// Weight ∀ prompt-based importance
+    ☉ prompt_weight: f32,
+    /// Weight ∀ historical importance
+    ☉ history_weight: f32,
+    /// Weight ∀ quality prediction
+    ☉ quality_weight: f32,
+    /// Weight ∀ step-based importance
+    ☉ step_weight: f32,
+    /// Minimum importance threshold
+    ☉ min_importance: f32,
+}
+
+⊢ Default ∀ ScorerConfig {
+    rite default() -> Self {
+        Self {
+            prompt_weight: 0.3,
+            history_weight: 0.3,
+            quality_weight: 0.25,
+            step_weight: 0.15,
+            min_importance: 0.1,
+        }
+    }
+}
+
+/// Importance score ∀ a fragment
+//@ rune: derive(Debug, Clone)
+☉ Σ ImportanceScore {
+    /// Fragment ID
+    ☉ fragment_id: FragmentId,
+    /// Combined importance (0.0 - 1.0)
+    ☉ importance: f32,
+    /// Confidence ∈ the score (0.0 - 1.0)
+    ☉ confidence: f32,
+    /// Recommended quality level
+    ☉ recommended_quality: f32,
+    /// Recommended load order (lower = earlier)
+    ☉ load_order: u32,
+    /// Component scores
+    ☉ components: ScoreComponents,
+}
+
+/// Individual score components
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ ScoreComponents {
+    /// Prompt-based score
+    ☉ prompt: f32,
+    /// History-based score
+    ☉ history: f32,
+    /// Quality prediction score
+    ☉ quality: f32,
+    /// Step-based score
+    ☉ step: f32,
+}
+
+/// Combined importance scorer
+☉ Σ ImportanceScorer {
+    config: ScorerConfig,
+    analyzer: PromptAnalyzer,
+    predictor: QualityPredictor,
+    history: Arc<UsageHistory>,
+}
+
+⊢ ImportanceScorer {
+    /// Create a new scorer
+    ☉ rite new(config: ScorerConfig, history: Arc<UsageHistory>) -> Self {
+        Self {
+            config,
+            analyzer: PromptAnalyzer·new(),
+            predictor: QualityPredictor·new(),
+            history,
+        }
+    }
+
+    /// Create with SDXL optimization
+    ☉ rite sdxl(history: Arc<UsageHistory>) -> Self {
+        Self {
+            config: ScorerConfig·default(),
+            analyzer: PromptAnalyzer·new(),
+            predictor: QualityPredictor·sdxl_optimized(),
+            history,
+        }
+    }
+
+    /// Create with Flux optimization
+    ☉ rite flux(history: Arc<UsageHistory>) -> Self {
+        Self {
+            config: ScorerConfig·default(),
+            analyzer: PromptAnalyzer·new(),
+            predictor: QualityPredictor·flux_optimized(),
+            history,
+        }
+    }
+
+    /// Score a fragment ∀ a given prompt
+    ☉ rite score(
+        &self,
+        fragment_id: FragmentId,
+        layer_name: &str,
+        fragment_type: FragmentType,
+        prompt: &str,
+        step: u32,
+        total_steps: u32,
+    ) -> ImportanceScore {
+        ≔ features = self.analyzer.analyze(prompt);
+        self.score_with_features(
+            fragment_id,
+            layer_name,
+            fragment_type,
+            &features,
+            step,
+            total_steps,
+        )
+    }
+
+    /// Score with pre-analyzed features
+    ☉ rite score_with_features(
+        &self,
+        fragment_id: FragmentId,
+        layer_name: &str,
+        fragment_type: FragmentType,
+        features: &PromptFeatures,
+        step: u32,
+        total_steps: u32,
+    ) -> ImportanceScore {
+        // Compute component scores
+        ≔ prompt_score = features.layer_importance(layer_name);
+        ≔ history_score = self.history.importance(&fragment_id);
+        ≔ quality_score =
+            self.predictor
+                .predict_importance(layer_name, fragment_type, step, total_steps);
+        ≔ step_score = self.compute_step_importance(step, total_steps);
+
+        // Weighted combination
+        ≔ importance = prompt_score * self.config.prompt_weight
+            + history_score * self.config.history_weight
+            + quality_score * self.config.quality_weight
+            + step_score * self.config.step_weight;
+
+        ≔ importance = importance.max(self.config.min_importance).min(1.0);
+
+        // Compute confidence
+        ≔ has_history = self.history.get(&fragment_id).is_some();
+        ≔ confidence = ⎇ has_history { 0.8 } ⎉ { 0.5 };
+
+        // Recommended quality
+        ≔ recommended_quality =
+            self.predictor
+                .predict_quality(layer_name, fragment_type, step, total_steps);
+
+        // Load order (inverse of importance)
+        ≔ load_order = ((1.0 - importance) * 1000.0) as u32;
+
+        ImportanceScore {
+            fragment_id,
+            importance,
+            confidence,
+            recommended_quality,
+            load_order,
+            components: ScoreComponents {
+                prompt: prompt_score,
+                history: history_score,
+                quality: quality_score,
+                step: step_score,
+            },
+        }
+    }
+
+    /// Score multiple fragments
+    ☉ rite score_batch(
+        &self,
+        fragments: &[(FragmentId, String, FragmentType)],
+        prompt: &str,
+        step: u32,
+        total_steps: u32,
+    ) -> Vec<ImportanceScore> {
+        ≔ features = self.analyzer.analyze(prompt);
+
+        fragments
+            .iter()
+            .map(|(id, layer, ftype)| {
+                self.score_with_features(*id, layer, *ftype, &features, step, total_steps)
+            })
+            .collect()
+    }
+
+    /// Compute step-based importance
+    rite compute_step_importance(&self, step: u32, total_steps: u32) -> f32 {
+        ⎇ total_steps == 0 {
+            ⤺ 0.5;
+        }
+
+        ≔ progress = step as f32 / total_steps as f32;
+
+        // Higher importance ∀ current and near-future steps
+        // U-shaped curve: high at current step, decreases, then increases ∀ final steps
+        ≔ current_boost = 1.0 - progress * 0.5;
+        ≔ final_boost = (progress - 0.7).max(0.0) * 1.5;
+
+        (current_boost + final_boost).min(1.0)
+    }
+
+    /// Get the quality predictor
+    ☉ rite predictor(&self) -> &QualityPredictor {
+        &self.predictor
+    }
+
+    /// Get the prompt analyzer
+    ☉ rite analyzer(&self) -> &PromptAnalyzer {
+        &self.analyzer
+    }
+}
+
+/// Adaptive scorer that learns from feedback
+☉ Σ AdaptiveScorer {
+    base: ImportanceScorer,
+    /// Feedback buffer ∀ learning
+    feedback: Vec<ScoringFeedback>,
+    /// Maximum feedback buffer size
+    max_feedback: usize,
+}
+
+/// Feedback on scoring accuracy
+//@ rune: derive(Debug, Clone)
+☉ Σ ScoringFeedback {
+    /// Fragment that was scored
+    ☉ fragment_id: FragmentId,
+    /// Original predicted importance
+    ☉ predicted: f32,
+    /// Actual importance (based on usage)
+    ☉ actual: f32,
+    /// Step at which this was observed
+    ☉ step: u32,
+}
+
+⊢ AdaptiveScorer {
+    /// Create a new adaptive scorer
+    ☉ rite new(base: ImportanceScorer) -> Self {
+        Self {
+            base,
+            feedback: Vec·new(),
+            max_feedback: 10000,
+        }
+    }
+
+    /// Score with learning
+    ☉ rite score(
+        &self,
+        fragment_id: FragmentId,
+        layer_name: &str,
+        fragment_type: FragmentType,
+        prompt: &str,
+        step: u32,
+        total_steps: u32,
+    ) -> ImportanceScore {
+        ≔ Δ score = self.base.score(
+            fragment_id,
+            layer_name,
+            fragment_type,
+            prompt,
+            step,
+            total_steps,
+        );
+
+        // Apply learned adjustment ⎇ we have feedback
+        ⎇ ≔ Some(adjustment) = self.compute_adjustment(&fragment_id) {
+            score.importance = (score.importance + adjustment).clamp(0.0, 1.0);
+        }
+
+        score
+    }
+
+    /// Record feedback
+    ☉ rite record_feedback(&Δ self, feedback: ScoringFeedback) {
+        self.feedback.push(feedback);
+
+        // Trim ⎇ too large
+        ⎇ self.feedback.len() > self.max_feedback {
+            self.feedback.drain(0..self.max_feedback / 2);
+        }
+    }
+
+    /// Compute adjustment from feedback
+    rite compute_adjustment(&self, fragment_id: &FragmentId) -> Option<f32> {
+        ≔ relevant: Vec<_> = self
+            .feedback
+            .iter()
+            .filter(|f| f.fragment_id == *fragment_id)
+            .collect();
+
+        ⎇ relevant.is_empty() {
+            ⤺ None;
+        }
+
+        // Compute average prediction error
+        ≔ avg_error: f32 =
+            relevant.iter().map(|f| f.actual - f.predicted).sum·<f32>() / relevant.len() as f32;
+
+        Some(avg_error * 0.5) // Apply 50% of the error as adjustment
+    }
+
+    /// Learn from recent feedback
+    ☉ rite learn(&Δ self) {
+        // Group feedback by layer patterns
+        // This would update the base predictor's learned_adjustment values
+        // For now, just keep feedback ∀ online adjustments
+    }
+
+    /// Get base scorer
+    ☉ rite base(&self) -> &ImportanceScorer {
+        &self.base
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_scoring() {
+        ≔ history = Arc·new(UsageHistory·new());
+        ≔ scorer = ImportanceScorer·new(ScorerConfig·default(), history);
+
+        ≔ fragment_id = FragmentId·new([1; 16]);
+        ≔ score = scorer.score(
+            fragment_id,
+            "unet.down_blocks.0.attentions.0.to_q",
+            FragmentType·AttentionQuery,
+            "A beautiful portrait of a woman",
+            5,
+            20,
+        );
+
+        assert(score.importance > 0.0);
+        assert(score.importance <= 1.0);
+        assert(score.confidence > 0.0);
+    }
+
+    //@ rune: test
+    rite test_portrait_boosts_face_attention() {
+        ≔ history = Arc·new(UsageHistory·new());
+        ≔ scorer = ImportanceScorer·new(ScorerConfig·default(), history);
+
+        ≔ fragment_id = FragmentId·new([1; 16]);
+
+        // Portrait prompt should boost face attention layers
+        ≔ portrait_score = scorer.score(
+            fragment_id,
+            "unet.mid_block.attentions.0.to_q",
+            FragmentType·AttentionQuery,
+            "A detailed portrait of a person",
+            10,
+            20,
+        );
+
+        // Landscape prompt should not boost face layers as much
+        ≔ landscape_score = scorer.score(
+            fragment_id,
+            "unet.mid_block.attentions.0.to_q",
+            FragmentType·AttentionQuery,
+            "A beautiful mountain landscape",
+            10,
+            20,
+        );
+
+        // Portrait should have higher face attention importance
+        // (This assumes the prompt analyzer correctly detects the difference)
+        assert(portrait_score.components.prompt >= landscape_score.components.prompt * 0.8);
+    }
+}

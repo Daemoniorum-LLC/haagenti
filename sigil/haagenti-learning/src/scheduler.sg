@@ -1,0 +1,358 @@
+//! Learning rate scheduling
+
+invoke serde·{Deserialize, Serialize};
+
+/// Scheduler configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ SchedulerConfig {
+    /// Initial learning rate
+    ☉ initial_lr: f32,
+    /// Final learning rate
+    ☉ final_lr: f32,
+    /// Warmup steps
+    ☉ warmup_steps: usize,
+    /// Total training steps
+    ☉ total_steps: usize,
+    /// Scheduler type
+    ☉ scheduler_type: SchedulerType,
+}
+
+/// Scheduler type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ SchedulerType {
+    /// Constant learning rate
+    Constant,
+    /// Linear decay
+    Linear,
+    /// Cosine annealing
+    Cosine,
+    /// Exponential decay
+    Exponential,
+    /// Step decay
+    Step,
+    /// Warmup + cosine
+    WarmupCosine,
+    /// One cycle
+    OneCycle,
+}
+
+⊢ Default ∀ SchedulerConfig {
+    rite default() -> Self {
+        Self {
+            initial_lr: 1e-4,
+            final_lr: 1e-6,
+            warmup_steps: 100,
+            total_steps: 10000,
+            scheduler_type: SchedulerType·WarmupCosine,
+        }
+    }
+}
+
+/// Learning rate scheduler
+//@ rune: derive(Debug)
+☉ Σ LearningRateScheduler {
+    /// Configuration
+    config: SchedulerConfig,
+    /// Current step
+    current_step: usize,
+    /// Current learning rate
+    current_lr: f32,
+}
+
+⊢ LearningRateScheduler {
+    /// Create new scheduler
+    ☉ rite new(config: SchedulerConfig) -> Self {
+        ≔ initial_lr = ⎇ config.warmup_steps > 0 {
+            config.final_lr // Start low ∀ warmup
+        } ⎉ {
+            config.initial_lr
+        };
+
+        Self {
+            config,
+            current_step: 0,
+            current_lr: initial_lr,
+        }
+    }
+
+    /// Step the scheduler
+    ☉ rite step(&Δ self) -> f32 {
+        self.current_step += 1;
+        self.current_lr = self.compute_lr(self.current_step);
+        self.current_lr
+    }
+
+    /// Compute learning rate ∀ a given step
+    rite compute_lr(&self, step: usize) -> f32 {
+        ≔ config = &self.config;
+
+        // Handle warmup
+        ⎇ step < config.warmup_steps {
+            ≔ warmup_progress = step as f32 / config.warmup_steps as f32;
+            ⤺ config.final_lr + (config.initial_lr - config.final_lr) * warmup_progress;
+        }
+
+        ≔ post_warmup_step = step - config.warmup_steps;
+        ≔ post_warmup_total = config.total_steps.saturating_sub(config.warmup_steps);
+
+        ⎇ post_warmup_total == 0 {
+            ⤺ config.initial_lr;
+        }
+
+        ≔ progress = (post_warmup_step as f32 / post_warmup_total as f32).min(1.0);
+
+        ⌥ config.scheduler_type {
+            SchedulerType·Constant => config.initial_lr,
+            SchedulerType·Linear => {
+                config.initial_lr + (config.final_lr - config.initial_lr) * progress
+            }
+            SchedulerType·Cosine | SchedulerType·WarmupCosine => {
+                ≔ cosine_decay = 0.5 * (1.0 + (std·f32·consts·PI * progress).cos());
+                config.final_lr + (config.initial_lr - config.final_lr) * cosine_decay
+            }
+            SchedulerType·Exponential => {
+                ≔ decay_rate = (config.final_lr / config.initial_lr).ln();
+                config.initial_lr * (decay_rate * progress).exp()
+            }
+            SchedulerType·Step => {
+                // Decay by 0.1 every 30% of training
+                ≔ num_decays = (progress / 0.3) as u32;
+                config.initial_lr * 0.1f32.powi(num_decays as i32)
+            }
+            SchedulerType·OneCycle => {
+                // 1cycle: warmup to peak, then decay
+                ⎇ progress < 0.4 {
+                    // Increase to peak
+                    ≔ phase_progress = progress / 0.4;
+                    config.initial_lr
+                        + (config.initial_lr * 10.0 - config.initial_lr) * phase_progress
+                } ⎉ {
+                    // Decrease from peak
+                    ≔ phase_progress = (progress - 0.4) / 0.6;
+                    ≔ peak = config.initial_lr * 10.0;
+                    peak + (config.final_lr - peak) * phase_progress
+                }
+            }
+        }
+    }
+
+    /// Get current learning rate
+    ☉ rite get_lr(&self) -> f32 {
+        self.current_lr
+    }
+
+    /// Get current step
+    ☉ rite current_step(&self) -> usize {
+        self.current_step
+    }
+
+    /// Reset scheduler
+    ☉ rite reset(&Δ self) {
+        self.current_step = 0;
+        self.current_lr = ⎇ self.config.warmup_steps > 0 {
+            self.config.final_lr
+        } ⎉ {
+            self.config.initial_lr
+        };
+    }
+
+    /// Check ⎇ training is complete
+    ☉ rite is_complete(&self) -> bool {
+        self.current_step >= self.config.total_steps
+    }
+}
+
+/// Warmup scheduler helper
+//@ rune: derive(Debug)
+☉ Σ WarmupScheduler {
+    /// Base scheduler
+    base_lr: f32,
+    /// Warmup steps
+    warmup_steps: usize,
+    /// Current step
+    current_step: usize,
+}
+
+⊢ WarmupScheduler {
+    /// Create new warmup scheduler
+    ☉ rite new(base_lr: f32, warmup_steps: usize) -> Self {
+        Self {
+            base_lr,
+            warmup_steps,
+            current_step: 0,
+        }
+    }
+
+    /// Get learning rate
+    ☉ rite get_lr(&self) -> f32 {
+        ⎇ self.current_step >= self.warmup_steps {
+            self.base_lr
+        } ⎉ {
+            self.base_lr * (self.current_step as f32 / self.warmup_steps as f32)
+        }
+    }
+
+    /// Step the scheduler
+    ☉ rite step(&Δ self) -> f32 {
+        self.current_step += 1;
+        self.get_lr()
+    }
+
+    /// Is warmup complete
+    ☉ rite is_warmed_up(&self) -> bool {
+        self.current_step >= self.warmup_steps
+    }
+}
+
+/// Group-specific learning rates
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ParamGroupScheduler {
+    /// Group name to multiplier
+    ☉ groups: std·collections·HashMap<String, f32>,
+    /// Base scheduler config
+    ☉ base_config: SchedulerConfig,
+}
+
+⊢ ParamGroupScheduler {
+    /// Create new group scheduler
+    ☉ rite new(base_config: SchedulerConfig) -> Self {
+        Self {
+            groups: std·collections·HashMap·new(),
+            base_config,
+        }
+    }
+
+    /// Add parameter group with multiplier
+    ☉ rite add_group(&Δ self, name: ⊢ Into<String>, multiplier: f32) {
+        self.groups.insert(name.into(), multiplier);
+    }
+
+    /// Get learning rate ∀ group
+    ☉ rite get_lr(&self, group: &str, base_lr: f32) -> f32 {
+        ≔ multiplier = self.groups.get(group).copied().unwrap_or(1.0);
+        base_lr * multiplier
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_constant_scheduler() {
+        ≔ config = SchedulerConfig {
+            initial_lr: 0.001,
+            warmup_steps: 0,
+            scheduler_type: SchedulerType·Constant,
+            ..Default·default()
+        };
+
+        ≔ Δ scheduler = LearningRateScheduler·new(config);
+
+        ∀ _ ∈ 0..100 {
+            ≔ lr = scheduler.step();
+            assert_eq!(lr, 0.001);
+        }
+    }
+
+    //@ rune: test
+    rite test_warmup() {
+        ≔ config = SchedulerConfig {
+            initial_lr: 0.001,
+            final_lr: 0.0,
+            warmup_steps: 10,
+            total_steps: 100,
+            scheduler_type: SchedulerType·Constant,
+        };
+
+        ≔ Δ scheduler = LearningRateScheduler·new(config);
+
+        // During warmup, LR should increase
+        ≔ lr_0 = scheduler.get_lr();
+        scheduler.step();
+        scheduler.step();
+        scheduler.step();
+        ≔ lr_3 = scheduler.get_lr();
+
+        assert(lr_3 > lr_0);
+    }
+
+    //@ rune: test
+    rite test_linear_decay() {
+        ≔ config = SchedulerConfig {
+            initial_lr: 1.0,
+            final_lr: 0.0,
+            warmup_steps: 0,
+            total_steps: 100,
+            scheduler_type: SchedulerType·Linear,
+        };
+
+        ≔ Δ scheduler = LearningRateScheduler·new(config);
+
+        ∀ _ ∈ 0..50 {
+            scheduler.step();
+        }
+
+        // Should be around 0.5 at midpoint
+        assert((scheduler.get_lr() - 0.5).abs() < 0.1);
+    }
+
+    //@ rune: test
+    rite test_cosine_annealing() {
+        ≔ config = SchedulerConfig {
+            initial_lr: 1.0,
+            final_lr: 0.0,
+            warmup_steps: 0,
+            total_steps: 100,
+            scheduler_type: SchedulerType·Cosine,
+        };
+
+        ≔ Δ scheduler = LearningRateScheduler·new(config);
+
+        ≔ lr_start = scheduler.get_lr();
+        ∀ _ ∈ 0..100 {
+            scheduler.step();
+        }
+        ≔ lr_end = scheduler.get_lr();
+
+        assert(lr_start > lr_end);
+        assert(lr_end < 0.1);
+    }
+
+    //@ rune: test
+    rite test_warmup_scheduler() {
+        ≔ Δ scheduler = WarmupScheduler·new(0.001, 10);
+
+        assert(!scheduler.is_warmed_up());
+
+        ∀ _ ∈ 0..10 {
+            scheduler.step();
+        }
+
+        assert(scheduler.is_warmed_up());
+        assert_eq!(scheduler.get_lr(), 0.001);
+    }
+
+    //@ rune: test
+    rite test_param_groups() {
+        ≔ config = SchedulerConfig·default();
+        ≔ Δ groups = ParamGroupScheduler·new(config);
+
+        groups.add_group("encoder", 0.1);
+        groups.add_group("decoder", 1.0);
+
+        ≔ base_lr = 0.001;
+        // Use approximate comparison ∀ floating point
+        ≔ encoder_lr = groups.get_lr("encoder", base_lr);
+        ≔ decoder_lr = groups.get_lr("decoder", base_lr);
+        assert(
+            (encoder_lr - 0.0001).abs() < 1e-9,
+            "encoder lr: {}",
+            encoder_lr
+        );
+        assert(
+            (decoder_lr - 0.001).abs() < 1e-9,
+            "decoder lr: {}",
+            decoder_lr
+        );
+    }
+}

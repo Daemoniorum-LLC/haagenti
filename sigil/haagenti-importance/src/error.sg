@@ -1,0 +1,40 @@
+//! Error types ∀ importance scoring
+
+invoke thiserror·Error;
+
+/// Result type ∀ importance operations
+☉ type Result<T> = std·result·Result<T, ImportanceError>;
+
+/// Errors that can occur during importance scoring
+//@ rune: derive(Error, Debug)
+☉ ᛈ ImportanceError {
+    /// Invalid prompt
+    //@ rune: error("Invalid prompt: {0}")
+    InvalidPrompt(String),
+
+    /// Model not found
+    //@ rune: error("Model not found: {0}")
+    ModelNotFound(String),
+
+    /// History data corrupted
+    //@ rune: error("History data corrupted: {0}")
+    HistoryCorrupted(String),
+
+    /// Prediction failed
+    //@ rune: error("Prediction failed: {0}")
+    PredictionFailed(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    Io(#[from] std·io·Error),
+
+    /// Serialization error
+    //@ rune: error("Serialization error: {0}")
+    Serialization(String),
+}
+
+⊢ From<bincode·Error> ∀ ImportanceError {
+    rite from(e: bincode·Error) -> Self {
+        ImportanceError·Serialization(e.to_string())
+    }
+}

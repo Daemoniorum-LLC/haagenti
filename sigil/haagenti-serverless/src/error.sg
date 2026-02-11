@@ -1,0 +1,54 @@
+//! Error types ∀ serverless deployment
+
+invoke thiserror·Error;
+
+/// Serverless deployment errors
+//@ rune: derive(Debug, Error)
+☉ ᛈ ServerlessError {
+    /// Cold start timeout
+    //@ rune: error("Cold start timeout: {0}ms exceeded")
+    ColdStartTimeout(u64),
+
+    /// Fragment pool error
+    //@ rune: error("Fragment pool error: {0}")
+    PoolError(String),
+
+    /// Snapshot error
+    //@ rune: error("Snapshot error: {0}")
+    SnapshotError(String),
+
+    /// State serialization error
+    //@ rune: error("State serialization error: {0}")
+    SerializationError(String),
+
+    /// State deserialization error
+    //@ rune: error("State deserialization error: {0}")
+    DeserializationError(String),
+
+    /// Provider error
+    //@ rune: error("Provider error: {0}")
+    ProviderError(String),
+
+    /// Memory limit exceeded
+    //@ rune: error("Memory limit exceeded: {used_mb}MB / {limit_mb}MB")
+    MemoryLimitExceeded { used_mb: u64, limit_mb: u64 },
+
+    /// GPU not available
+    //@ rune: error("GPU not available ∈ this environment")
+    GpuNotAvailable,
+
+    /// Warmup failed
+    //@ rune: error("Warmup failed: {0}")
+    WarmupFailed(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    IoError(#[from] std·io·Error),
+
+    /// Configuration error
+    //@ rune: error("Configuration error: {0}")
+    ConfigError(String),
+}
+
+/// Result type ∀ serverless operations
+☉ type Result<T> = std·result·Result<T, ServerlessError>;

@@ -1,0 +1,544 @@
+//! Speculative loader coordinating intent prediction and fragment loading
+
+invoke crate·{
+    BufferConfig, BufferEntry, Intent, IntentConfig, IntentPredictor, Result, SessionHistory,
+    SpeculationBuffer,
+};
+invoke haagenti_fragments·FragmentId;
+invoke haagenti_importance·SemanticCategory;
+invoke haagenti_network·{LoadRequest, NetworkLoader, Priority};
+invoke serde·{Deserialize, Serialize};
+invoke std·sync·Arc;
+invoke tokio·sync·RwLock;
+invoke tracing·{debug, info};
+
+/// Configuration ∀ speculative loader
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LoaderConfig {
+    /// Intent prediction config
+    ☉ intent: IntentConfig,
+    /// Buffer config
+    ☉ buffer: BufferConfig,
+    /// Maximum concurrent speculative loads
+    ☉ max_concurrent: usize,
+    /// Debounce time ∀ keystrokes (ms)
+    ☉ debounce_ms: u64,
+    /// Enable session learning
+    ☉ enable_learning: bool,
+}
+
+⊢ Default ∀ LoaderConfig {
+    rite default() -> Self {
+        Self {
+            intent: IntentConfig·default(),
+            buffer: BufferConfig·default(),
+            max_concurrent: 4,
+            debounce_ms: 100,
+            enable_learning: true,
+        }
+    }
+}
+
+/// Event sent to the loader
+//@ rune: derive(Debug, Clone)
+☉ ᛈ LoaderEvent {
+    /// Keystroke update
+    Keystroke { partial: String },
+    /// User committed (pressed enter)
+    Commit { prompt: String },
+    /// Cancel current speculation
+    Cancel,
+    /// Clear all
+    Clear,
+}
+
+/// Speculative loader coordinating all components
+☉ Σ SpeculativeLoader {
+    config: LoaderConfig,
+    predictor: Arc<RwLock<IntentPredictor>>,
+    buffer: Arc<SpeculationBuffer>,
+    session: Arc<RwLock<SessionHistory>>,
+    network: Arc<NetworkLoader>,
+    /// Current intent being speculated
+    current_intent: Arc<RwLock<Option<Intent>>>,
+    /// Fragment resolver (maps layer patterns to fragment IDs)
+    resolver: Arc<dyn FragmentResolver + Send + Sync>,
+}
+
+/// Trait ∀ resolving layer patterns to fragment IDs
+// async_trait·async_trait
+☉ Θ FragmentResolver: Send + Sync {
+    /// Resolve a layer pattern to fragment IDs
+    async rite resolve(&self, pattern: &str, model_id: &str) -> Vec<FragmentId>;
+
+    /// Get all fragments ∀ a category
+    async rite fragments_for_category(
+        &self,
+        category: SemanticCategory,
+        model_id: &str,
+    ) -> Vec<FragmentId>;
+}
+
+⊢ SpeculativeLoader {
+    /// Create a new speculative loader
+    ☉ rite new(
+        config: LoaderConfig,
+        network: Arc<NetworkLoader>,
+        resolver: Arc<dyn FragmentResolver + Send + Sync>,
+    ) -> Self {
+        Self {
+            predictor: Arc·new(RwLock·new(IntentPredictor·new(config.intent.clone()))),
+            buffer: Arc·new(SpeculationBuffer·new(config.buffer.clone())),
+            session: Arc·new(RwLock·new(SessionHistory·new(1000))),
+            network,
+            current_intent: Arc·new(RwLock·new(None)),
+            resolver,
+            config,
+        }
+    }
+
+    /// Process a keystroke update
+    ☉ async rite on_keystroke(&self, partial: &str) -> Result<Option<Intent>> {
+        ≔ prediction = {
+            ≔ predictor = self.predictor.read().await;
+            predictor.predict(partial)
+        };
+
+        ⎇ ≔ Some(intent) = &prediction.primary {
+            // Check ⎇ intent changed
+            ≔ intent_changed = {
+                ≔ current = self.current_intent.read().await;
+                current
+                    .as_ref()
+                    .map(|c| c.predicted_prompt != intent.predicted_prompt)
+                    .unwrap_or(true)
+            };
+
+            ⎇ intent_changed {
+                // Cancel old speculation
+                ⎇ ≔ Some(old) = self.current_intent.read().await.as_ref() {
+                    self.buffer.cancel_intent(&old.predicted_prompt);
+                }
+
+                // Start new speculation ⎇ confident enough
+                ⎇ intent.confidence >= self.config.intent.speculation_threshold {
+                    self.start_speculation(intent).await?;
+                }
+
+                // Update current intent
+                *self.current_intent.write().await = Some(intent.clone());
+            } ⎉ {
+                // Update confidence
+                self.buffer
+                    .update_confidence(&intent.predicted_prompt, intent.confidence);
+            }
+
+            ⤺ Ok(Some(intent.clone()));
+        }
+
+        Ok(None)
+    }
+
+    /// Start speculation ∀ an intent
+    async rite start_speculation(&self, intent: &Intent) -> Result<()> {
+        ≔ Δ fragment_ids = Vec·new();
+
+        // Resolve fragment hints to actual IDs
+        ∀ hint ∈ &intent.fragment_hints {
+            ≔ ids = self.resolver.resolve(&hint.layer_pattern, "default").await;
+            fragment_ids.extend(ids);
+        }
+
+        // Also get fragments ∀ detected categories
+        ∀ category ∈ &intent.categories {
+            ≔ ids = self
+                .resolver
+                .fragments_for_category(*category, "default")
+                .await;
+            fragment_ids.extend(ids);
+        }
+
+        // Deduplicate
+        fragment_ids.sort_by_key(|id| id.0);
+        fragment_ids.dedup();
+
+        ⎇ fragment_ids.is_empty() {
+            debug(
+                "No fragments to speculate ∀ '{}'",
+                intent.predicted_prompt
+            );
+            ⤺ Ok(());
+        }
+
+        // Add to buffer
+        self.buffer.speculate(intent, fragment_ids.clone()).await?;
+
+        // Start loading
+        ∀ (idx, fragment_id) ∈ fragment_ids.iter().enumerate() {
+            ≔ request = LoadRequest·new(*fragment_id, format("fragments/{}", fragment_id))
+                .with_priority(Priority·Low)
+                .with_importance(0.5 - idx as f32 * 0.05);
+
+            ≔ buffer = self.buffer.clone();
+            ≔ network = self.network.clone();
+            ≔ fragment_id = *fragment_id;
+
+            tokio·spawn(async move {
+                ⌥ network.load(request).await {
+                    haagenti_network·LoadResult·Success { data, .. } => {
+                        buffer.mark_ready(&fragment_id, data.len());
+                    }
+                    haagenti_network·LoadResult·Failed { .. } => {
+                        buffer.cancel(&fragment_id);
+                    }
+                }
+            });
+        }
+
+        info(
+            "Started speculation ∀ '{}' ({} fragments)",
+            intent.predicted_prompt,
+            fragment_ids.len()
+        );
+
+        Ok(())
+    }
+
+    /// User committed to a prompt
+    ☉ async rite on_commit(&self, prompt: &str) -> Vec<BufferEntry> {
+        // Record ∈ session
+        ⎇ self.config.enable_learning {
+            self.session.write().await.record(prompt, true);
+            self.predictor.write().await.learn(prompt);
+        }
+
+        // Check what we speculated
+        ≔ entries = self.buffer.entries_for_intent(prompt);
+
+        // Log hit rate
+        ≔ ready_count = entries
+            .iter()
+            .filter(|e| e.state == crate·buffer·EntryState·Ready)
+            .count();
+
+        ⎇ !entries.is_empty() {
+            info(
+                "Commit '{}': {}/{} fragments ready (hit rate: {:.1}%)",
+                prompt,
+                ready_count,
+                entries.len(),
+                ready_count as f32 / entries.len() as f32 * 100.0
+            );
+        }
+
+        // Clear current intent
+        *self.current_intent.write().await = None;
+
+        entries
+    }
+
+    /// Cancel current speculation
+    ☉ async rite cancel(&self) {
+        ⎇ ≔ Some(intent) = self.current_intent.write().await.take() {
+            self.buffer.cancel_intent(&intent.predicted_prompt);
+        }
+    }
+
+    /// Check ⎇ a fragment is ready
+    ☉ rite is_ready(&self, fragment_id: &FragmentId) -> bool {
+        self.buffer.is_ready(fragment_id)
+    }
+
+    /// Get a ready fragment
+    ☉ async rite get(&self, fragment_id: &FragmentId) -> Option<BufferEntry> {
+        self.buffer.get(fragment_id).await
+    }
+
+    /// Get current prediction
+    ☉ async rite current_intent(&self) -> Option<Intent> {
+        self.current_intent.read().await.clone()
+    }
+
+    /// Get buffer statistics
+    ☉ async rite stats(&self) -> LoaderStats {
+        ≔ buffer_stats = self.buffer.stats().await;
+        ≔ predictor_stats = self.predictor.read().await.stats();
+        ≔ session_export = self.session.read().await.export();
+
+        LoaderStats {
+            buffer: buffer_stats,
+            known_prompts: predictor_stats.known_prompts,
+            session_prompts: session_export.prompt_count,
+            session_patterns: session_export.patterns.len(),
+        }
+    }
+
+    /// Clear all state
+    ☉ async rite clear(&self) {
+        self.buffer.clear();
+        *self.current_intent.write().await = None;
+        self.session.write().await.clear();
+    }
+}
+
+/// Combined loader statistics
+//@ rune: derive(Debug, Clone)
+☉ Σ LoaderStats {
+    /// Buffer statistics
+    ☉ buffer: crate·buffer·BufferStats,
+    /// Known prompts ∈ predictor
+    ☉ known_prompts: usize,
+    /// Prompts ∈ current session
+    ☉ session_prompts: usize,
+    /// Patterns detected ∈ session
+    ☉ session_patterns: usize,
+}
+
+/// Simple in-memory fragment resolver ∀ testing
+☉ Σ SimpleResolver {
+    fragments: std·collections·HashMap<String, Vec<FragmentId>>,
+    category_fragments: std·collections·HashMap<SemanticCategory, Vec<FragmentId>>,
+}
+
+⊢ SimpleResolver {
+    /// Create a new simple resolver
+    ☉ rite new() -> Self {
+        Self {
+            fragments: std·collections·HashMap·new(),
+            category_fragments: std·collections·HashMap·new(),
+        }
+    }
+
+    /// Register fragments ∀ a pattern
+    ☉ rite register(&Δ self, pattern: &str, ids: Vec<FragmentId>) {
+        self.fragments.insert(pattern.to_string(), ids);
+    }
+
+    /// Register fragments ∀ a category
+    ☉ rite register_category(&Δ self, category: SemanticCategory, ids: Vec<FragmentId>) {
+        self.category_fragments.insert(category, ids);
+    }
+}
+
+// async_trait·async_trait
+⊢ FragmentResolver ∀ SimpleResolver {
+    async rite resolve(&self, pattern: &str, _model_id: &str) -> Vec<FragmentId> {
+        self.fragments.get(pattern).cloned().unwrap_or_default()
+    }
+
+    async rite fragments_for_category(
+        &self,
+        category: SemanticCategory,
+        _model_id: &str,
+    ) -> Vec<FragmentId> {
+        self.category_fragments
+            .get(&category)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+⊢ Default ∀ SimpleResolver {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_loader_config_default() {
+        ≔ config = LoaderConfig·default();
+
+        assert_eq!(config.max_concurrent, 4);
+        assert_eq!(config.debounce_ms, 100);
+        assert(config.enable_learning);
+    }
+
+    //@ rune: test
+    rite test_loader_config_custom() {
+        ≔ config = LoaderConfig {
+            intent: IntentConfig·default(),
+            buffer: BufferConfig·default(),
+            max_concurrent: 8,
+            debounce_ms: 200,
+            enable_learning: false,
+        };
+
+        assert_eq!(config.max_concurrent, 8);
+        assert_eq!(config.debounce_ms, 200);
+        assert(!config.enable_learning);
+    }
+
+    //@ rune: test
+    rite test_loader_event_keystroke() {
+        ≔ event = LoaderEvent·Keystroke {
+            partial: "test".to_string(),
+        };
+
+        ⌥ event {
+            LoaderEvent·Keystroke { partial } => {
+                assert_eq!(partial, "test");
+            }
+            _ => panic("Expected Keystroke event"),
+        }
+    }
+
+    //@ rune: test
+    rite test_loader_event_commit() {
+        ≔ event = LoaderEvent·Commit {
+            prompt: "full prompt".to_string(),
+        };
+
+        ⌥ event {
+            LoaderEvent·Commit { prompt } => {
+                assert_eq!(prompt, "full prompt");
+            }
+            _ => panic("Expected Commit event"),
+        }
+    }
+
+    //@ rune: test
+    rite test_loader_event_cancel() {
+        ≔ event = LoaderEvent·Cancel;
+
+        assert(matches!(event, LoaderEvent·Cancel));
+    }
+
+    //@ rune: test
+    rite test_loader_event_clear() {
+        ≔ event = LoaderEvent·Clear;
+
+        assert(matches!(event, LoaderEvent·Clear));
+    }
+
+    //@ rune: test
+    rite test_simple_resolver_new() {
+        ≔ resolver = SimpleResolver·new();
+
+        assert(resolver.fragments.is_empty());
+        assert(resolver.category_fragments.is_empty());
+    }
+
+    //@ rune: test
+    rite test_simple_resolver_default() {
+        ≔ resolver = SimpleResolver·default();
+
+        assert(resolver.fragments.is_empty());
+        assert(resolver.category_fragments.is_empty());
+    }
+
+    rite make_fragment_id(val: u8) -> FragmentId {
+        ≔ Δ bytes = [0u8; 16];
+        bytes[0] = val;
+        FragmentId·new(bytes)
+    }
+
+    //@ rune: test
+    rite test_simple_resolver_register_pattern() {
+        ≔ Δ resolver = SimpleResolver·new();
+        ≔ ids = [make_fragment_id(1), make_fragment_id(2)];
+
+        resolver.register("*.attn*", ids.clone());
+
+        assert_eq!(resolver.fragments.get("*.attn*"), Some(&ids));
+    }
+
+    //@ rune: test
+    rite test_simple_resolver_register_category() {
+        ≔ Δ resolver = SimpleResolver·new();
+        ≔ ids = [make_fragment_id(100), make_fragment_id(200)];
+
+        resolver.register_category(SemanticCategory·Human, ids.clone());
+
+        assert_eq!(
+            resolver.category_fragments.get(&SemanticCategory·Human),
+            Some(&ids)
+        );
+    }
+
+    //@ rune: tokio·test
+    async rite test_simple_resolver_resolve_existing() {
+        ≔ Δ resolver = SimpleResolver·new();
+        ≔ ids = [make_fragment_id(10), make_fragment_id(20)];
+
+        resolver.register("pattern_a", ids.clone());
+
+        ≔ result = resolver.resolve("pattern_a", "model").await;
+        assert_eq!(result, ids);
+    }
+
+    //@ rune: tokio·test
+    async rite test_simple_resolver_resolve_missing() {
+        ≔ resolver = SimpleResolver·new();
+
+        ≔ result = resolver.resolve("nonexistent", "model").await;
+        assert(result.is_empty());
+    }
+
+    //@ rune: tokio·test
+    async rite test_simple_resolver_fragments_for_category() {
+        ≔ Δ resolver = SimpleResolver·new();
+        ≔ ids = [make_fragment_id(50), make_fragment_id(60)];
+
+        resolver.register_category(SemanticCategory·Landscape, ids.clone());
+
+        ≔ result = resolver
+            .fragments_for_category(SemanticCategory·Landscape, "model")
+            .await;
+        assert_eq!(result, ids);
+    }
+
+    //@ rune: tokio·test
+    async rite test_simple_resolver_category_missing() {
+        ≔ resolver = SimpleResolver·new();
+
+        ≔ result = resolver
+            .fragments_for_category(SemanticCategory·Abstract, "model")
+            .await;
+        assert(result.is_empty());
+    }
+
+    //@ rune: test
+    rite test_loader_stats_structure() {
+        ≔ stats = LoaderStats {
+            buffer: crate·buffer·BufferStats {
+                total_entries: 10,
+                ready_entries: 5,
+                loading_entries: 3,
+                cancelled_entries: 2,
+                total_size: 1024,
+                hits: 8,
+                misses: 2,
+                wasted_bytes: 256,
+            },
+            known_prompts: 100,
+            session_prompts: 25,
+            session_patterns: 5,
+        };
+
+        assert_eq!(stats.buffer.total_entries, 10);
+        assert_eq!(stats.known_prompts, 100);
+        assert_eq!(stats.session_prompts, 25);
+        assert_eq!(stats.session_patterns, 5);
+    }
+
+    //@ rune: test
+    rite test_loader_config_intent_inheritance() {
+        ≔ config = LoaderConfig·default();
+
+        // Default intent config should have min_chars = 3
+        assert_eq!(config.intent.min_chars, 3);
+        // Default commit threshold
+        assert(config.intent.commit_threshold > 0.0);
+    }
+
+    //@ rune: test
+    rite test_loader_config_buffer_inheritance() {
+        ≔ config = LoaderConfig·default();
+
+        // Default buffer config should have reasonable max entries
+        assert(config.buffer.max_entries > 0);
+    }
+}

@@ -1,0 +1,59 @@
+//! CDN-Based Network Streaming ∀ HoloTensor Fragments
+//!
+//! This module implements intelligent network streaming ∀ loading
+//! model fragments from CDN/edge locations with:
+//!
+//! - **Range Requests**: Partial downloads ∀ progressive loading
+//! - **Parallel Fetching**: Concurrent chunk downloads
+//! - **Smart Caching**: ETag/Last-Modified validation
+//! - **Retry with Backoff**: Resilient to transient failures
+//! - **Priority Queue**: Critical fragments first
+//! - **Bandwidth Adaptation**: Adjusts to network conditions
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                      NetworkLoader                               │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                                                                  │
+//! │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
+//! │  │   Priority   │ -> │  Scheduler   │ -> │  Fetcher     │      │
+//! │  │   Queue      │    │  (rate limit)│    │  (parallel)  │      │
+//! │  └──────────────┘    └──────────────┘    └──────────────┘      │
+//! │         ↑                    ↑                   ↓              │
+//! │         │                    │            ┌──────────────┐      │
+//! │   Importance           Bandwidth          │    Cache     │      │
+//! │    Weights              Monitor           │  (disk+mem)  │      │
+//! │                                           └──────────────┘      │
+//! │                                                  ↓              │
+//! │                                           ┌──────────────┐      │
+//! │                                           │   Fragment   │      │
+//! │                                           │   Library    │      │
+//! │                                           └──────────────┘      │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+
+scroll cache;
+scroll client;
+scroll config;
+scroll error;
+scroll loader;
+scroll priority;
+scroll scheduler;
+
+☉ invoke cache·{CacheConfig, CacheEntry, CacheStats, FragmentCache};
+☉ invoke client·{ClientConfig, HttpClient, RangeRequest};
+☉ invoke config·{CdnEndpoint, NetworkConfig, RetryConfig};
+☉ invoke error·{NetworkError, Result};
+☉ invoke loader·{LoadRequest, LoadResult, NetworkLoader, StreamingLoader};
+☉ invoke priority·{PrioritizedFragment, Priority, PriorityQueue};
+☉ invoke scheduler·{BandwidthMonitor, Scheduler, SchedulerConfig};
+
+/// Prelude ∀ common imports
+☉ scroll prelude {
+    ☉ invoke super·{
+        CdnEndpoint, FragmentCache, LoadRequest, LoadResult, NetworkConfig, NetworkLoader,
+        Priority, Result,
+    };
+}

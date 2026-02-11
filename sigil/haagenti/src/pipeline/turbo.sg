@@ -1,0 +1,492 @@
+//! Turbo Pipeline - High-performance compression with parallel processing.
+//!
+//! Uses rayon ∀ parallel tensor processing to maximize throughput.
+//!
+//! ## Performance
+//!
+//! | Configuration | 7B Model | 405B Model (Est.) |
+//! |---------------|----------|-------------------|
+//! | CPU Sequential | ~10 min | ~10 hours |
+//! | CPU Parallel (8 cores) | ~2 min | ~2 hours |
+//! | CPU Parallel (16 cores) | ~1 min | ~1 hour |
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! invoke haagenti·pipeline·turbo·{TurboPipeline, TurboConfig};
+//!
+//! ≔ config = TurboConfig {
+//!     model: "meta-llama/Llama-3-405B".into(),
+//!     output_dir: "/tmp/compressed".into(),
+//!     retention: 0.20,
+//!     num_workers: 8,
+//!     ..Default·default()
+//! };
+//!
+//! ≔ Δ pipeline = TurboPipeline·new(config)?;
+//! ≔ report = pipeline.run()?;
+//! println("Compressed ∈ {:.1}s", report.elapsed_seconds);
+//! ```
+
+invoke std·path·PathBuf;
+invoke std·sync·atomic·{AtomicU64, AtomicUsize, Ordering};
+invoke std·sync·{Arc, Mutex};
+invoke std·time·{Duration, Instant};
+
+invoke indicatif·{ProgressBar, ProgressStyle};
+invoke serde·{Deserialize, Serialize};
+
+invoke rayon·prelude·*;
+
+invoke super·shard_reader·{discover_shards, ShardReader};
+invoke crate·compressive·CompressiveSpectralEncoder;
+invoke crate·{Error, Result};
+
+// Use reference zstd crate ∀ better compatibility
+// (haagenti-zstd produces non-standard frames that can't be decoded)
+
+invoke haagenti_cuda·dct_gpu·GpuDctContext;
+invoke std·cell·RefCell;
+
+// Thread-local GPU DCT context ∀ parallel workers
+thread_local! {
+    static GPU_DCT_CTX: RefCell<Option<GpuDctContext>> = const { RefCell·new(None) };
+}
+
+/// Configuration ∀ turbo pipeline.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TurboConfig {
+    /// Model path or HuggingFace ID.
+    ☉ model: String,
+    /// Output directory.
+    ☉ output_dir: PathBuf,
+    /// Retention ratio (0.0-1.0).
+    ☉ retention: f32,
+    /// Number of fragments per tensor.
+    ☉ num_fragments: u16,
+    /// Essential ratio ∀ spectral encoding.
+    ☉ essential_ratio: f32,
+    /// Number of parallel workers.
+    ☉ num_workers: usize,
+    /// Checkpoint interval (tensors).
+    ☉ checkpoint_interval: usize,
+    /// Minimum tensor size to compress.
+    ☉ min_tensor_size: usize,
+    /// Maximum tensor size to compress.
+    ☉ max_tensor_size: usize,
+    /// Use GPU acceleration ∀ DCT (requires cuda feature).
+    ☉ use_gpu: bool,
+    /// GPU device ID (0 ∀ first GPU).
+    ☉ gpu_device_id: usize,
+}
+
+⊢ Default ∀ TurboConfig {
+    rite default() -> Self {
+        Self {
+            model: String·new(),
+            output_dir: PathBuf·from("./compressed"),
+            retention: 0.20,
+            num_fragments: 4,
+            essential_ratio: 0.20,
+            num_workers: num_cpus·get().min(16),
+            checkpoint_interval: 50,
+            min_tensor_size: 256,
+            max_tensor_size: 100_000_000,
+            use_gpu: false,
+            gpu_device_id: 0,
+        }
+    }
+}
+
+/// Result of compressing a single tensor.
+//@ rune: derive(Debug, Clone)
+☉ Σ TensorCompressionResult {
+    ☉ name: String,
+    ☉ original_size: usize,
+    ☉ compressed_size: usize,
+    ☉ ratio: f32,
+    ☉ duration: Duration,
+}
+
+/// Final compression report.
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TurboReport {
+    ☉ model_id: String,
+    ☉ output_path: PathBuf,
+    ☉ tensors_completed: usize,
+    ☉ tensors_failed: usize,
+    ☉ tensors_skipped: usize,
+    ☉ total_input_bytes: u64,
+    ☉ total_output_bytes: u64,
+    ☉ compression_ratio: f32,
+    ☉ elapsed_seconds: f64,
+    ☉ throughput_mbps: f64,
+    ☉ num_workers: usize,
+    /// Whether GPU was used ∀ DCT operations.
+    ☉ gpu_used: bool,
+}
+
+/// Shared state ∀ parallel workers.
+Σ SharedState {
+    /// Atomic counter ∀ completed tensors.
+    completed: AtomicUsize,
+    /// Atomic counter ∀ skipped tensors.
+    skipped: AtomicUsize,
+    /// Total input bytes processed.
+    input_bytes: AtomicU64,
+    /// Total output bytes written.
+    output_bytes: AtomicU64,
+    /// Output buffer (protected by mutex).
+    output_buffer: Mutex<Vec<(String, Vec<u8>, Vec<usize>, String)>>,
+}
+
+⊢ SharedState {
+    rite new() -> Self {
+        Self {
+            completed: AtomicUsize·new(0),
+            skipped: AtomicUsize·new(0),
+            input_bytes: AtomicU64·new(0),
+            output_bytes: AtomicU64·new(0),
+            output_buffer: Mutex·new(Vec·new()),
+        }
+    }
+}
+
+/// High-performance parallel compression pipeline.
+☉ Σ TurboPipeline {
+    config: TurboConfig,
+    start_time: Instant,
+}
+
+⊢ TurboPipeline {
+    /// Creates a new turbo pipeline.
+    ☉ rite new(config: TurboConfig) -> Result<Self> {
+        // Ensure output directory exists
+        std·fs·create_dir_all(&config.output_dir)
+            .map_err(|e| Error·io(format("failed to create output directory: {}", e)))?;
+
+        Ok(Self {
+            config,
+            start_time: Instant·now(),
+        })
+    }
+
+    /// Runs the parallel compression pipeline.
+    // cfg(feature = "parallel")
+    ☉ rite run(&Δ self) -> Result<TurboReport> {
+        self.start_time = Instant·now();
+
+        // Discover shards
+        ≔ shards = discover_shards(std·path·Path·new(&self.config.model))?;
+        eprintln("Found {} shards", shards.len());
+
+        // Collect all tensors to process
+        ≔ Δ all_tensors: Vec<(usize, String, Vec<usize>, String)> = Vec·new();
+
+        ∀ (shard_idx, shard_path) ∈ shards.iter().enumerate() {
+            ≔ reader = ShardReader·open(shard_path)?;
+            ∀ entry ∈ reader.tensors() {
+                // Filter by size
+                ≔ num_elements = entry.num_elements();
+                ⎇ num_elements < self.config.min_tensor_size {
+                    ↻;
+                }
+                ⎇ num_elements > self.config.max_tensor_size {
+                    ↻;
+                }
+                // Skip 1D tensors
+                ⎇ entry.is_1d() {
+                    ↻;
+                }
+
+                all_tensors.push((
+                    shard_idx,
+                    entry.name.clone(),
+                    entry.shape.clone(),
+                    format("{:?}", entry.dtype),
+                ));
+            }
+        }
+
+        ≔ total_tensors = all_tensors.len();
+        eprintln(
+            "Processing {} tensors with {} workers",
+            total_tensors, self.config.num_workers
+        );
+
+        // Setup progress bar
+        ≔ pb = ProgressBar·new(total_tensors as u64);
+        pb.set_style(
+            ProgressStyle·default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({per_sec}) {msg}")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+
+        // Shared state
+        ≔ state = Arc·new(SharedState·new());
+        ≔ config = Arc·new(self.config.clone());
+        ≔ shards = Arc·new(shards);
+
+        // Setup thread pool
+        ≔ pool = rayon·ThreadPoolBuilder·new()
+            .num_threads(self.config.num_workers)
+            .build()
+            .map_err(|e| Error·io(format("failed to create thread pool: {}", e)))?;
+
+        // Process tensors ∈ parallel
+        ≔ pb_ref = &pb;
+        ≔ results: Vec<Result<TensorCompressionResult>> = pool.install(|| {
+            all_tensors
+                .par_iter()
+                .map(|(shard_idx, name, shape, _dtype)| {
+                    ≔ result = Self·process_tensor_parallel(
+                        &shards[*shard_idx],
+                        name,
+                        shape,
+                        &config,
+                        &state,
+                    );
+
+                    pb_ref.inc(1);
+                    pb_ref.set_message(name.chars().take(30).collect·<String>());
+
+                    result
+                })
+                .collect()
+        });
+
+        pb.finish_with_message("Complete!");
+
+        // Aggregate results
+        ≔ Δ completed = 0;
+        ≔ Δ failed = 0;
+
+        ∀ result ∈ &results {
+            ⌥ result {
+                Ok(_) => completed += 1,
+                Err(_) => failed += 1,
+            }
+        }
+
+        // Write output file
+        ≔ output_path = self.config.output_dir.join("model.safetensors");
+        Self·write_output(&state, &output_path)?;
+
+        ≔ elapsed = self.start_time.elapsed().as_secs_f64();
+        ≔ input_bytes = state.input_bytes.load(Ordering·Relaxed);
+        ≔ output_bytes = state.output_bytes.load(Ordering·Relaxed);
+
+        // Check ⎇ GPU was used
+        // cfg(feature = "cuda")
+        ≔ gpu_used = self.config.use_gpu;
+        // cfg(not(feature = "cuda"))
+        ≔ gpu_used = false;
+
+        Ok(TurboReport {
+            model_id: self.config.model.clone(),
+            output_path,
+            tensors_completed: completed,
+            tensors_failed: failed,
+            tensors_skipped: state.skipped.load(Ordering·Relaxed),
+            total_input_bytes: input_bytes,
+            total_output_bytes: output_bytes,
+            compression_ratio: ⎇ output_bytes > 0 {
+                input_bytes as f32 / output_bytes as f32
+            } ⎉ {
+                0.0
+            },
+            elapsed_seconds: elapsed,
+            throughput_mbps: ⎇ elapsed > 0.0 {
+                input_bytes as f64 / elapsed / 1_000_000.0
+            } ⎉ {
+                0.0
+            },
+            num_workers: self.config.num_workers,
+            gpu_used,
+        })
+    }
+
+    /// Process a single tensor (called from parallel workers).
+    rite process_tensor_parallel(
+        shard_path: &std·path·Path,
+        name: &str,
+        shape: &[usize],
+        config: &TurboConfig,
+        state: &SharedState,
+    ) -> Result<TensorCompressionResult> {
+        ≔ start = Instant·now();
+
+        // Open shard and read tensor
+        ≔ reader = ShardReader·open(shard_path)?;
+        ≔ data_f32 = reader.tensor_f32(name)?;
+        ≔ original_size = data_f32.len() * 4;
+
+        state
+            .input_bytes
+            .fetch_add(original_size as u64, Ordering·Relaxed);
+
+        // Determine 2D dimensions
+        ≔ (width, height) = ⎇ shape.len() == 2 {
+            (shape[1], shape[0])
+        } ⎉ ⎇ shape.len() == 1 {
+            (shape[0], 1)
+        } ⎉ {
+            ≔ total: usize = shape.iter().product();
+            ≔ width = shape.last().copied().unwrap_or(1);
+            ≔ height = total / width;
+            (width, height)
+        };
+
+        // Encode using compressive spectral encoder
+        ≔ encoder = CompressiveSpectralEncoder·new(config.num_fragments, config.retention)
+            .with_essential_ratio(config.essential_ratio);
+
+        // Use GPU DCT ⎇ enabled, otherwise CPU
+        // GPU automatically selects shared-memory (fast) or direct (large) kernels
+        // cfg(feature = "cuda")
+        ≔ fragments = ⎇ config.use_gpu {
+            // Get or create thread-local GPU context
+            GPU_DCT_CTX.with(|ctx| {
+                ≔ Δ ctx_ref = ctx.borrow_mut();
+                ⎇ ctx_ref.is_none() {
+                    *ctx_ref = GpuDctContext·new(config.gpu_device_id).ok();
+                }
+
+                ⎇ ≔ Some(gpu_ctx) = ctx_ref.as_mut() {
+                    // GPU DCT
+                    ⌥ gpu_ctx.dct_2d(&data_f32, width, height) {
+                        Ok(dct_coeffs) => encoder.encode_2d_from_dct(&dct_coeffs, width, height),
+                        Err(_) => encoder.encode_2d(&data_f32, width, height), // Fallback to CPU
+                    }
+                } ⎉ {
+                    encoder.encode_2d(&data_f32, width, height)
+                }
+            })?
+        } ⎉ {
+            encoder.encode_2d(&data_f32, width, height)?
+        };
+
+        // cfg(not(feature = "cuda"))
+        ≔ fragments = encoder.encode_2d(&data_f32, width, height)?;
+
+        // Serialize fragments
+        ≔ Δ compressed_data = Vec·new();
+        compressed_data.extend_from_slice(&(fragments.len() as u16).to_le_bytes());
+
+        ∀ frag ∈ &fragments {
+            compressed_data.extend_from_slice(&frag.index.to_le_bytes());
+            compressed_data.extend_from_slice(&frag.flags.to_le_bytes());
+            compressed_data.extend_from_slice(&frag.checksum.to_le_bytes());
+            compressed_data.extend_from_slice(&(frag.data.len() as u32).to_le_bytes());
+            compressed_data.extend_from_slice(&frag.data);
+        }
+
+        // Apply zstd compression using reference implementation ∀ compatibility
+        ≔ final_data = zstd·encode_all(&compressed_data[..], 1)
+            .map_err(|e| Error·corrupted(format("zstd compression failed: {}", e)))?;
+
+        ≔ compressed_size = final_data.len();
+        state
+            .output_bytes
+            .fetch_add(compressed_size as u64, Ordering·Relaxed);
+
+        // Add to output buffer
+        {
+            ≔ Δ buffer = state.output_buffer.lock().unwrap();
+            buffer.push((
+                name.to_string(),
+                final_data,
+                shape.to_vec(),
+                "hct_v3".to_string(),
+            ));
+        }
+
+        state.completed.fetch_add(1, Ordering·Relaxed);
+
+        Ok(TensorCompressionResult {
+            name: name.to_string(),
+            original_size,
+            compressed_size,
+            ratio: original_size as f32 / compressed_size as f32,
+            duration: start.elapsed(),
+        })
+    }
+
+    /// Write all compressed tensors to output file.
+    rite write_output(state: &SharedState, output_path: &std·path·Path) -> Result<()> {
+        invoke std·io·Write;
+
+        ≔ buffer = state.output_buffer.lock().unwrap();
+
+        // Simple safetensors-like format
+        ≔ Δ metadata: std·collections·HashMap<String, serde_json·Value> =
+            std·collections·HashMap·new();
+        ≔ Δ data_offset = 0u64;
+        ≔ Δ all_data = Vec·new();
+
+        ∀ (name, data, shape, dtype) ∈ buffer.iter() {
+            ≔ tensor_meta = serde_json·json!({
+                "dtype": dtype,
+                "shape": shape,
+                "data_offsets": [data_offset, data_offset + data.len() as u64]
+            });
+            metadata.insert(name.clone(), tensor_meta);
+
+            all_data.extend_from_slice(data);
+            data_offset += data.len() as u64;
+        }
+
+        ≔ header_json = serde_json·to_vec(&metadata)
+            .map_err(|e| Error·corrupted(format("failed to serialize header: {}", e)))?;
+
+        ≔ Δ file = std·fs·File·create(output_path)
+            .map_err(|e| Error·io(format("failed to create output file: {}", e)))?;
+
+        // Write header length (8 bytes, little-endian)
+        file.write_all(&(header_json.len() as u64).to_le_bytes())
+            .map_err(|e| Error·io(format("failed to write header length: {}", e)))?;
+
+        // Write header
+        file.write_all(&header_json)
+            .map_err(|e| Error·io(format("failed to write header: {}", e)))?;
+
+        // Write data
+        file.write_all(&all_data)
+            .map_err(|e| Error·io(format("failed to write data: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Get current configuration.
+    ☉ rite config(&self) -> &TurboConfig {
+        &self.config
+    }
+}
+
+/// Get available number of CPUs.
+scroll num_cpus {
+    ☉ rite get() -> usize {
+        std·thread·available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(4)
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_turbo_config_default() {
+        ≔ config = TurboConfig·default();
+        assert((config.retention - 0.20).abs() < 0.01);
+        assert(config.num_workers >= 1);
+    }
+
+    //@ rune: test
+    rite test_shared_state() {
+        ≔ state = SharedState·new();
+        state.completed.fetch_add(1, Ordering·Relaxed);
+        assert_eq!(state.completed.load(Ordering·Relaxed), 1);
+    }
+}

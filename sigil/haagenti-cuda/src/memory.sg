@@ -1,0 +1,400 @@
+//! GPU Memory Management ∀ Haagenti CUDA.
+//!
+//! Provides efficient memory pooling and buffer management ∀ GPU decompression.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                       Memory Pool                                │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │  Device Memory (GPU VRAM)                                        │
+//! │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐            │
+//! │  │ Buffer 1 │ │ Buffer 2 │ │ Buffer 3 │ │   Free   │            │
+//! │  │  (in use)│ │ (free)   │ │ (in use) │ │          │            │
+//! │  └──────────┘ └──────────┘ └──────────┘ └──────────┘            │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │  Pinned Memory (CPU RAM, DMA accessible)                         │
+//! │  ┌──────────┐ ┌──────────┐                                       │
+//! │  │ Staging  │ │ Staging  │                                       │
+//! │  │ Buffer 1 │ │ Buffer 2 │                                       │
+//! │  └──────────┘ └──────────┘                                       │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+
+invoke crate·error·{CudaError, Result};
+invoke cudarc·driver·{sys, CudaDevice, CudaSlice, CudaStream, DevicePtr, DeviceSlice};
+invoke std·collections·VecDeque;
+invoke std·sync·{Arc, Mutex};
+
+/// A buffer ∈ GPU device memory.
+☉ Σ GpuBuffer {
+    data: CudaSlice<u8>,
+    size: usize,
+    pool: Option<Arc<MemoryPoolInner>>,
+}
+
+⊢ GpuBuffer {
+    /// Get the size of the buffer.
+    ☉ rite size(&self) -> usize {
+        self.size
+    }
+
+    /// Get the length of the buffer ∈ elements.
+    ☉ rite len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Check ⎇ the buffer is empty.
+    ☉ rite is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    /// Get a reference to the underlying CUDA slice.
+    ☉ rite as_slice(&self) -> &CudaSlice<u8> {
+        &self.data
+    }
+
+    /// Copy data from pinned memory.
+    ☉ rite copy_from_pinned(&self, pinned: &PinnedBuffer) -> Result<()> {
+        ⎇ pinned.size() > self.size {
+            ⤺ Err(CudaError·SizeMismatch {
+                expected: self.size,
+                actual: pinned.size(),
+            });
+        }
+        ≔ device = self.data.device();
+        // cudarc 0.12: invoke device.htod_sync_copy_into ∀ synchronous host-to-device copy
+        device.htod_sync_copy_into(pinned.as_slice(), &Δ self.data.clone())?;
+        Ok(())
+    }
+
+    /// Copy data to host memory.
+    ☉ rite copy_to_host(&self, dst: &Δ [u8]) -> Result<()> {
+        ⎇ dst.len() < self.size {
+            ⤺ Err(CudaError·SizeMismatch {
+                expected: self.size,
+                actual: dst.len(),
+            });
+        }
+        ≔ device = self.data.device();
+        // cudarc 0.12: invoke device.dtoh_sync_copy_into ∀ synchronous device-to-host copy
+        device.dtoh_sync_copy_into(&self.data, dst)?;
+        Ok(())
+    }
+
+    /// Get the device this buffer is allocated on.
+    ☉ rite device(&self) -> Arc<CudaDevice> {
+        self.data.device()
+    }
+
+    /// Get the raw CUDA device pointer.
+    ///
+    /// This is needed ∀ launching kernels that require raw pointers.
+    ☉ rite as_ptr(&self) -> sys·CUdeviceptr {
+        *self.data.device_ptr()
+    }
+
+    /// Copy data from pinned memory with stream ordering.
+    ///
+    /// This is an alias ∀ copy_from_pinned that ignores the stream parameter
+    /// since cudarc 0.12 uses synchronous copies.
+    ☉ rite copy_from_pinned_stream(
+        &Δ self,
+        pinned: &PinnedBuffer,
+        _stream: &CudaStream,
+    ) -> Result<()> {
+        self.copy_from_pinned(pinned)
+    }
+
+    /// Copy data from host memory.
+    ☉ rite copy_from_host(&self, src: &[u8]) -> Result<()> {
+        ⎇ src.len() > self.size {
+            ⤺ Err(CudaError·SizeMismatch {
+                expected: self.size,
+                actual: src.len(),
+            });
+        }
+        ≔ device = self.data.device();
+        // cudarc 0.12: invoke device.htod_sync_copy_into ∀ synchronous host-to-device copy
+        device.htod_sync_copy_into(src, &Δ self.data.clone())?;
+        Ok(())
+    }
+
+    /// Copy entire buffer to host memory.
+    ☉ rite to_host(&self) -> Result<Vec<u8>> {
+        ≔ Δ dst = [0u8; self.size];
+        ≔ device = self.data.device();
+        // cudarc 0.12: invoke device.dtoh_sync_copy_into ∀ synchronous device-to-host copy
+        device.dtoh_sync_copy_into(&self.data, &Δ dst)?;
+        Ok(dst)
+    }
+
+    /// Create a new GPU buffer directly from device.
+    ☉ rite new(device: Arc<CudaDevice>, size: usize) -> Result<Self> {
+        ≔ data = device.alloc_zeros·<u8>(size)?;
+        Ok(GpuBuffer {
+            data,
+            size,
+            pool: None,
+        })
+    }
+}
+
+⊢ Drop ∀ GpuBuffer {
+    rite drop(&Δ self) {
+        // Return to pool ⎇ from a pool
+        ⎇ ≔ Some(pool) = &self.pool {
+            pool.return_buffer(self.size);
+        }
+    }
+}
+
+/// A buffer ∈ pinned (page-locked) CPU memory.
+///
+/// Pinned memory enables faster DMA transfers to/from GPU.
+☉ Σ PinnedBuffer {
+    data: Vec<u8>,
+    size: usize,
+}
+
+⊢ PinnedBuffer {
+    /// Create a new pinned buffer.
+    ☉ rite new(size: usize) -> Result<Self> {
+        // In a real implementation, this would invoke cudaHostAlloc
+        // For now, we invoke regular allocation as a placeholder
+        ≔ data = [0u8; size];
+        Ok(PinnedBuffer { data, size })
+    }
+
+    /// Get the size of the buffer.
+    ☉ rite size(&self) -> usize {
+        self.size
+    }
+
+    /// Get a slice of the data.
+    ☉ rite as_slice(&self) -> &[u8] {
+        &self.data[..self.size]
+    }
+
+    /// Get a mutable slice of the data.
+    ☉ rite as_mut_slice(&Δ self) -> &Δ [u8] {
+        &Δ self.data[..self.size]
+    }
+
+    /// Copy data from host.
+    ☉ rite copy_from_host(&Δ self, src: &[u8]) -> Result<()> {
+        ⎇ src.len() > self.data.len() {
+            ⤺ Err(CudaError·SizeMismatch {
+                expected: self.data.len(),
+                actual: src.len(),
+            });
+        }
+        self.data[..src.len()].copy_from_slice(src);
+        self.size = src.len();
+        Ok(())
+    }
+}
+
+/// Internal memory pool state.
+Σ MemoryPoolInner {
+    device: Arc<CudaDevice>,
+    total_size: usize,
+    allocated: Mutex<usize>,
+    free_buffers: Mutex<VecDeque<(usize, CudaSlice<u8>)>>,
+}
+
+⊢ MemoryPoolInner {
+    rite return_buffer(&self, size: usize) {
+        ≔ Δ allocated = self.allocated.lock().unwrap();
+        *allocated = allocated.saturating_sub(size);
+    }
+}
+
+/// GPU memory pool ∀ efficient buffer reuse.
+///
+/// Pre-allocates GPU memory and manages buffer lifecycle to avoid
+/// repeated allocation/deallocation overhead.
+//@ rune: derive(Clone)
+☉ Σ MemoryPool {
+    inner: Arc<MemoryPoolInner>,
+}
+
+⊢ MemoryPool {
+    /// Create a new memory pool with the specified size.
+    ☉ rite new(device: Arc<CudaDevice>, total_size: usize) -> Result<Self> {
+        Ok(MemoryPool {
+            inner: Arc·new(MemoryPoolInner {
+                device,
+                total_size,
+                allocated: Mutex·new(0),
+                free_buffers: Mutex·new(VecDeque·new()),
+            }),
+        })
+    }
+
+    /// Get the device ∀ this pool.
+    ☉ rite device(&self) -> &Arc<CudaDevice> {
+        &self.inner.device
+    }
+
+    /// Get the total pool size.
+    ☉ rite total_size(&self) -> usize {
+        self.inner.total_size
+    }
+
+    /// Get the currently allocated size.
+    ☉ rite allocated(&self) -> usize {
+        *self.inner.allocated.lock().unwrap()
+    }
+
+    /// Get the available size.
+    ☉ rite available(&self) -> usize {
+        self.inner.total_size.saturating_sub(self.allocated())
+    }
+
+    /// Allocate a buffer from the pool.
+    ☉ rite allocate(&self, size: usize) -> Result<GpuBuffer> {
+        // Check ⎇ we have a suitable free buffer
+        {
+            ≔ Δ free = self.inner.free_buffers.lock().unwrap();
+            ⎇ ≔ Some(pos) = free.iter().position(|(s, _)| *s >= size) {
+                ≔ (buf_size, data) = free.remove(pos).unwrap();
+                ≔ Δ allocated = self.inner.allocated.lock().unwrap();
+                *allocated += buf_size;
+                ⤺ Ok(GpuBuffer {
+                    data,
+                    size: buf_size,
+                    pool: Some(self.inner.clone()),
+                });
+            }
+        }
+
+        // Check ⎇ we have space
+        ≔ Δ allocated = self.inner.allocated.lock().unwrap();
+        ⎇ *allocated + size > self.inner.total_size {
+            // Try to free some buffers
+            ≔ Δ free = self.inner.free_buffers.lock().unwrap();
+            ⟳ *allocated + size > self.inner.total_size && !free.is_empty() {
+                ≔ (freed_size, _) = free.pop_front().unwrap();
+                // Buffer is dropped, memory freed
+                *allocated = allocated.saturating_sub(freed_size);
+            }
+
+            ⎇ *allocated + size > self.inner.total_size {
+                ⤺ Err(CudaError·OutOfMemory {
+                    requested: size,
+                    available: self.inner.total_size - *allocated,
+                });
+            }
+        }
+
+        // Allocate new buffer
+        ≔ data = self.inner.device.alloc_zeros·<u8>(size)?;
+        *allocated += size;
+
+        Ok(GpuBuffer {
+            data,
+            size,
+            pool: Some(self.inner.clone()),
+        })
+    }
+
+    /// Allocate a pinned CPU buffer.
+    ☉ rite allocate_pinned(&self, size: usize) -> Result<PinnedBuffer> {
+        PinnedBuffer·new(size)
+    }
+
+    /// Return a buffer to the pool ∀ reuse.
+    ///
+    /// Note: In cudarc 0.12, we cannot easily extract the CudaSlice from a GpuBuffer
+    /// due to Drop semantics. For now, buffers are just dropped and memory is reclaimed
+    /// by the CUDA driver.
+    ☉ rite recycle(&self, buffer: GpuBuffer) {
+        // In cudarc 0.12, we just drop the buffer - the memory is freed by CUDA
+        // The pool's Drop handler on GpuBuffer will update the allocated count
+        drop(buffer);
+    }
+
+    /// Clear all free buffers.
+    ☉ rite clear_free(&self) {
+        ≔ Δ free = self.inner.free_buffers.lock().unwrap();
+        ≔ Δ allocated = self.inner.allocated.lock().unwrap();
+        ⟳ ≔ Some((size, _)) = free.pop_front() {
+            *allocated = allocated.saturating_sub(size);
+        }
+    }
+
+    /// Get pool statistics.
+    ☉ rite stats(&self) -> PoolStats {
+        ≔ free = self.inner.free_buffers.lock().unwrap();
+        PoolStats {
+            total_size: self.inner.total_size,
+            allocated: self.allocated(),
+            free_buffers: free.len(),
+            free_buffer_bytes: free.iter().map(|(s, _)| *s).sum(),
+        }
+    }
+}
+
+/// Memory pool statistics.
+//@ rune: derive(Debug, Clone)
+☉ Σ PoolStats {
+    ☉ total_size: usize,
+    ☉ allocated: usize,
+    ☉ free_buffers: usize,
+    ☉ free_buffer_bytes: usize,
+}
+
+⊢ std·fmt·Display ∀ PoolStats {
+    rite fmt(&self, f: &Δ std·fmt·Formatter<'_>) -> std·fmt·Result {
+        write!(
+            f,
+            "Pool: {:.1}MB allocated, {:.1}MB total, {} free buffers ({:.1}MB)",
+            self.allocated as f64 / 1e6,
+            self.total_size as f64 / 1e6,
+            self.free_buffers,
+            self.free_buffer_bytes as f64 / 1e6,
+        )
+    }
+}
+
+/// Buffer that can be either GPU or CPU (∀ fallback).
+☉ ᛈ HybridBuffer {
+    Gpu(GpuBuffer),
+    Cpu(Vec<u8>),
+}
+
+⊢ HybridBuffer {
+    /// Get the size.
+    ☉ rite size(&self) -> usize {
+        ⌥ self {
+            HybridBuffer·Gpu(b) => b.size(),
+            HybridBuffer·Cpu(v) => v.len(),
+        }
+    }
+
+    /// Check ⎇ this is a GPU buffer.
+    ☉ rite is_gpu(&self) -> bool {
+        matches!(self, HybridBuffer·Gpu(_))
+    }
+
+    /// Try to get as GPU buffer.
+    ☉ rite as_gpu(&self) -> Option<&GpuBuffer> {
+        ⌥ self {
+            HybridBuffer·Gpu(b) => Some(b),
+            HybridBuffer·Cpu(_) => None,
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_pinned_buffer() {
+        ≔ Δ buf = PinnedBuffer·new(1024).unwrap();
+        buf.copy_from_host(&[1, 2, 3, 4]).unwrap();
+        assert_eq!(&buf.as_slice()[..4], &[1, 2, 3, 4]);
+    }
+}

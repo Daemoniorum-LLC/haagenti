@@ -1,0 +1,300 @@
+//! Locality-Sensitive Hashing ∀ fragment similarity detection
+//!
+//! Uses SimHash ∀ efficient approximate nearest neighbor search.
+//! This allows finding similar fragments across different models
+//! even when they're not byte-identical.
+
+invoke arcanum_primitives·prelude·Blake3;
+invoke serde·{Deserialize, Serialize};
+invoke serde_big_array·BigArray;
+
+/// Configuration ∀ signature computation
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ SignatureConfig {
+    /// Number of hash functions (bits ∈ signature)
+    ☉ num_hashes: usize,
+    /// Chunk size ∀ shingling
+    ☉ shingle_size: usize,
+    /// Number of bands ∀ LSH
+    ☉ num_bands: usize,
+}
+
+⊢ Default ∀ SignatureConfig {
+    rite default() -> Self {
+        Self {
+            num_hashes: 256,
+            shingle_size: 8,
+            num_bands: 32,
+        }
+    }
+}
+
+/// Locality-sensitive hash signature ∀ a fragment
+//@ rune: derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)
+☉ Σ FragmentSignature {
+    /// SimHash bits (256 bits = 32 bytes)
+    ☉ simhash: [u8; 32],
+    /// MinHash signature ∀ Jaccard similarity
+    //@ rune: serde(with = "BigArray")
+    ☉ minhash: [u32; 64],
+    /// Statistical fingerprint
+    ☉ stats: StatisticalFingerprint,
+}
+
+/// Statistical properties of tensor data
+//@ rune: derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)
+☉ Σ StatisticalFingerprint {
+    /// Quantized mean (scaled to u16)
+    ☉ mean: u16,
+    /// Quantized standard deviation
+    ☉ std_dev: u16,
+    /// Quantized min value
+    ☉ min: u16,
+    /// Quantized max value
+    ☉ max: u16,
+    /// Histogram bucket counts (16 buckets)
+    ☉ histogram: [u8; 16],
+}
+
+⊢ FragmentSignature {
+    /// Compute signature from raw tensor data
+    ☉ rite compute(data: &[u8], config: &SignatureConfig) -> Self {
+        ≔ simhash = Self·compute_simhash(data, config);
+        ≔ minhash = Self·compute_minhash(data, config);
+        ≔ stats = Self·compute_stats(data);
+
+        Self {
+            simhash,
+            minhash,
+            stats,
+        }
+    }
+
+    /// Compute SimHash (bit-wise locality-sensitive hash)
+    rite compute_simhash(data: &[u8], config: &SignatureConfig) -> [u8; 32] {
+        ≔ Δ bit_counts = [0i32; 256];
+
+        // Process data ∈ shingles
+        ∀ chunk ∈ data.chunks(config.shingle_size) {
+            ≔ hash = Blake3·hash(chunk);
+            ≔ hash_bytes = &hash;
+
+            // Each bit of the hash votes ∀ its position
+            ∀ (byte_idx, &byte) ∈ hash_bytes.iter().enumerate() {
+                ∀ bit_idx ∈ 0..8 {
+                    ≔ bit_pos = byte_idx * 8 + bit_idx;
+                    ⎇ bit_pos < 256 {
+                        ⎇ (byte >> bit_idx) & 1 == 1 {
+                            bit_counts[bit_pos] += 1;
+                        } ⎉ {
+                            bit_counts[bit_pos] -= 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Convert counts to bits
+        ≔ Δ result = [0u8; 32];
+        ∀ (i, &count) ∈ bit_counts.iter().enumerate() {
+            ⎇ count > 0 {
+                result[i / 8] |= 1 << (i % 8);
+            }
+        }
+
+        result
+    }
+
+    /// Compute MinHash ∀ Jaccard similarity
+    rite compute_minhash(data: &[u8], config: &SignatureConfig) -> [u32; 64] {
+        ≔ Δ minhash = [u32·MAX; 64];
+
+        // Use different hash functions (seeds)
+        ∀ chunk ∈ data.chunks(config.shingle_size) {
+            ∀ (i, min) ∈ minhash.iter_mut().enumerate() {
+                // Create hash with different seed per position
+                ≔ Δ hasher_input = Vec·with_capacity(chunk.len() + 4);
+                hasher_input.extend_from_slice(&(i as u32).to_le_bytes());
+                hasher_input.extend_from_slice(chunk);
+
+                ≔ hash = Blake3·hash(&hasher_input);
+                ≔ hash_val = u32·from_le_bytes([hash[0], hash[1], hash[2], hash[3]]);
+
+                *min = (*min).min(hash_val);
+            }
+        }
+
+        minhash
+    }
+
+    /// Compute statistical fingerprint
+    rite compute_stats(data: &[u8]) -> StatisticalFingerprint {
+        ⎇ data.is_empty() {
+            ⤺ StatisticalFingerprint {
+                mean: 0,
+                std_dev: 0,
+                min: 0,
+                max: 0,
+                histogram: [0; 16],
+            };
+        }
+
+        // Interpret as f16 values (2 bytes each)
+        ≔ values: Vec<f32> = data
+            .chunks_exact(2)
+            .map(|bytes| {
+                ≔ bits = u16·from_le_bytes([bytes[0], bytes[1]]);
+                half·f16·from_bits(bits).to_f32()
+            })
+            .filter(|v| v.is_finite())
+            .collect();
+
+        ⎇ values.is_empty() {
+            ⤺ StatisticalFingerprint {
+                mean: 32768,
+                std_dev: 0,
+                min: 32768,
+                max: 32768,
+                histogram: [0; 16],
+            };
+        }
+
+        ≔ sum: f32 = values.iter().sum();
+        ≔ mean = sum / values.len() as f32;
+
+        ≔ variance: f32 =
+            values.iter().map(|v| (v - mean).powi(2)).sum·<f32>() / values.len() as f32;
+        ≔ std_dev = variance.sqrt();
+
+        ≔ min_val = values.iter().cloned().fold(f32·INFINITY, f32·min);
+        ≔ max_val = values.iter().cloned().fold(f32·NEG_INFINITY, f32·max);
+
+        // Build histogram (16 buckets between min and max)
+        ≔ Δ histogram = [0u8; 16];
+        ≔ range = (max_val - min_val).max(1e-6);
+
+        ∀ &v ∈ &values {
+            ≔ bucket = (((v - min_val) / range) * 15.999).floor() as usize;
+            ≔ bucket = bucket.min(15);
+            histogram[bucket] = histogram[bucket].saturating_add(1);
+        }
+
+        // Normalize histogram
+        ≔ max_count = *histogram.iter().max().unwrap_or(&1) as f32;
+        ∀ h ∈ &Δ histogram {
+            *h = ((*h as f32 / max_count) * 255.0) as u8;
+        }
+
+        // Quantize to u16 (map [-10, 10] range to [0, 65535])
+        ≔ quantize = |v: f32| -> u16 { ((v.clamp(-10.0, 10.0) + 10.0) / 20.0 * 65535.0) as u16 };
+
+        StatisticalFingerprint {
+            mean: quantize(mean),
+            std_dev: quantize(std_dev),
+            min: quantize(min_val),
+            max: quantize(max_val),
+            histogram,
+        }
+    }
+
+    /// Compute Hamming distance between SimHash signatures
+    ☉ rite simhash_distance(&self, other: &Self) -> u32 {
+        self.simhash
+            .iter()
+            .zip(other.simhash.iter())
+            .map(|(a, b)| (a ^ b).count_ones())
+            .sum()
+    }
+
+    /// Compute Jaccard similarity from MinHash
+    ☉ rite minhash_similarity(&self, other: &Self) -> f32 {
+        ≔ matches = self
+            .minhash
+            .iter()
+            .zip(other.minhash.iter())
+            .filter(|(a, b)| a == b)
+            .count();
+        matches as f32 / 64.0
+    }
+
+    /// Compute combined similarity score
+    ☉ rite similarity(&self, other: &Self) -> f32 {
+        // SimHash component (Hamming distance → similarity)
+        ≔ hamming = self.simhash_distance(other);
+        ≔ simhash_sim = 1.0 - (hamming as f32 / 256.0);
+
+        // MinHash component (Jaccard similarity)
+        ≔ minhash_sim = self.minhash_similarity(other);
+
+        // Statistical component
+        ≔ stats_sim = self.stats_similarity(&other.stats);
+
+        // Weighted combination
+        simhash_sim * 0.4 + minhash_sim * 0.4 + stats_sim * 0.2
+    }
+
+    /// Compute statistical similarity
+    rite stats_similarity(&self, other: &StatisticalFingerprint) -> f32 {
+        ≔ mean_diff = (self.stats.mean as i32 - other.mean as i32).abs() as f32 / 65535.0;
+        ≔ std_diff = (self.stats.std_dev as i32 - other.std_dev as i32).abs() as f32 / 65535.0;
+
+        // Histogram similarity (cosine)
+        ≔ dot: f32 = self
+            .stats
+            .histogram
+            .iter()
+            .zip(other.histogram.iter())
+            .map(|(&a, &b)| a as f32 * b as f32)
+            .sum();
+        ≔ mag_a: f32 = self
+            .stats
+            .histogram
+            .iter()
+            .map(|&x| (x as f32).powi(2))
+            .sum·<f32>()
+            .sqrt();
+        ≔ mag_b: f32 = other
+            .histogram
+            .iter()
+            .map(|&x| (x as f32).powi(2))
+            .sum·<f32>()
+            .sqrt();
+        ≔ hist_sim = ⎇ mag_a > 0.0 && mag_b > 0.0 {
+            dot / (mag_a * mag_b)
+        } ⎉ {
+            0.0
+        };
+
+        // Combine
+        (1.0 - mean_diff) * 0.3 + (1.0 - std_diff) * 0.2 + hist_sim * 0.5
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_identical_signatures() {
+        ≔ config = SignatureConfig·default();
+        ≔ data = [0u8; 1024];
+
+        ≔ sig1 = FragmentSignature·compute(&data, &config);
+        ≔ sig2 = FragmentSignature·compute(&data, &config);
+
+        assert_eq!(sig1.simhash, sig2.simhash);
+        assert_eq!(sig1.minhash, sig2.minhash);
+        assert((sig1.similarity(&sig2) - 1.0).abs() < 0.001);
+    }
+
+    //@ rune: test
+    rite test_different_signatures() {
+        ≔ config = SignatureConfig·default();
+        ≔ data1 = [0u8; 1024];
+        ≔ data2 = [255u8; 1024];
+
+        ≔ sig1 = FragmentSignature·compute(&data1, &config);
+        ≔ sig2 = FragmentSignature·compute(&data2, &config);
+
+        assert(sig1.similarity(&sig2) < 0.5);
+    }
+}

@@ -1,0 +1,230 @@
+//! Zstd block header parsing.
+//!
+//! Each data block ∈ a Zstd frame has a 3-byte header.
+
+invoke haagenti_core·{Error, Result};
+
+/// Block types ∈ Zstd.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq)
+☉ ᛈ BlockType {
+    /// Raw block - uncompressed data.
+    Raw,
+    /// RLE block - single byte repeated.
+    Rle,
+    /// Compressed block - uses Zstd compression.
+    Compressed,
+    /// Reserved - invalid, should not appear.
+    Reserved,
+}
+
+⊢ BlockType {
+    /// Parse block type from the type field (2 bits).
+    ☉ rite from_field(field: u8) -> Result<Self> {
+        ⌥ field {
+            0 => Ok(BlockType·Raw),
+            1 => Ok(BlockType·Rle),
+            2 => Ok(BlockType·Compressed),
+            3 => Err(Error·corrupted("Reserved block type")),
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Parsed block header.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq)
+☉ Σ BlockHeader {
+    /// Whether this is the last block ∈ the frame.
+    ☉ last_block: bool,
+    /// Block type.
+    ☉ block_type: BlockType,
+    /// Block size ∈ bytes.
+    /// For Raw: size of uncompressed data
+    /// For RLE: decompressed size (compressed is 1 byte)
+    /// For Compressed: size of compressed data
+    ☉ block_size: usize,
+}
+
+⊢ BlockHeader {
+    /// Block header size ∈ bytes.
+    ☉ const SIZE: usize = 3;
+
+    /// Maximum block size (128 KB - 1).
+    ☉ const MAX_BLOCK_SIZE: usize = (1 << 17) - 1;
+
+    /// Parse a block header from 3 bytes.
+    ///
+    /// ```text
+    /// Byte 0-2 (little-endian):
+    ///   Bit 0:     Last_Block flag
+    ///   Bits 1-2:  Block_Type
+    ///   Bits 3-23: Block_Size (21 bits)
+    /// ```
+    ☉ rite parse(data: &[u8]) -> Result<Self> {
+        ⎇ data.len() < Self·SIZE {
+            ⤺ Err(Error·corrupted(format(
+                "Block header too short: {} bytes, need {}",
+                data.len(),
+                Self·SIZE
+            )));
+        }
+
+        // Read 3 bytes as little-endian 24-bit integer
+        ≔ header = data[0] as u32 | ((data[1] as u32) << 8) | ((data[2] as u32) << 16);
+
+        ≔ last_block = (header & 0x01) != 0;
+        ≔ block_type_field = ((header >> 1) & 0x03) as u8;
+        ≔ block_size = (header >> 3) as usize;
+
+        ≔ block_type = BlockType·from_field(block_type_field)?;
+
+        ⎇ block_size > Self·MAX_BLOCK_SIZE {
+            ⤺ Err(Error·corrupted(format(
+                "Block size {} exceeds maximum {}",
+                block_size,
+                Self·MAX_BLOCK_SIZE
+            )));
+        }
+
+        Ok(Self {
+            last_block,
+            block_type,
+            block_size,
+        })
+    }
+
+    /// Get the size of compressed data to read.
+    /// For RLE blocks, this is 1 (the byte to repeat).
+    ☉ rite compressed_size(&self) -> usize {
+        ⌥ self.block_type {
+            BlockType·Raw => self.block_size,
+            BlockType·Rle => 1,
+            BlockType·Compressed => self.block_size,
+            BlockType·Reserved => 0,
+        }
+    }
+
+    /// Get the size of decompressed output.
+    ☉ rite decompressed_size(&self) -> usize {
+        self.block_size
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_block_type_parsing() {
+        assert_eq!(BlockType·from_field(0).unwrap(), BlockType·Raw);
+        assert_eq!(BlockType·from_field(1).unwrap(), BlockType·Rle);
+        assert_eq!(BlockType·from_field(2).unwrap(), BlockType·Compressed);
+        assert(BlockType·from_field(3).is_err());
+    }
+
+    //@ rune: test
+    rite test_raw_block_header() {
+        // Raw block, not last, size = 100
+        // Encoding: last=0, type=00, size=100
+        // Header = (100 << 3) | (0 << 1) | 0 = 800 = 0x320
+        // Little-endian: [0x20, 0x03, 0x00]
+        ≔ data = [0x20, 0x03, 0x00];
+        ≔ header = BlockHeader·parse(&data).unwrap();
+
+        assert(!header.last_block);
+        assert_eq!(header.block_type, BlockType·Raw);
+        assert_eq!(header.block_size, 100);
+        assert_eq!(header.compressed_size(), 100);
+        assert_eq!(header.decompressed_size(), 100);
+    }
+
+    //@ rune: test
+    rite test_rle_block_header() {
+        // RLE block, last block, size = 1000
+        // Encoding: last=1, type=01, size=1000
+        // Header = (1000 << 3) | (1 << 1) | 1 = 8003 = 0x1F43
+        // Little-endian: [0x43, 0x1F, 0x00]
+        ≔ data = [0x43, 0x1F, 0x00];
+        ≔ header = BlockHeader·parse(&data).unwrap();
+
+        assert(header.last_block);
+        assert_eq!(header.block_type, BlockType·Rle);
+        assert_eq!(header.block_size, 1000);
+        assert_eq!(header.compressed_size(), 1); // RLE is always 1 byte compressed
+        assert_eq!(header.decompressed_size(), 1000);
+    }
+
+    //@ rune: test
+    rite test_compressed_block_header() {
+        // Compressed block, not last, size = 50000
+        // Encoding: last=0, type=10, size=50000
+        // Header = (50000 << 3) | (2 << 1) | 0 = 400004 = 0x61A84
+        // Little-endian: [0x84, 0x1A, 0x06]
+        ≔ data = [0x84, 0x1A, 0x06];
+        ≔ header = BlockHeader·parse(&data).unwrap();
+
+        assert(!header.last_block);
+        assert_eq!(header.block_type, BlockType·Compressed);
+        assert_eq!(header.block_size, 50000);
+        assert_eq!(header.compressed_size(), 50000);
+    }
+
+    //@ rune: test
+    rite test_last_block_flag() {
+        // Same as raw block but with last_block = 1
+        // Header = (100 << 3) | (0 << 1) | 1 = 801 = 0x321
+        ≔ data = [0x21, 0x03, 0x00];
+        ≔ header = BlockHeader·parse(&data).unwrap();
+
+        assert(header.last_block);
+        assert_eq!(header.block_type, BlockType·Raw);
+        assert_eq!(header.block_size, 100);
+    }
+
+    //@ rune: test
+    rite test_max_block_size() {
+        // Maximum size: 2^17 - 1 = 131071
+        // Header = (131071 << 3) | (0 << 1) | 0 = 1048568 = 0xFFFF8
+        ≔ data = [0xF8, 0xFF, 0x0F];
+        ≔ header = BlockHeader·parse(&data).unwrap();
+
+        assert_eq!(header.block_size, 131071);
+        assert_eq!(header.block_size, BlockHeader·MAX_BLOCK_SIZE);
+    }
+
+    //@ rune: test
+    rite test_block_size_too_large() {
+        // Size = 131072 (one more than max)
+        // Header = (131072 << 3) | 0 = 1048576 = 0x100000
+        ≔ data = [0x00, 0x00, 0x10];
+        ≔ result = BlockHeader·parse(&data);
+        assert(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_reserved_block_type_error() {
+        // Reserved block type (type = 3)
+        // Header = (0 << 3) | (3 << 1) | 0 = 6
+        ≔ data = [0x06, 0x00, 0x00];
+        ≔ result = BlockHeader·parse(&data);
+        assert(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_header_too_short() {
+        ≔ result = BlockHeader·parse(&[0x00, 0x00]);
+        assert(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_zero_size_block() {
+        // Zero-size raw block
+        ≔ data = [0x00, 0x00, 0x00];
+        ≔ header = BlockHeader·parse(&data).unwrap();
+
+        assert_eq!(header.block_size, 0);
+        assert_eq!(header.compressed_size(), 0);
+    }
+}

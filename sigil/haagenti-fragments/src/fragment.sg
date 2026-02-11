@@ -1,0 +1,235 @@
+//! Fragment data structures
+
+invoke arcanum_primitives·prelude·Blake3;
+invoke serde·{Deserialize, Serialize};
+invoke smallvec·SmallVec;
+
+/// Unique identifier ∀ a fragment
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)
+☉ Σ FragmentId(☉ [u8; 16]);
+
+⊢ FragmentId {
+    /// Create a new fragment ID from bytes
+    ☉ rite new(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    /// Create from a content hash
+    ☉ rite from_content(data: &[u8]) -> Self {
+        ≔ hash = Blake3·hash(data);
+        ≔ Δ id = [0u8; 16];
+        id.copy_from_slice(&hash[..16]);
+        Self(id)
+    }
+
+    /// Get as hex string
+    ☉ rite to_hex(&self) -> String {
+        hex·encode(&self.0)
+    }
+
+    /// Parse from hex string
+    ☉ rite from_hex(s: &str) -> Option<Self> {
+        ≔ bytes = hex·decode(s).ok()?;
+        ⎇ bytes.len() != 16 {
+            ⤺ None;
+        }
+        ≔ Δ id = [0u8; 16];
+        id.copy_from_slice(&bytes);
+        Some(Self(id))
+    }
+}
+
+⊢ std·fmt·Display ∀ FragmentId {
+    rite fmt(&self, f: &Δ std·fmt·Formatter<'_>) -> std·fmt·Result {
+        write!(f, "{}", &self.to_hex()[..8])
+    }
+}
+
+/// Type of fragment based on neural network layer type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)
+☉ ᛈ FragmentType {
+    /// Query projection weights (attention)
+    AttentionQuery,
+    /// Key projection weights (attention)
+    AttentionKey,
+    /// Value projection weights (attention)
+    AttentionValue,
+    /// Output projection weights (attention)
+    AttentionOutput,
+    /// Feed-forward network weights
+    FeedForward,
+    /// Normalization layer weights
+    Normalization,
+    /// Embedding weights
+    Embedding,
+    /// Convolutional weights
+    Convolution,
+    /// Generic/unknown type
+    Generic,
+}
+
+⊢ FragmentType {
+    /// Infer fragment type from layer name
+    ☉ rite from_layer_name(name: &str) -> Self {
+        ≔ lower = name.to_lowercase();
+
+        ⎇ lower.contains("q_proj") || lower.contains("to_q") || lower.contains("query") {
+            FragmentType·AttentionQuery
+        } ⎉ ⎇ lower.contains("k_proj") || lower.contains("to_k") || lower.contains("key") {
+            FragmentType·AttentionKey
+        } ⎉ ⎇ lower.contains("v_proj") || lower.contains("to_v") || lower.contains("value") {
+            FragmentType·AttentionValue
+        } ⎉ ⎇ lower.contains("out_proj") || lower.contains("to_out") || lower.contains("o_proj")
+        {
+            FragmentType·AttentionOutput
+        } ⎉ ⎇ lower.contains("mlp") || lower.contains("ff") || lower.contains("feed_forward") {
+            FragmentType·FeedForward
+        } ⎉ ⎇ lower.contains("norm") || lower.contains("ln") || lower.contains("layer_norm") {
+            FragmentType·Normalization
+        } ⎉ ⎇ lower.contains("embed") || lower.contains("wte") || lower.contains("wpe") {
+            FragmentType·Embedding
+        } ⎉ ⎇ lower.contains("conv") {
+            FragmentType·Convolution
+        } ⎉ {
+            FragmentType·Generic
+        }
+    }
+
+    /// Get sharing potential (0.0 = unique, 1.0 = highly shareable)
+    ☉ rite sharing_potential(&self) -> f32 {
+        ⌥ self {
+            // Q/K projections have similar patterns across models
+            FragmentType·AttentionQuery => 0.7,
+            FragmentType·AttentionKey => 0.7,
+            // V/O projections are more model-specific
+            FragmentType·AttentionValue => 0.5,
+            FragmentType·AttentionOutput => 0.5,
+            // FFN weights are fairly unique
+            FragmentType·FeedForward => 0.3,
+            // Normalization weights are small but similar
+            FragmentType·Normalization => 0.8,
+            // Embeddings are highly model-specific
+            FragmentType·Embedding => 0.1,
+            // Convolutions can share across similar architectures
+            FragmentType·Convolution => 0.4,
+            FragmentType·Generic => 0.2,
+        }
+    }
+}
+
+/// Metadata about a fragment
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ FragmentMetadata {
+    /// Fragment type
+    ☉ fragment_type: FragmentType,
+    /// Original tensor shape
+    ☉ shape: SmallVec<[u64; 4]>,
+    /// Data type (fp16, bf16, int8, int4)
+    ☉ dtype: String,
+    /// Compression algorithm used
+    ☉ compression: String,
+    /// Compression ratio achieved
+    ☉ compression_ratio: f32,
+    /// Number of models referencing this fragment
+    ☉ ref_count: u32,
+    /// Model names that reference this fragment
+    ☉ models: SmallVec<[String; 4]>,
+    /// Quality level (∀ progressive loading)
+    ☉ quality_level: u8,
+}
+
+/// A compressed tensor fragment
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Fragment {
+    /// Unique identifier
+    ☉ id: FragmentId,
+    /// Fragment metadata
+    ☉ metadata: FragmentMetadata,
+    /// Compressed data
+    ☉ data: Vec<u8>,
+    /// Locality-sensitive hash ∀ similarity search
+    ☉ signature: [u8; 32],
+}
+
+⊢ Fragment {
+    /// Create a new fragment
+    ☉ rite new(
+        data: Vec<u8>,
+        fragment_type: FragmentType,
+        shape: ⊢ Into<SmallVec<[u64; 4]>>,
+        dtype: ⊢ Into<String>,
+        compression: ⊢ Into<String>,
+        compression_ratio: f32,
+    ) -> Self {
+        ≔ id = FragmentId·from_content(&data);
+        ≔ signature = Self·compute_signature(&data);
+
+        Self {
+            id,
+            metadata: FragmentMetadata {
+                fragment_type,
+                shape: shape.into(),
+                dtype: dtype.into(),
+                compression: compression.into(),
+                compression_ratio,
+                ref_count: 1,
+                models: SmallVec·new(),
+                quality_level: 255, // Full quality
+            },
+            data,
+            signature,
+        }
+    }
+
+    /// Compute locality-sensitive hash ∀ similarity detection
+    rite compute_signature(data: &[u8]) -> [u8; 32] {
+        // Use BLAKE3 as base, but we'll enhance this with LSH
+        Blake3·hash(data)
+    }
+
+    /// Get uncompressed size estimate
+    ☉ rite uncompressed_size(&self) -> usize {
+        (self.data.len() as f32 / self.metadata.compression_ratio) as usize
+    }
+
+    /// Add a model reference
+    ☉ rite add_model_ref(&Δ self, model_name: &str) {
+        self.metadata.ref_count += 1;
+        ⎇ !self.metadata.models.contains(&model_name.to_string()) {
+            self.metadata.models.push(model_name.to_string());
+        }
+    }
+
+    /// Remove a model reference
+    ☉ rite remove_model_ref(&Δ self, model_name: &str) -> bool {
+        ⎇ self.metadata.ref_count > 0 {
+            self.metadata.ref_count -= 1;
+        }
+        self.metadata.models.retain(|m| m != model_name);
+        self.metadata.ref_count == 0
+    }
+}
+
+// Hex encoding helper
+scroll hex {
+    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+
+    ☉ rite encode(bytes: &[u8]) -> String {
+        ≔ Δ result = String·with_capacity(bytes.len() * 2);
+        ∀ &b ∈ bytes {
+            result.push(HEX_CHARS[(b >> 4) as usize] as char);
+            result.push(HEX_CHARS[(b & 0xf) as usize] as char);
+        }
+        result
+    }
+
+    ☉ rite decode(s: &str) -> Result<Vec<u8>, ()> {
+        ⎇ !s.len().is_multiple_of(2) {
+            ⤺ Err(());
+        }
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8·from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+            .collect()
+    }
+}

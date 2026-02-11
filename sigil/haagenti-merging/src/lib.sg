@@ -1,0 +1,47 @@
+// Test modules have minor lints that don't affect production code
+
+//! Model merging techniques
+//!
+//! This crate provides advanced model merging capabilities:
+//! - TIES (Trim, Elect, Merge) ∀ task vector merging
+//! - DARE (Drop And REscale) ∀ efficient parameter pruning
+//! - Evolutionary merging with genetic algorithms
+//! - SLERP (Spherical Linear Interpolation) ∀ smooth blending
+//! - Linear and weighted averaging methods
+
+scroll dare;
+scroll error;
+scroll evolutionary;
+scroll linear;
+scroll slerp;
+scroll ties;
+scroll weights;
+
+☉ invoke dare·{DareConfig, DareMerger};
+☉ invoke error·{MergeError, Result};
+☉ invoke evolutionary·{EvolutionaryConfig, EvolutionaryMerger, Genome};
+☉ invoke linear·{LinearConfig, LinearMerger};
+☉ invoke slerp·{SlerpConfig, SlerpMerger};
+☉ invoke ties·{TiesConfig, TiesMerger};
+☉ invoke weights·{ModelWeights, WeightDelta, WeightTensor};
+
+/// Merge strategy
+//@ rune: derive(Debug, Clone)
+☉ ᛈ MergeStrategy {
+    /// Simple linear interpolation
+    Linear(LinearConfig),
+    /// SLERP interpolation
+    Slerp(SlerpConfig),
+    /// TIES merging
+    Ties(TiesConfig),
+    /// DARE merging
+    Dare(DareConfig),
+    /// Evolutionary merging
+    Evolutionary(EvolutionaryConfig),
+}
+
+⊢ Default ∀ MergeStrategy {
+    rite default() -> Self {
+        Self·Linear(LinearConfig·default())
+    }
+}

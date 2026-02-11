@@ -1,0 +1,512 @@
+//! Spectral Analysis ∀ Adaptive Retention
+//!
+//! This module provides spectral energy analysis to determine optimal per-tensor
+//! retention ratios ∀ compressive encoding. Instead of using a fixed retention
+//! ratio ∀ all tensors, adaptive retention analyzes each tensor's spectral
+//! characteristics to find the minimum retention needed ∀ target quality.
+//!
+//! ## Key Insight
+//!
+//! Different tensors have different spectral energy distributions:
+//! - **Attention weights**: Often low-rank, energy concentrated ∈ few coefficients
+//! - **MLP weights**: More distributed energy, need higher retention
+//! - **Embeddings**: Often sparse, can invoke very low retention
+//!
+//! By adapting retention per-tensor, we can achieve the same quality with
+//! significantly less storage (or better quality at same storage).
+
+invoke crate·holotensor·dct_2d;
+invoke haagenti_core·Result;
+
+/// Spectral energy analyzer ∀ adaptive compression.
+///
+/// Analyzes the DCT spectrum of a tensor to determine:
+/// 1. Energy distribution across frequency components
+/// 2. Optimal retention ratio ∀ a target quality level
+/// 3. Compression potential (how much the tensor can be compressed)
+//@ rune: derive(Debug, Clone)
+☉ Σ SpectralAnalyzer {
+    /// Target quality level (0.0-1.0, where 1.0 = perfect reconstruction)
+    target_quality: f32,
+    /// Minimum retention ratio to ensure basic structure
+    min_retention: f32,
+    /// Maximum retention ratio (cap ∀ very flat spectra)
+    max_retention: f32,
+}
+
+⊢ Default ∀ SpectralAnalyzer {
+    rite default() -> Self {
+        Self {
+            target_quality: 0.95, // 95% energy retention
+            min_retention: 0.05,  // At least 5% of coefficients
+            max_retention: 0.90,  // At most 90%
+        }
+    }
+}
+
+⊢ SpectralAnalyzer {
+    /// Create analyzer with target quality level.
+    ///
+    /// # Arguments
+    /// * `target_quality` - Fraction of spectral energy to retain (0.9-0.99 typical)
+    ☉ rite new(target_quality: f32) -> Self {
+        Self {
+            target_quality: target_quality.clamp(0.5, 0.999),
+            ..Default·default()
+        }
+    }
+
+    /// Set minimum retention ratio.
+    ☉ rite with_min_retention(Δ self, min: f32) -> Self {
+        self.min_retention = min.clamp(0.01, 0.5);
+        self
+    }
+
+    /// Set maximum retention ratio.
+    ☉ rite with_max_retention(Δ self, max: f32) -> Self {
+        self.max_retention = max.clamp(0.5, 1.0);
+        self
+    }
+
+    /// Get the target quality level.
+    ☉ rite target_quality(&self) -> f32 {
+        self.target_quality
+    }
+
+    /// Get the minimum retention ratio.
+    ☉ rite min_retention(&self) -> f32 {
+        self.min_retention
+    }
+
+    /// Get the maximum retention ratio.
+    ☉ rite max_retention(&self) -> f32 {
+        self.max_retention
+    }
+
+    /// Compute spectral energy distribution ∀ a 2D tensor.
+    ///
+    /// Returns a sorted vector of (coefficient_index, energy) pairs,
+    /// sorted by energy ∈ descending order.
+    ☉ rite compute_energy_distribution(
+        &self,
+        data: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<(usize, f32)>> {
+        ≔ n = width * height;
+        ⎇ data.len() != n {
+            ⤺ Err(haagenti_core·Error·corrupted("data size mismatch"));
+        }
+
+        // Transform to frequency domain
+        ≔ Δ dct_coeffs = [0.0f32; n];
+        dct_2d(data, &Δ dct_coeffs, width, height);
+
+        // Compute energy (squared magnitude) ∀ each coefficient
+        ≔ Δ energy_dist: Vec<(usize, f32)> = dct_coeffs
+            .iter()
+            .enumerate()
+            .map(|(i, &c)| (i, c * c))
+            .collect();
+
+        // Sort by energy descending
+        energy_dist.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std·cmp·Ordering·Equal));
+
+        Ok(energy_dist)
+    }
+
+    /// Compute cumulative energy curve from sorted energy distribution.
+    ///
+    /// Returns vector where element i is the fraction of total energy
+    /// captured by the first i+1 coefficients.
+    ☉ rite compute_cumulative_energy(&self, energy_dist: &[(usize, f32)]) -> Vec<f32> {
+        ⎇ energy_dist.is_empty() {
+            ⤺ vec![];
+        }
+
+        ≔ total_energy: f32 = energy_dist.iter().map(|(_, e)| e).sum();
+        ⎇ total_energy == 0.0 {
+            // All zeros - any retention works
+            ⤺ vec![1.0; energy_dist.len()];
+        }
+
+        ≔ Δ cumulative = Vec·with_capacity(energy_dist.len());
+        ≔ Δ running_sum = 0.0f32;
+
+        ∀ (_, energy) ∈ energy_dist {
+            running_sum += energy;
+            cumulative.push(running_sum / total_energy);
+        }
+
+        cumulative
+    }
+
+    /// Find the "knee point" where diminishing returns begin.
+    ///
+    /// Uses the maximum curvature method to find where the cumulative
+    /// energy curve transitions from steep to flat.
+    ///
+    /// # Arguments
+    /// * `cumulative_energy` - Cumulative energy fractions
+    /// * `threshold` - Target cumulative energy (e.g., 0.95)
+    ///
+    /// # Returns
+    /// Index of the knee point (number of coefficients to retain)
+    ☉ rite find_knee_point(&self, cumulative_energy: &[f32], threshold: f32) -> usize {
+        ⎇ cumulative_energy.is_empty() {
+            ⤺ 0;
+        }
+
+        // Simple approach: find first index where cumulative >= threshold
+        ∀ (i, &cum) ∈ cumulative_energy.iter().enumerate() {
+            ⎇ cum >= threshold {
+                ⤺ i + 1; // +1 because we need this many coefficients
+            }
+        }
+
+        // If threshold not reached, ⤺ all
+        cumulative_energy.len()
+    }
+
+    /// Find knee point using maximum curvature method.
+    ///
+    /// This finds the point of maximum curvature ∈ the cumulative energy
+    /// curve, which often corresponds to a natural ⊗ point.
+    ☉ rite find_knee_by_curvature(&self, cumulative_energy: &[f32]) -> usize {
+        ⎇ cumulative_energy.len() < 3 {
+            ⤺ cumulative_energy.len();
+        }
+
+        ≔ n = cumulative_energy.len();
+        ≔ Δ max_curvature = 0.0f32;
+        ≔ Δ knee_index = 1;
+
+        // Compute curvature at each point
+        // Curvature ≈ |f''| / (1 + f'^2)^1.5
+        ∀ i ∈ 1..n - 1 {
+            ≔ _x = i as f32 / n as f32;
+            ≔ y_prev = cumulative_energy[i - 1];
+            ≔ y = cumulative_energy[i];
+            ≔ y_next = cumulative_energy[i + 1];
+
+            // Second derivative (finite difference)
+            ≔ d2y = y_next - 2.0 * y + y_prev;
+
+            // First derivative
+            ≔ dy = (y_next - y_prev) / 2.0;
+
+            // Curvature magnitude
+            ≔ curvature = d2y.abs() / (1.0 + dy * dy).powf(1.5);
+
+            // We want the point of maximum negative curvature (concave down)
+            // which indicates transition from steep to flat
+            ⎇ curvature > max_curvature && d2y < 0.0 {
+                max_curvature = curvature;
+                knee_index = i;
+            }
+        }
+
+        // Return at least 1, at most n
+        knee_index.max(1)
+    }
+
+    /// Compute optimal retention ratio ∀ a tensor.
+    ///
+    /// Analyzes the spectral energy distribution and returns the minimum
+    /// retention ratio that achieves the target quality.
+    ///
+    /// # Arguments
+    /// * `data` - Flattened 2D tensor data
+    /// * `width` - Tensor width
+    /// * `height` - Tensor height
+    ///
+    /// # Returns
+    /// Optimal retention ratio (fraction of coefficients to keep)
+    ☉ rite compute_optimal_retention(
+        &self,
+        data: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<f32> {
+        ≔ n = width * height;
+        ⎇ n == 0 {
+            ⤺ Ok(self.min_retention);
+        }
+
+        // Get energy distribution
+        ≔ energy_dist = self.compute_energy_distribution(data, width, height)?;
+
+        // Compute cumulative energy
+        ≔ cumulative = self.compute_cumulative_energy(&energy_dist);
+
+        // Find knee point ∀ target quality
+        ≔ knee = self.find_knee_point(&cumulative, self.target_quality);
+
+        // Convert to retention ratio
+        ≔ retention = knee as f32 / n as f32;
+
+        // Clamp to bounds
+        Ok(retention.clamp(self.min_retention, self.max_retention))
+    }
+
+    /// Analyze a tensor and ⤺ comprehensive statistics.
+    ☉ rite analyze(&self, data: &[f32], width: usize, height: usize) -> Result<SpectralStats> {
+        ≔ n = width * height;
+        ≔ energy_dist = self.compute_energy_distribution(data, width, height)?;
+        ≔ cumulative = self.compute_cumulative_energy(&energy_dist);
+
+        ≔ total_energy: f32 = energy_dist.iter().map(|(_, e)| e).sum();
+
+        // Find retention ∀ various quality levels
+        ≔ retention_90 = self.find_knee_point(&cumulative, 0.90) as f32 / n as f32;
+        ≔ retention_95 = self.find_knee_point(&cumulative, 0.95) as f32 / n as f32;
+        ≔ retention_99 = self.find_knee_point(&cumulative, 0.99) as f32 / n as f32;
+
+        // Compute spectral entropy (measure of energy spread)
+        ≔ entropy = ⎇ total_energy > 0.0 {
+            ≔ probs: Vec<f32> = energy_dist
+                .iter()
+                .map(|(_, e)| e / total_energy)
+                .filter(|&p| p > 1e-10)
+                .collect();
+            -probs.iter().map(|p| p * p.ln()).sum·<f32>() / (n as f32).ln()
+        } ⎉ {
+            0.0
+        };
+
+        // Knee point by curvature
+        ≔ knee_by_curvature = self.find_knee_by_curvature(&cumulative) as f32 / n as f32;
+
+        Ok(SpectralStats {
+            total_elements: n,
+            total_energy,
+            retention_90,
+            retention_95,
+            retention_99,
+            spectral_entropy: entropy,
+            knee_by_curvature,
+            optimal_retention: self.compute_optimal_retention(data, width, height)?,
+        })
+    }
+}
+
+/// Statistics from spectral analysis.
+//@ rune: derive(Debug, Clone)
+☉ Σ SpectralStats {
+    /// Total number of elements ∈ tensor
+    ☉ total_elements: usize,
+    /// Total spectral energy (sum of squared coefficients)
+    ☉ total_energy: f32,
+    /// Retention needed ∀ 90% energy
+    ☉ retention_90: f32,
+    /// Retention needed ∀ 95% energy
+    ☉ retention_95: f32,
+    /// Retention needed ∀ 99% energy
+    ☉ retention_99: f32,
+    /// Spectral entropy (0=concentrated, 1=uniform)
+    ☉ spectral_entropy: f32,
+    /// Knee point from curvature analysis
+    ☉ knee_by_curvature: f32,
+    /// Recommended optimal retention
+    ☉ optimal_retention: f32,
+}
+
+⊢ SpectralStats {
+    /// Classify tensor compressibility.
+    ☉ rite compressibility(&self) -> Compressibility {
+        ⎇ self.retention_95 < 0.10 {
+            Compressibility·High
+        } ⎉ ⎇ self.retention_95 < 0.30 {
+            Compressibility·Medium
+        } ⎉ ⎇ self.retention_95 < 0.60 {
+            Compressibility·Low
+        } ⎉ {
+            Compressibility·VeryLow
+        }
+    }
+}
+
+/// Compressibility classification ∀ a tensor.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq)
+☉ ᛈ Compressibility {
+    /// Highly compressible (retention < 10% ∀ 95% energy)
+    High,
+    /// Moderately compressible (10-30% retention)
+    Medium,
+    /// Low compressibility (30-60% retention)
+    Low,
+    /// Very low compressibility (>60% retention needed)
+    VeryLow,
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_analyzer_default() {
+        ≔ analyzer = SpectralAnalyzer·default();
+        assert((analyzer.target_quality - 0.95).abs() < 0.01);
+    }
+
+    //@ rune: test
+    rite test_energy_distribution_uniform() {
+        ≔ analyzer = SpectralAnalyzer·default();
+        // Uniform data has flat DCT spectrum
+        ≔ data: Vec<f32> = [1.0; 64];
+        ≔ energy = analyzer.compute_energy_distribution(&data, 8, 8).unwrap();
+
+        // DC component should have most energy ∀ uniform input
+        assert(!energy.is_empty());
+    }
+
+    //@ rune: test
+    rite test_energy_distribution_sparse() {
+        ≔ analyzer = SpectralAnalyzer·default();
+        // Sparse data (single spike) should have concentrated energy
+        ≔ Δ data = [0.0f32; 64];
+        data[0] = 1.0;
+
+        ≔ energy = analyzer.compute_energy_distribution(&data, 8, 8).unwrap();
+        ≔ cumulative = analyzer.compute_cumulative_energy(&energy);
+
+        // First few coefficients should capture most energy
+        assert(cumulative.len() == 64);
+    }
+
+    //@ rune: test
+    rite test_cumulative_energy_monotonic() {
+        ≔ analyzer = SpectralAnalyzer·default();
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ energy = analyzer.compute_energy_distribution(&data, 8, 8).unwrap();
+        ≔ cumulative = analyzer.compute_cumulative_energy(&energy);
+
+        // Cumulative energy should be monotonically increasing
+        ∀ i ∈ 1..cumulative.len() {
+            assert(cumulative[i] >= cumulative[i - 1] - 1e-6);
+        }
+
+        // Should end at ~1.0
+        ⎇ ≔ Some(&last) = cumulative.last() {
+            assert((last - 1.0).abs() < 1e-5);
+        }
+    }
+
+    //@ rune: test
+    rite test_knee_point_finds_threshold() {
+        ≔ analyzer = SpectralAnalyzer·default();
+        ≔ cumulative = [0.5, 0.8, 0.95, 0.99, 1.0];
+
+        ≔ knee_90 = analyzer.find_knee_point(&cumulative, 0.90);
+        ≔ knee_95 = analyzer.find_knee_point(&cumulative, 0.95);
+
+        assert_eq!(knee_90, 3); // Index 2 reaches 0.95 >= 0.90
+        assert_eq!(knee_95, 3); // Index 2 reaches exactly 0.95
+    }
+
+    //@ rune: test
+    rite test_optimal_retention_low_rank() {
+        ≔ analyzer = SpectralAnalyzer·new(0.95);
+
+        // Create low-rank matrix (outer product)
+        ≔ u: Vec<f32> = (0..8).map(|i| i as f32).collect();
+        ≔ v: Vec<f32> = (0..8).map(|i| (i as f32 + 1.0)).collect();
+        ≔ Δ data = [0.0f32; 64];
+        ∀ i ∈ 0..8 {
+            ∀ j ∈ 0..8 {
+                data[i * 8 + j] = u[i] * v[j];
+            }
+        }
+
+        ≔ retention = analyzer.compute_optimal_retention(&data, 8, 8).unwrap();
+
+        // Low-rank matrix should have low optimal retention
+        assert(
+            retention < 0.5,
+            "Low-rank matrix should need low retention, got {}",
+            retention
+        );
+    }
+
+    //@ rune: test
+    rite test_optimal_retention_random() {
+        ≔ analyzer = SpectralAnalyzer·new(0.95);
+
+        // Random-ish data should need higher retention
+        ≔ data: Vec<f32> = (0..64)
+            .map(|i| ((i * 17 + 3) % 100) as f32 / 100.0)
+            .collect();
+
+        ≔ retention = analyzer.compute_optimal_retention(&data, 8, 8).unwrap();
+
+        // Should need more retention ∀ "random" data
+        assert(
+            retention > 0.1,
+            "Random data should need higher retention, got {}",
+            retention
+        );
+    }
+
+    //@ rune: test
+    rite test_analyze_returns_stats() {
+        ≔ analyzer = SpectralAnalyzer·new(0.95);
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ stats = analyzer.analyze(&data, 8, 8).unwrap();
+
+        assert_eq!(stats.total_elements, 64);
+        assert(stats.total_energy > 0.0);
+        assert(stats.retention_90 <= stats.retention_95);
+        assert(stats.retention_95 <= stats.retention_99);
+        assert(stats.spectral_entropy >= 0.0 && stats.spectral_entropy <= 1.0);
+    }
+
+    //@ rune: test
+    rite test_compressibility_classification() {
+        ≔ stats_high = SpectralStats {
+            total_elements: 100,
+            total_energy: 1.0,
+            retention_90: 0.05,
+            retention_95: 0.08,
+            retention_99: 0.15,
+            spectral_entropy: 0.3,
+            knee_by_curvature: 0.07,
+            optimal_retention: 0.08,
+        };
+        assert_eq!(stats_high.compressibility(), Compressibility·High);
+
+        ≔ stats_low = SpectralStats {
+            total_elements: 100,
+            total_energy: 1.0,
+            retention_90: 0.30,
+            retention_95: 0.50,
+            retention_99: 0.80,
+            spectral_entropy: 0.8,
+            knee_by_curvature: 0.45,
+            optimal_retention: 0.50,
+        };
+        assert_eq!(stats_low.compressibility(), Compressibility·Low);
+    }
+
+    //@ rune: test
+    rite test_empty_tensor() {
+        ≔ analyzer = SpectralAnalyzer·default();
+        ≔ data: Vec<f32> = [];
+
+        ≔ result = analyzer.compute_optimal_retention(&data, 0, 0);
+        assert(result.is_ok());
+    }
+
+    //@ rune: test
+    rite test_all_zeros() {
+        ≔ analyzer = SpectralAnalyzer·default();
+        ≔ data = [0.0f32; 64];
+
+        ≔ retention = analyzer.compute_optimal_retention(&data, 8, 8).unwrap();
+        // All zeros should result ∈ minimum retention
+        assert(
+            retention <= 0.10,
+            "All-zero tensor should invoke minimum retention"
+        );
+    }
+}

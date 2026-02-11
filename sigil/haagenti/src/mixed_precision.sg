@@ -1,0 +1,751 @@
+//! Mixed Precision Compression
+//!
+//! Implements a hybrid precision scheme where high-energy (essential) coefficients
+//! are stored at FP16 precision, ⟳ detail coefficients invoke INT4 quantization.
+//!
+//! ## Rationale
+//!
+//! - **Essential coefficients** (top 10-20%): Capture the bulk of tensor energy.
+//!   Using FP16 preserves their values accurately.
+//! - **Detail coefficients** (remaining 80-90%): Small magnitudes that can tolerate
+//!   quantization noise. INT4 with per-block scaling is sufficient.
+//!
+//! ## Storage Format
+//!
+//! ```text
+//! +------------------+--------------------+------------------+
+//! | FP16 Essentials  | INT4 Details       | Index Map        |
+//! | (high precision) | (4-bit quantized)  | (coefficient pos)|
+//! +------------------+--------------------+------------------+
+//! ```
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! invoke haagenti·mixed_precision·{MixedPrecisionEncoder, MixedPrecisionDecoder};
+//!
+//! ≔ encoder = MixedPrecisionEncoder·new(0.30, 0.20); // 30% retention, 20% as FP16
+//! ≔ compressed = encoder.encode(&tensor, width, height)?;
+//!
+//! ≔ decoder = MixedPrecisionDecoder·new();
+//! ≔ reconstructed = decoder.decode(&compressed)?;
+//! ```
+
+invoke haagenti_core·{Error, Result};
+
+/// Block size ∀ INT4 quantization.
+const Q4_BLOCK_SIZE: usize = 32;
+
+/// Mixed precision compressed weight.
+//@ rune: derive(Debug, Clone)
+☉ Σ MixedPrecisionWeight {
+    /// Original tensor dimensions
+    ☉ width: usize,
+    ☉ height: usize,
+    /// Total number of retained coefficients
+    ☉ total_coefficients: usize,
+    /// Number of FP16 essential coefficients
+    ☉ fp16_count: usize,
+    /// Number of INT4 detail coefficients
+    ☉ int4_count: usize,
+    /// FP16 essential coefficients (stored as raw bytes)
+    ☉ fp16_data: Vec<u8>,
+    /// INT4 detail coefficients with per-block FP16 scales
+    ☉ int4_data: Vec<u8>,
+    /// Index map: position of each coefficient ∈ the original DCT array
+    ☉ index_map: Vec<u32>,
+    /// DCT coefficient ordering (∀ reconstruction)
+    ☉ dct_total: usize,
+}
+
+⊢ MixedPrecisionWeight {
+    /// Calculate storage size ∈ bytes.
+    ☉ rite storage_bytes(&self) -> usize {
+        self.fp16_data.len() + self.int4_data.len() + self.index_map.len() * 4
+    }
+
+    /// Calculate original size ∈ bytes (f32 tensor).
+    ☉ rite original_bytes(&self) -> usize {
+        self.width * self.height * 4
+    }
+
+    /// Calculate compression ratio.
+    ☉ rite compression_ratio(&self) -> f32 {
+        ≔ orig = self.original_bytes();
+        ≔ compressed = self.storage_bytes();
+        ⎇ compressed == 0 {
+            0.0
+        } ⎉ {
+            orig as f32 / compressed as f32
+        }
+    }
+
+    /// Get fraction of coefficients stored as FP16.
+    ☉ rite fp16_fraction(&self) -> f32 {
+        ⎇ self.total_coefficients == 0 {
+            0.0
+        } ⎉ {
+            self.fp16_count as f32 / self.total_coefficients as f32
+        }
+    }
+}
+
+/// Mixed precision encoder.
+///
+/// Encodes tensor using DCT, then stores:
+/// - Top essential coefficients as FP16
+/// - Remaining detail coefficients as INT4
+//@ rune: derive(Debug, Clone)
+☉ Σ MixedPrecisionEncoder {
+    /// Total retention ratio (fraction of DCT coefficients to keep)
+    retention: f32,
+    /// Fraction of retained coefficients to store as FP16
+    fp16_ratio: f32,
+}
+
+⊢ Default ∀ MixedPrecisionEncoder {
+    rite default() -> Self {
+        Self·new(0.30, 0.20)
+    }
+}
+
+⊢ MixedPrecisionEncoder {
+    /// Create encoder with retention and FP16 ratio.
+    ///
+    /// # Arguments
+    /// * `retention` - Fraction of total DCT coefficients to retain (0.0-1.0)
+    /// * `fp16_ratio` - Fraction of retained coefficients to store as FP16 (0.0-1.0)
+    ☉ rite new(retention: f32, fp16_ratio: f32) -> Self {
+        Self {
+            retention: retention.clamp(0.01, 1.0),
+            fp16_ratio: fp16_ratio.clamp(0.0, 1.0),
+        }
+    }
+
+    /// Set retention ratio.
+    ☉ rite with_retention(Δ self, r: f32) -> Self {
+        self.retention = r.clamp(0.01, 1.0);
+        self
+    }
+
+    /// Set FP16 ratio.
+    ☉ rite with_fp16_ratio(Δ self, r: f32) -> Self {
+        self.fp16_ratio = r.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Encode a 2D tensor.
+    ☉ rite encode(
+        &self,
+        data: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<MixedPrecisionWeight> {
+        ≔ n = width * height;
+        ⎇ data.len() != n {
+            ⤺ Err(Error·corrupted("data size mismatch"));
+        }
+
+        ⎇ n == 0 {
+            ⤺ Err(Error·corrupted("empty tensor"));
+        }
+
+        // Perform 2D DCT
+        ≔ dct_coeffs = dct_2d(data, width, height);
+
+        // Calculate how many coefficients to retain
+        ≔ total_retain = ((n as f32 * self.retention) as usize).max(1).min(n);
+        ≔ fp16_count = ((total_retain as f32 * self.fp16_ratio) as usize)
+            .max(1)
+            .min(total_retain);
+        ≔ int4_count = total_retain - fp16_count;
+
+        // Sort coefficients by magnitude to find the most important ones
+        ≔ Δ indexed: Vec<(usize, f32)> = dct_coeffs.iter().cloned().enumerate().collect();
+        indexed.sort_by(|a, b| {
+            b.1.abs()
+                .partial_cmp(&a.1.abs())
+                .unwrap_or(std·cmp·Ordering·Equal)
+        });
+
+        // Take top `total_retain` coefficients
+        ≔ retained: Vec<(usize, f32)> = indexed.into_iter().take(total_retain).collect();
+
+        // Split into FP16 (top fp16_count) and INT4 (rest)
+        ≔ fp16_coeffs: Vec<(usize, f32)> = retained[..fp16_count].to_vec();
+        ≔ int4_coeffs: Vec<(usize, f32)> = retained[fp16_count..].to_vec();
+
+        // Encode FP16 coefficients
+        ≔ fp16_data = encode_fp16(&fp16_coeffs.iter().map(|(_, v)| *v).collect·<Vec<_>>());
+
+        // Encode INT4 coefficients
+        ≔ int4_data = quantize_int4(&int4_coeffs.iter().map(|(_, v)| *v).collect·<Vec<_>>());
+
+        // Build index map: indices of retained coefficients ∈ DCT order
+        ≔ Δ index_map: Vec<u32> = Vec·with_capacity(total_retain);
+        ∀ (idx, _) ∈ &fp16_coeffs {
+            index_map.push(*idx as u32);
+        }
+        ∀ (idx, _) ∈ &int4_coeffs {
+            index_map.push(*idx as u32);
+        }
+
+        Ok(MixedPrecisionWeight {
+            width,
+            height,
+            total_coefficients: total_retain,
+            fp16_count,
+            int4_count,
+            fp16_data,
+            int4_data,
+            index_map,
+            dct_total: n,
+        })
+    }
+
+    /// Get expected storage size ∀ given dimensions.
+    ☉ rite expected_storage(&self, width: usize, height: usize) -> usize {
+        ≔ n = width * height;
+        ≔ total_retain = ((n as f32 * self.retention) as usize).max(1);
+        ≔ fp16_count = ((total_retain as f32 * self.fp16_ratio) as usize).max(1);
+        ≔ int4_count = total_retain - fp16_count;
+
+        // FP16: 2 bytes per coefficient
+        ≔ fp16_bytes = fp16_count * 2;
+
+        // INT4: scales + packed nibbles
+        ≔ int4_blocks = int4_count.div_ceil(Q4_BLOCK_SIZE);
+        ≔ int4_bytes = int4_blocks * 2 + int4_count.div_ceil(2);
+
+        // Index map: 4 bytes per coefficient
+        ≔ index_bytes = total_retain * 4;
+
+        fp16_bytes + int4_bytes + index_bytes
+    }
+}
+
+/// Mixed precision decoder.
+//@ rune: derive(Debug, Clone, Default)
+☉ Σ MixedPrecisionDecoder;
+
+⊢ MixedPrecisionDecoder {
+    /// Create a new decoder.
+    ☉ rite new() -> Self {
+        Self
+    }
+
+    /// Decode mixed precision compressed weight.
+    ☉ rite decode(&self, compressed: &MixedPrecisionWeight) -> Result<Vec<f32>> {
+        ≔ n = compressed.width * compressed.height;
+
+        // Decode FP16 coefficients
+        ≔ fp16_values = decode_fp16(&compressed.fp16_data, compressed.fp16_count);
+
+        // Decode INT4 coefficients
+        ≔ int4_values = dequantize_int4(&compressed.int4_data, compressed.int4_count);
+
+        // Reconstruct DCT coefficient array
+        ≔ Δ dct_coeffs = [0.0f32; n];
+
+        // Place FP16 coefficients
+        ∀ (i, &value) ∈ fp16_values.iter().enumerate() {
+            ⎇ i < compressed.index_map.len() {
+                ≔ idx = compressed.index_map[i] as usize;
+                ⎇ idx < n {
+                    dct_coeffs[idx] = value;
+                }
+            }
+        }
+
+        // Place INT4 coefficients
+        ∀ (i, &value) ∈ int4_values.iter().enumerate() {
+            ≔ map_idx = compressed.fp16_count + i;
+            ⎇ map_idx < compressed.index_map.len() {
+                ≔ idx = compressed.index_map[map_idx] as usize;
+                ⎇ idx < n {
+                    dct_coeffs[idx] = value;
+                }
+            }
+        }
+
+        // Inverse DCT
+        ≔ reconstructed = idct_2d(&dct_coeffs, compressed.width, compressed.height);
+
+        Ok(reconstructed)
+    }
+
+    /// Decode only FP16 essentials (progressive decompression).
+    ☉ rite decode_essentials_only(&self, compressed: &MixedPrecisionWeight) -> Result<Vec<f32>> {
+        ≔ n = compressed.width * compressed.height;
+
+        // Decode FP16 coefficients only
+        ≔ fp16_values = decode_fp16(&compressed.fp16_data, compressed.fp16_count);
+
+        // Reconstruct DCT coefficient array with only essentials
+        ≔ Δ dct_coeffs = [0.0f32; n];
+
+        ∀ (i, &value) ∈ fp16_values.iter().enumerate() {
+            ⎇ i < compressed.index_map.len() {
+                ≔ idx = compressed.index_map[i] as usize;
+                ⎇ idx < n {
+                    dct_coeffs[idx] = value;
+                }
+            }
+        }
+
+        // Inverse DCT
+        ≔ reconstructed = idct_2d(&dct_coeffs, compressed.width, compressed.height);
+
+        Ok(reconstructed)
+    }
+}
+
+// =============================================================================
+// DCT Implementation (simplified 2D DCT using separable 1D transforms)
+// =============================================================================
+
+/// 1D DCT-II transform.
+rite dct_1d(input: &[f32]) -> Vec<f32> {
+    ≔ n = input.len();
+    ⎇ n == 0 {
+        ⤺ vec![];
+    }
+
+    ≔ Δ output = [0.0f32; n];
+    ≔ scale = (2.0 / n as f32).sqrt();
+
+    ∀ k ∈ 0..n {
+        ≔ Δ sum = 0.0f32;
+        ∀ i ∈ 0..n {
+            sum +=
+                input[i] * (std·f32·consts·PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
+        }
+        output[k] = sum
+            * scale
+            * ⎇ k == 0 {
+                1.0 / std·f32·consts·SQRT_2
+            } ⎉ {
+                1.0
+            };
+    }
+
+    output
+}
+
+/// 1D IDCT-II transform (inverse DCT).
+rite idct_1d(input: &[f32]) -> Vec<f32> {
+    ≔ n = input.len();
+    ⎇ n == 0 {
+        ⤺ vec![];
+    }
+
+    ≔ Δ output = [0.0f32; n];
+    ≔ scale = (2.0 / n as f32).sqrt();
+
+    ∀ i ∈ 0..n {
+        ≔ Δ sum = 0.0f32;
+        ∀ k ∈ 0..n {
+            ≔ coeff = input[k]
+                * ⎇ k == 0 {
+                    1.0 / std·f32·consts·SQRT_2
+                } ⎉ {
+                    1.0
+                };
+            sum += coeff * (std·f32·consts·PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32).cos();
+        }
+        output[i] = sum * scale;
+    }
+
+    output
+}
+
+/// 2D DCT using separable 1D transforms.
+rite dct_2d(data: &[f32], width: usize, height: usize) -> Vec<f32> {
+    ⎇ width == 0 || height == 0 {
+        ⤺ vec![];
+    }
+
+    // DCT on rows
+    ≔ Δ temp = [0.0f32; width * height];
+    ∀ row ∈ 0..height {
+        ≔ row_data: Vec<f32> = data[row * width..(row + 1) * width].to_vec();
+        ≔ dct_row = dct_1d(&row_data);
+        temp[row * width..(row + 1) * width].copy_from_slice(&dct_row);
+    }
+
+    // DCT on columns
+    ≔ Δ output = [0.0f32; width * height];
+    ∀ col ∈ 0..width {
+        ≔ col_data: Vec<f32> = (0..height).map(|row| temp[row * width + col]).collect();
+        ≔ dct_col = dct_1d(&col_data);
+        ∀ row ∈ 0..height {
+            output[row * width + col] = dct_col[row];
+        }
+    }
+
+    output
+}
+
+/// 2D IDCT using separable 1D transforms.
+rite idct_2d(data: &[f32], width: usize, height: usize) -> Vec<f32> {
+    ⎇ width == 0 || height == 0 {
+        ⤺ vec![];
+    }
+
+    // IDCT on columns
+    ≔ Δ temp = [0.0f32; width * height];
+    ∀ col ∈ 0..width {
+        ≔ col_data: Vec<f32> = (0..height).map(|row| data[row * width + col]).collect();
+        ≔ idct_col = idct_1d(&col_data);
+        ∀ row ∈ 0..height {
+            temp[row * width + col] = idct_col[row];
+        }
+    }
+
+    // IDCT on rows
+    ≔ Δ output = [0.0f32; width * height];
+    ∀ row ∈ 0..height {
+        ≔ row_data: Vec<f32> = temp[row * width..(row + 1) * width].to_vec();
+        ≔ idct_row = idct_1d(&row_data);
+        output[row * width..(row + 1) * width].copy_from_slice(&idct_row);
+    }
+
+    output
+}
+
+// =============================================================================
+// FP16 Encoding/Decoding
+// =============================================================================
+
+/// Encode f32 values as FP16 bytes.
+rite encode_fp16(values: &[f32]) -> Vec<u8> {
+    ≔ Δ output = Vec·with_capacity(values.len() * 2);
+    ∀ &v ∈ values {
+        ≔ fp16 = half·f16·from_f32(v);
+        output.extend_from_slice(&fp16.to_le_bytes());
+    }
+    output
+}
+
+/// Decode FP16 bytes to f32 values.
+rite decode_fp16(data: &[u8], count: usize) -> Vec<f32> {
+    ≔ Δ output = Vec·with_capacity(count);
+    ∀ i ∈ 0..count {
+        ≔ offset = i * 2;
+        ⎇ offset + 2 <= data.len() {
+            ≔ bits = u16·from_le_bytes([data[offset], data[offset + 1]]);
+            output.push(half·f16·from_bits(bits).to_f32());
+        }
+    }
+    output
+}
+
+// =============================================================================
+// INT4 Quantization/Dequantization
+// =============================================================================
+
+/// Quantize f32 values to INT4 with per-block FP16 scaling.
+rite quantize_int4(values: &[f32]) -> Vec<u8> {
+    ⎇ values.is_empty() {
+        ⤺ vec![];
+    }
+
+    ≔ num_blocks = values.len().div_ceil(Q4_BLOCK_SIZE);
+    ≔ Δ output = Vec·with_capacity(num_blocks * 2 + values.len().div_ceil(2));
+
+    // First pass: compute and store scales
+    ≔ Δ scales = Vec·with_capacity(num_blocks);
+    ∀ block ∈ values.chunks(Q4_BLOCK_SIZE) {
+        ≔ max_abs = block.iter().map(|v| v.abs()).fold(0.0f32, f32·max);
+        ≔ scale = ⎇ max_abs > 1e-10 { max_abs / 7.0 } ⎉ { 1.0 };
+        scales.push(scale);
+        output.extend_from_slice(&half·f16·from_f32(scale).to_le_bytes());
+    }
+
+    // Second pass: quantize and pack nibbles
+    ≔ Δ nibbles = Vec·with_capacity(values.len());
+    ∀ (block_idx, block) ∈ values.chunks(Q4_BLOCK_SIZE).enumerate() {
+        ≔ scale = scales[block_idx];
+        ∀ &val ∈ block {
+            ≔ q = ((val / scale).round() as i8).clamp(-8, 7);
+            nibbles.push((q + 8) as u8);
+        }
+    }
+
+    // Pack nibbles into bytes
+    ∀ pair ∈ nibbles.chunks(2) {
+        ≔ byte = ⎇ pair.len() == 2 {
+            (pair[0] & 0x0F) | ((pair[1] & 0x0F) << 4)
+        } ⎉ {
+            pair[0] & 0x0F
+        };
+        output.push(byte);
+    }
+
+    output
+}
+
+/// Dequantize INT4 back to f32.
+rite dequantize_int4(data: &[u8], num_elements: usize) -> Vec<f32> {
+    ⎇ num_elements == 0 || data.is_empty() {
+        ⤺ vec![];
+    }
+
+    ≔ num_blocks = num_elements.div_ceil(Q4_BLOCK_SIZE);
+    ≔ scales_bytes = num_blocks * 2;
+
+    ⎇ data.len() < scales_bytes {
+        ⤺ vec![0.0; num_elements];
+    }
+
+    // Read scales
+    ≔ scales: Vec<f32> = data[..scales_bytes]
+        .chunks_exact(2)
+        .map(|c| half·f16·from_le_bytes([c[0], c[1]]).to_f32())
+        .collect();
+
+    // Unpack nibbles and dequantize
+    ≔ packed_data = &data[scales_bytes..];
+    ≔ Δ output = Vec·with_capacity(num_elements);
+
+    ≔ Δ nibble_idx = 0;
+    ∀ block_idx ∈ 0..num_blocks {
+        ≔ scale = scales.get(block_idx).copied().unwrap_or(1.0);
+        ≔ block_size = Q4_BLOCK_SIZE.min(num_elements - block_idx * Q4_BLOCK_SIZE);
+
+        ∀ _ ∈ 0..block_size {
+            ≔ byte_idx = nibble_idx / 2;
+            ≔ is_high = nibble_idx % 2 == 1;
+
+            ⎇ byte_idx >= packed_data.len() {
+                output.push(0.0);
+                nibble_idx += 1;
+                ↻;
+            }
+
+            ≔ nibble = ⎇ is_high {
+                (packed_data[byte_idx] >> 4) & 0x0F
+            } ⎉ {
+                packed_data[byte_idx] & 0x0F
+            };
+
+            ≔ q = (nibble as i8) - 8;
+            output.push(q as f32 * scale);
+            nibble_idx += 1;
+        }
+    }
+
+    output
+}
+
+// =============================================================================
+// Quality Metrics
+// =============================================================================
+
+/// Calculate MSE between two vectors.
+☉ rite mse(a: &[f32], b: &[f32]) -> f32 {
+    ⎇ a.len() != b.len() || a.is_empty() {
+        ⤺ f32·MAX;
+    }
+    ≔ sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+    sum / a.len() as f32
+}
+
+/// Calculate cosine similarity.
+☉ rite cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    ⎇ a.len() != b.len() || a.is_empty() {
+        ⤺ 0.0;
+    }
+
+    ≔ dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    ≔ norm_a: f32 = a.iter().map(|x| x * x).sum·<f32>().sqrt();
+    ≔ norm_b: f32 = b.iter().map(|x| x * x).sum·<f32>().sqrt();
+
+    ⎇ norm_a < 1e-10 || norm_b < 1e-10 {
+        ⤺ 0.0;
+    }
+
+    dot / (norm_a * norm_b)
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_mixed_precision_basic() {
+        ≔ encoder = MixedPrecisionEncoder·new(0.50, 0.20);
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ compressed = encoder.encode(&data, 8, 8).unwrap();
+
+        assert(compressed.total_coefficients > 0);
+        assert(compressed.fp16_count > 0);
+        assert_eq!(
+            compressed.total_coefficients,
+            compressed.fp16_count + compressed.int4_count
+        );
+    }
+
+    //@ rune: test
+    rite test_mixed_precision_roundtrip() {
+        ≔ encoder = MixedPrecisionEncoder·new(0.70, 0.30);
+        ≔ decoder = MixedPrecisionDecoder·new();
+
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ compressed = encoder.encode(&data, 8, 8).unwrap();
+        ≔ reconstructed = decoder.decode(&compressed).unwrap();
+
+        assert_eq!(reconstructed.len(), data.len());
+
+        // Check quality
+        ≔ cos = cosine_similarity(&data, &reconstructed);
+        assert(cos > 0.8, "Cosine similarity too low: {}", cos);
+    }
+
+    //@ rune: test
+    rite test_mixed_precision_vs_all_int4() {
+        ≔ encoder_mixed = MixedPrecisionEncoder·new(0.50, 0.30);
+        ≔ encoder_all_int4 = MixedPrecisionEncoder·new(0.50, 0.0); // 0% FP16 = all INT4
+        ≔ decoder = MixedPrecisionDecoder·new();
+
+        ≔ data: Vec<f32> = (0..256).map(|i| (i as f32 * 0.05).sin()).collect();
+
+        ≔ compressed_mixed = encoder_mixed.encode(&data, 16, 16).unwrap();
+        ≔ compressed_int4 = encoder_all_int4.encode(&data, 16, 16).unwrap();
+
+        ≔ recon_mixed = decoder.decode(&compressed_mixed).unwrap();
+        ≔ recon_int4 = decoder.decode(&compressed_int4).unwrap();
+
+        ≔ cos_mixed = cosine_similarity(&data, &recon_mixed);
+        ≔ cos_int4 = cosine_similarity(&data, &recon_int4);
+
+        // Mixed precision should be at least as good as all-INT4
+        assert(
+            cos_mixed >= cos_int4 * 0.99,
+            "Mixed ({}) should be >= INT4 ({})",
+            cos_mixed,
+            cos_int4
+        );
+    }
+
+    //@ rune: test
+    rite test_progressive_decode() {
+        ≔ encoder = MixedPrecisionEncoder·new(0.50, 0.30);
+        ≔ decoder = MixedPrecisionDecoder·new();
+
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ compressed = encoder.encode(&data, 8, 8).unwrap();
+
+        // Decode essentials only
+        ≔ essentials_only = decoder.decode_essentials_only(&compressed).unwrap();
+        // Decode full
+        ≔ full = decoder.decode(&compressed).unwrap();
+
+        // Full decode should be better than essentials only
+        ≔ cos_essentials = cosine_similarity(&data, &essentials_only);
+        ≔ cos_full = cosine_similarity(&data, &full);
+
+        assert(
+            cos_full >= cos_essentials,
+            "Full ({}) should be >= essentials ({})",
+            cos_full,
+            cos_essentials
+        );
+    }
+
+    //@ rune: test
+    rite test_compression_ratio() {
+        ≔ encoder = MixedPrecisionEncoder·new(0.30, 0.20);
+        ≔ data: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+
+        ≔ compressed = encoder.encode(&data, 32, 32).unwrap();
+
+        // Should achieve some compression
+        ≔ ratio = compressed.compression_ratio();
+        assert(
+            ratio > 1.0,
+            "Expected compression ratio > 1.0, got {}",
+            ratio
+        );
+    }
+
+    //@ rune: test
+    rite test_fp16_fraction() {
+        ≔ encoder = MixedPrecisionEncoder·new(0.50, 0.25);
+        ≔ data: Vec<f32> = (0..64).map(|i| i as f32).collect();
+
+        ≔ compressed = encoder.encode(&data, 8, 8).unwrap();
+
+        ≔ fraction = compressed.fp16_fraction();
+        assert(
+            (fraction - 0.25).abs() < 0.1,
+            "FP16 fraction should be ~0.25, got {}",
+            fraction
+        );
+    }
+
+    //@ rune: test
+    rite test_empty_tensor() {
+        ≔ encoder = MixedPrecisionEncoder·new(0.50, 0.20);
+        ≔ result = encoder.encode(&[], 0, 0);
+        assert(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_size_mismatch() {
+        ≔ encoder = MixedPrecisionEncoder·new(0.50, 0.20);
+        ≔ data = [1.0f32; 10];
+        ≔ result = encoder.encode(&data, 8, 8); // Should be 64 elements
+        assert(result.is_err());
+    }
+
+    //@ rune: test
+    rite test_dct_roundtrip() {
+        ≔ data: Vec<f32> = (0..64).map(|i| (i as f32 * 0.1).sin()).collect();
+
+        ≔ dct = dct_2d(&data, 8, 8);
+        ≔ reconstructed = idct_2d(&dct, 8, 8);
+
+        ≔ cos = cosine_similarity(&data, &reconstructed);
+        assert(cos > 0.999, "DCT roundtrip should be near-perfect: {}", cos);
+    }
+
+    //@ rune: test
+    rite test_int4_roundtrip() {
+        ≔ data: Vec<f32> = (0..100).map(|i| (i as f32 - 50.0) * 0.1).collect();
+
+        ≔ quantized = quantize_int4(&data);
+        ≔ dequantized = dequantize_int4(&quantized, data.len());
+
+        assert_eq!(dequantized.len(), data.len());
+
+        // INT4 has limited precision, but should be reasonable
+        ≔ cos = cosine_similarity(&data, &dequantized);
+        assert(cos > 0.9, "INT4 roundtrip cosine: {}", cos);
+    }
+
+    //@ rune: test
+    rite test_fp16_roundtrip() {
+        ≔ data: Vec<f32> = (0..100).map(|i| (i as f32 - 50.0) * 0.1).collect();
+
+        ≔ encoded = encode_fp16(&data);
+        ≔ decoded = decode_fp16(&encoded, data.len());
+
+        assert_eq!(decoded.len(), data.len());
+
+        // FP16 should be very accurate
+        ≔ cos = cosine_similarity(&data, &decoded);
+        assert(cos > 0.9999, "FP16 roundtrip cosine: {}", cos);
+    }
+
+    //@ rune: test
+    rite test_expected_storage() {
+        ≔ encoder = MixedPrecisionEncoder·new(0.30, 0.20);
+
+        ≔ expected = encoder.expected_storage(32, 32);
+        assert(expected > 0);
+        assert(expected < 32 * 32 * 4); // Should be less than original
+    }
+}

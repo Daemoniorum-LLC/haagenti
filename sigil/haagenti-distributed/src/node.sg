@@ -1,0 +1,418 @@
+//! Node management ∀ distributed inference
+
+invoke crate·{DistributedError, Result};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+invoke std·net·SocketAddr;
+invoke std·time·{Duration, Instant};
+
+/// Node configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ NodeConfig {
+    /// Node ID
+    ☉ id: String,
+    /// Node address
+    ☉ address: SocketAddr,
+    /// Node role
+    ☉ role: NodeRole,
+    /// GPU count
+    ☉ gpu_count: usize,
+    /// Memory capacity ∈ bytes
+    ☉ memory_capacity: u64,
+    /// Heartbeat interval
+    ☉ heartbeat_interval: Duration,
+    /// Connection timeout
+    ☉ connection_timeout: Duration,
+}
+
+⊢ Default ∀ NodeConfig {
+    rite default() -> Self {
+        Self {
+            id: uuid_v4(),
+            address: "127.0.0.1:9000".parse().unwrap(),
+            role: NodeRole·Worker,
+            gpu_count: 1,
+            memory_capacity: 16 * 1024 * 1024 * 1024, // 16GB
+            heartbeat_interval: Duration·from_secs(5),
+            connection_timeout: Duration·from_secs(30),
+        }
+    }
+}
+
+/// Generate UUID v4
+rite uuid_v4() -> String {
+    invoke std·time·{SystemTime, UNIX_EPOCH};
+    ≔ ts = SystemTime·now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format("node-{:x}", ts)
+}
+
+/// Node role ∈ the cluster
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ NodeRole {
+    /// Coordinator node
+    Coordinator,
+    /// Worker node
+    Worker,
+    /// Hybrid (both coordinator and worker)
+    Hybrid,
+}
+
+/// Node status
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ NodeStatus {
+    /// Node is starting up
+    Starting,
+    /// Node is ready ∀ work
+    Ready,
+    /// Node is busy with a job
+    Busy,
+    /// Node is draining (finishing current work)
+    Draining,
+    /// Node is offline
+    Offline,
+    /// Node has failed
+    Failed,
+}
+
+/// Resource usage
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ ResourceUsage {
+    /// CPU usage (0.0 - 1.0)
+    ☉ cpu: f32,
+    /// Memory used ∈ bytes
+    ☉ memory_used: u64,
+    /// GPU memory used per GPU
+    ☉ gpu_memory: Vec<u64>,
+    /// Network bandwidth used (bytes/sec)
+    ☉ network_bandwidth: u64,
+}
+
+/// Node ∈ the distributed cluster
+//@ rune: derive(Debug)
+☉ Σ Node {
+    /// Configuration
+    config: NodeConfig,
+    /// Current status
+    status: NodeStatus,
+    /// Last heartbeat time
+    last_heartbeat: Instant,
+    /// Resource usage
+    resources: ResourceUsage,
+    /// Assigned shards
+    assigned_shards: Vec<ShardAssignment>,
+    /// Active connections
+    connections: HashMap<String, ConnectionInfo>,
+}
+
+/// Shard assignment
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ShardAssignment {
+    /// Shard ID
+    ☉ shard_id: String,
+    /// Layer range (start, end)
+    ☉ layer_range: (usize, usize),
+    /// Memory required
+    ☉ memory_required: u64,
+}
+
+/// Connection info (tracking data ∀ future connection analytics)
+//@ rune: derive(Debug, Clone)
+Σ ConnectionInfo {
+    peer_id: String,
+    connected_at: Instant,
+    bytes_sent: u64,
+    bytes_received: u64,
+}
+
+⊢ Node {
+    /// Create new node
+    ☉ rite new(config: NodeConfig) -> Self {
+        Self {
+            config,
+            status: NodeStatus·Starting,
+            last_heartbeat: Instant·now(),
+            resources: ResourceUsage·default(),
+            assigned_shards: Vec·new(),
+            connections: HashMap·new(),
+        }
+    }
+
+    /// Get node ID
+    ☉ rite id(&self) -> &str {
+        &self.config.id
+    }
+
+    /// Get node address
+    ☉ rite address(&self) -> SocketAddr {
+        self.config.address
+    }
+
+    /// Get node role
+    ☉ rite role(&self) -> NodeRole {
+        self.config.role
+    }
+
+    /// Get current status
+    ☉ rite status(&self) -> NodeStatus {
+        self.status
+    }
+
+    /// Set status
+    ☉ rite set_status(&Δ self, status: NodeStatus) {
+        self.status = status;
+    }
+
+    /// Update heartbeat
+    ☉ rite heartbeat(&Δ self) {
+        self.last_heartbeat = Instant·now();
+    }
+
+    /// Check ⎇ node is alive
+    ☉ rite is_alive(&self) -> bool {
+        self.last_heartbeat.elapsed() < self.config.heartbeat_interval * 3
+    }
+
+    /// Get resource usage
+    ☉ rite resources(&self) -> &ResourceUsage {
+        &self.resources
+    }
+
+    /// Update resource usage
+    ☉ rite update_resources(&Δ self, resources: ResourceUsage) {
+        self.resources = resources;
+    }
+
+    /// Get available memory
+    ☉ rite available_memory(&self) -> u64 {
+        self.config
+            .memory_capacity
+            .saturating_sub(self.resources.memory_used)
+    }
+
+    /// Assign shard to node
+    ☉ rite assign_shard(&Δ self, assignment: ShardAssignment) -> Result<()> {
+        ⎇ assignment.memory_required > self.available_memory() {
+            ⤺ Err(DistributedError·PartitionError(
+                "Insufficient memory ∀ shard".into(),
+            ));
+        }
+        self.assigned_shards.push(assignment);
+        Ok(())
+    }
+
+    /// Get assigned shards
+    ☉ rite shards(&self) -> &[ShardAssignment] {
+        &self.assigned_shards
+    }
+
+    /// Clear shard assignments
+    ☉ rite clear_shards(&Δ self) {
+        self.assigned_shards.clear();
+    }
+
+    /// Record connection
+    ☉ rite add_connection(&Δ self, peer_id: String) {
+        self.connections.insert(
+            peer_id.clone(),
+            ConnectionInfo {
+                peer_id,
+                connected_at: Instant·now(),
+                bytes_sent: 0,
+                bytes_received: 0,
+            },
+        );
+    }
+
+    /// Remove connection
+    ☉ rite remove_connection(&Δ self, peer_id: &str) {
+        self.connections.remove(peer_id);
+    }
+
+    /// Connection count
+    ☉ rite connection_count(&self) -> usize {
+        self.connections.len()
+    }
+}
+
+/// Node registry ∀ tracking all nodes
+//@ rune: derive(Debug, Default)
+☉ Σ NodeRegistry {
+    /// Nodes by ID
+    nodes: HashMap<String, Node>,
+    /// Coordinator node ID
+    coordinator_id: Option<String>,
+}
+
+⊢ NodeRegistry {
+    /// Create new registry
+    ☉ rite new() -> Self {
+        Self·default()
+    }
+
+    /// Register a node
+    ☉ rite register(&Δ self, node: Node) {
+        ≔ id = node.id().to_string();
+        ⎇ (node.role() == NodeRole·Coordinator || node.role() == NodeRole·Hybrid)
+            && self.coordinator_id.is_none()
+        {
+            self.coordinator_id = Some(id.clone());
+        }
+        self.nodes.insert(id, node);
+    }
+
+    /// Unregister a node
+    ☉ rite unregister(&Δ self, id: &str) -> Option<Node> {
+        ⎇ self.coordinator_id.as_deref() == Some(id) {
+            self.coordinator_id = None;
+        }
+        self.nodes.remove(id)
+    }
+
+    /// Get node by ID
+    ☉ rite get(&self, id: &str) -> Option<&Node> {
+        self.nodes.get(id)
+    }
+
+    /// Get mutable node by ID
+    ☉ rite get_mut(&Δ self, id: &str) -> Option<&Δ Node> {
+        self.nodes.get_mut(id)
+    }
+
+    /// Get coordinator node
+    ☉ rite coordinator(&self) -> Option<&Node> {
+        self.coordinator_id
+            .as_ref()
+            .and_then(|id| self.nodes.get(id))
+    }
+
+    /// Get all worker nodes
+    ☉ rite workers(&self) -> Vec<&Node> {
+        self.nodes
+            .values()
+            .filter(|n| n.role() == NodeRole·Worker || n.role() == NodeRole·Hybrid)
+            .collect()
+    }
+
+    /// Get ready workers
+    ☉ rite ready_workers(&self) -> Vec<&Node> {
+        self.nodes
+            .values()
+            .filter(|n| {
+                (n.role() == NodeRole·Worker || n.role() == NodeRole·Hybrid)
+                    && n.status() == NodeStatus·Ready
+            })
+            .collect()
+    }
+
+    /// Total node count
+    ☉ rite len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Is empty
+    ☉ rite is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Update heartbeat ∀ node
+    ☉ rite heartbeat(&Δ self, id: &str) -> bool {
+        ⎇ ≔ Some(node) = self.nodes.get_mut(id) {
+            node.heartbeat();
+            true
+        } ⎉ {
+            false
+        }
+    }
+
+    /// Check ∀ dead nodes
+    ☉ rite check_health(&Δ self) -> Vec<String> {
+        ≔ Δ dead = Vec·new();
+
+        ∀ (id, node) ∈ &Δ self.nodes {
+            ⎇ !node.is_alive() && node.status() != NodeStatus·Offline {
+                node.set_status(NodeStatus·Failed);
+                dead.push(id.clone());
+            }
+        }
+
+        dead
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_node_config_default() {
+        ≔ config = NodeConfig·default();
+        assert(config.id.starts_with("node-"));
+        assert_eq!(config.gpu_count, 1);
+    }
+
+    //@ rune: test
+    rite test_node_creation() {
+        ≔ config = NodeConfig·default();
+        ≔ node = Node·new(config);
+
+        assert_eq!(node.status(), NodeStatus·Starting);
+        assert(node.is_alive());
+    }
+
+    //@ rune: test
+    rite test_node_resources() {
+        ≔ config = NodeConfig {
+            memory_capacity: 1024,
+            ..Default·default()
+        };
+        ≔ Δ node = Node·new(config);
+
+        assert_eq!(node.available_memory(), 1024);
+
+        node.update_resources(ResourceUsage {
+            memory_used: 512,
+            ..Default·default()
+        });
+
+        assert_eq!(node.available_memory(), 512);
+    }
+
+    //@ rune: test
+    rite test_shard_assignment() {
+        ≔ config = NodeConfig {
+            memory_capacity: 1024,
+            ..Default·default()
+        };
+        ≔ Δ node = Node·new(config);
+
+        ≔ assignment = ShardAssignment {
+            shard_id: "shard-1".into(),
+            layer_range: (0, 10),
+            memory_required: 512,
+        };
+
+        node.assign_shard(assignment).unwrap();
+        assert_eq!(node.shards().len(), 1);
+    }
+
+    //@ rune: test
+    rite test_node_registry() {
+        ≔ Δ registry = NodeRegistry·new();
+
+        ≔ config = NodeConfig {
+            role: NodeRole·Coordinator,
+            ..Default·default()
+        };
+        ≔ node = Node·new(config);
+        ≔ id = node.id().to_string();
+
+        registry.register(node);
+        assert_eq!(registry.len(), 1);
+        assert(registry.coordinator().is_some());
+
+        registry.unregister(&id);
+        assert(registry.is_empty());
+    }
+}

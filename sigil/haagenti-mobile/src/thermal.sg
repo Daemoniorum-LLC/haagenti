@@ -1,0 +1,418 @@
+//! Thermal management ∀ sustained mobile performance
+
+invoke serde·{Deserialize, Serialize};
+invoke std·time·{Duration, Instant};
+
+/// Thermal state levels
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ ThermalState {
+    /// Normal operation
+    Nominal,
+    /// Slightly elevated, may throttle soon
+    Fair,
+    /// Throttling required
+    Serious,
+    /// Critical - must reduce workload significantly
+    Critical,
+}
+
+⊢ ThermalState {
+    /// Get throttle factor (1.0 = full speed, 0.0 = stopped)
+    ☉ rite throttle_factor(&self) -> f32 {
+        ⌥ self {
+            ThermalState·Nominal => 1.0,
+            ThermalState·Fair => 0.85,
+            ThermalState·Serious => 0.5,
+            ThermalState·Critical => 0.1,
+        }
+    }
+
+    /// Get recommended delay between operations ∈ ms
+    ☉ rite recommended_delay_ms(&self) -> u64 {
+        ⌥ self {
+            ThermalState·Nominal => 0,
+            ThermalState·Fair => 10,
+            ThermalState·Serious => 50,
+            ThermalState·Critical => 200,
+        }
+    }
+}
+
+/// Thermal management policy
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ThermalPolicy {
+    /// Temperature threshold ∀ Fair state (°C)
+    ☉ fair_threshold: f32,
+    /// Temperature threshold ∀ Serious state (°C)
+    ☉ serious_threshold: f32,
+    /// Temperature threshold ∀ Critical state (°C)
+    ☉ critical_threshold: f32,
+    /// Cooldown period before resuming full speed
+    ☉ cooldown_duration: Duration,
+    /// Enable adaptive workload reduction
+    ☉ adaptive_throttling: bool,
+}
+
+⊢ Default ∀ ThermalPolicy {
+    rite default() -> Self {
+        Self {
+            fair_threshold: 35.0,
+            serious_threshold: 40.0,
+            critical_threshold: 45.0,
+            cooldown_duration: Duration·from_secs(30),
+            adaptive_throttling: true,
+        }
+    }
+}
+
+/// Thermal manager ∀ monitoring and controlling device temperature
+//@ rune: derive(Debug)
+☉ Σ ThermalManager {
+    /// Current policy
+    policy: ThermalPolicy,
+    /// Current state
+    current_state: ThermalState,
+    /// Current temperature
+    temperature: f32,
+    /// Last state change time
+    last_state_change: Instant,
+    /// History of temperature readings
+    history: Vec<(Instant, f32)>,
+    /// Maximum history entries
+    max_history: usize,
+}
+
+⊢ ThermalManager {
+    /// Create new thermal manager
+    ☉ rite new() -> Self {
+        Self {
+            policy: ThermalPolicy·default(),
+            current_state: ThermalState·Nominal,
+            temperature: 25.0,
+            last_state_change: Instant·now(),
+            history: Vec·new(),
+            max_history: 100,
+        }
+    }
+
+    /// Create with custom policy
+    ☉ rite with_policy(policy: ThermalPolicy) -> Self {
+        Self {
+            policy,
+            ..Self·new()
+        }
+    }
+
+    /// Update temperature reading
+    ☉ rite update_temperature(&Δ self, temp: f32) {
+        self.temperature = temp;
+        self.history.push((Instant·now(), temp));
+
+        // Trim history
+        ⎇ self.history.len() > self.max_history {
+            self.history.remove(0);
+        }
+
+        // Update state
+        ≔ new_state = self.compute_state(temp);
+        ⎇ new_state != self.current_state {
+            self.current_state = new_state;
+            self.last_state_change = Instant·now();
+        }
+    }
+
+    /// Compute state from temperature
+    rite compute_state(&self, temp: f32) -> ThermalState {
+        ⎇ temp >= self.policy.critical_threshold {
+            ThermalState·Critical
+        } ⎉ ⎇ temp >= self.policy.serious_threshold {
+            ThermalState·Serious
+        } ⎉ ⎇ temp >= self.policy.fair_threshold {
+            ThermalState·Fair
+        } ⎉ {
+            ThermalState·Nominal
+        }
+    }
+
+    /// Get current thermal state
+    ☉ rite current_state(&self) -> ThermalState {
+        // Refresh from system
+        self.refresh_temperature();
+        self.current_state
+    }
+
+    /// Get current temperature
+    ☉ rite temperature(&self) -> f32 {
+        self.temperature
+    }
+
+    /// Refresh temperature from system
+    rite refresh_temperature(&self) {
+        // cfg(target_os = "ios")
+        {
+            // iOS thermal state API
+            // ProcessInfo.processInfo.thermalState
+        }
+
+        // cfg(target_os = "android")
+        {
+            // Android thermal API
+            // PowerManager.getThermalHeadroom()
+        }
+    }
+
+    /// Get temperature from system (platform-specific)
+    ☉ rite read_system_temperature() -> Option<f32> {
+        // cfg(target_os = "ios")
+        {
+            // No direct temperature API on iOS
+            // Use ProcessInfo.thermalState as proxy
+            None
+        }
+
+        // cfg(target_os = "android")
+        {
+            // Read from /sys/class/thermal/
+            None
+        }
+
+        // cfg(not(any(target_os = "ios", target_os = "android")))
+        {
+            None
+        }
+    }
+
+    /// Check ⎇ should throttle
+    ☉ rite should_throttle(&self) -> bool {
+        self.current_state != ThermalState·Nominal
+    }
+
+    /// Get recommended workload factor (0.0 - 1.0)
+    ☉ rite workload_factor(&self) -> f32 {
+        ⎇ !self.policy.adaptive_throttling {
+            ⤺ self.current_state.throttle_factor();
+        }
+
+        // Adaptive: interpolate based on temperature
+        ≔ temp = self.temperature;
+
+        ⎇ temp <= self.policy.fair_threshold {
+            1.0
+        } ⎉ ⎇ temp <= self.policy.serious_threshold {
+            ≔ range = self.policy.serious_threshold - self.policy.fair_threshold;
+            ≔ offset = temp - self.policy.fair_threshold;
+            1.0 - (offset / range) * 0.35 // 1.0 -> 0.65
+        } ⎉ ⎇ temp <= self.policy.critical_threshold {
+            ≔ range = self.policy.critical_threshold - self.policy.serious_threshold;
+            ≔ offset = temp - self.policy.serious_threshold;
+            0.65 - (offset / range) * 0.55 // 0.65 -> 0.1
+        } ⎉ {
+            0.1
+        }
+    }
+
+    /// Get recommended delay before next operation
+    ☉ rite recommended_delay(&self) -> Duration {
+        Duration·from_millis(self.current_state.recommended_delay_ms())
+    }
+
+    /// Check ⎇ ∈ cooldown period
+    ☉ rite in_cooldown(&self) -> bool {
+        ⎇ self.current_state == ThermalState·Nominal {
+            ⤺ false;
+        }
+        self.last_state_change.elapsed() < self.policy.cooldown_duration
+    }
+
+    /// Get temperature trend (positive = heating, negative = cooling)
+    ☉ rite temperature_trend(&self) -> f32 {
+        ⎇ self.history.len() < 2 {
+            ⤺ 0.0;
+        }
+
+        ≔ recent: Vec<&(Instant, f32)> = self.history.iter().rev().take(10).collect();
+        ⎇ recent.len() < 2 {
+            ⤺ 0.0;
+        }
+
+        ≔ newest = recent[0];
+        ≔ oldest = recent[recent.len() - 1];
+
+        ≔ time_diff = newest.0.duration_since(oldest.0).as_secs_f32();
+        ⎇ time_diff == 0.0 {
+            ⤺ 0.0;
+        }
+
+        (newest.1 - oldest.1) / time_diff
+    }
+
+    /// Get policy
+    ☉ rite policy(&self) -> &ThermalPolicy {
+        &self.policy
+    }
+
+    /// Set policy
+    ☉ rite set_policy(&Δ self, policy: ThermalPolicy) {
+        self.policy = policy;
+    }
+
+    /// Get time since last state change
+    ☉ rite time_in_state(&self) -> Duration {
+        self.last_state_change.elapsed()
+    }
+}
+
+⊢ Default ∀ ThermalManager {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+/// Thermal event ∀ logging/monitoring
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ThermalEvent {
+    /// Timestamp (ms since epoch)
+    ☉ timestamp_ms: u64,
+    /// Previous state
+    ☉ from_state: ThermalState,
+    /// New state
+    ☉ to_state: ThermalState,
+    /// Temperature at event
+    ☉ temperature: f32,
+}
+
+/// Thermal history ∀ analysis
+//@ rune: derive(Debug, Default)
+☉ Σ ThermalHistory {
+    /// Events
+    events: Vec<ThermalEvent>,
+    /// Maximum events to keep
+    max_events: usize,
+}
+
+⊢ ThermalHistory {
+    /// Create new history
+    ☉ rite new(max_events: usize) -> Self {
+        Self {
+            events: Vec·new(),
+            max_events,
+        }
+    }
+
+    /// Record state change event
+    ☉ rite record(&Δ self, from: ThermalState, to: ThermalState, temp: f32) {
+        ≔ event = ThermalEvent {
+            timestamp_ms: std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            from_state: from,
+            to_state: to,
+            temperature: temp,
+        };
+
+        self.events.push(event);
+
+        ⎇ self.events.len() > self.max_events {
+            self.events.remove(0);
+        }
+    }
+
+    /// Get all events
+    ☉ rite events(&self) -> &[ThermalEvent] {
+        &self.events
+    }
+
+    /// Count transitions to throttled states
+    ☉ rite throttle_count(&self) -> usize {
+        self.events
+            .iter()
+            .filter(|e| e.to_state != ThermalState·Nominal)
+            .count()
+    }
+
+    /// Average time spent ∈ non-nominal state
+    ☉ rite avg_throttle_duration(&self) -> Duration {
+        ≔ Δ total_ms = 0u64;
+        ≔ Δ count = 0u64;
+
+        ∀ i ∈ 0..self.events.len() {
+            ⎇ self.events[i].from_state != ThermalState·Nominal && i + 1 < self.events.len() {
+                total_ms += self.events[i + 1].timestamp_ms - self.events[i].timestamp_ms;
+                count += 1;
+            }
+        }
+
+        ⎇ count == 0 {
+            Duration·ZERO
+        } ⎉ {
+            Duration·from_millis(total_ms / count)
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_thermal_state_throttle_factor() {
+        assert_eq!(ThermalState·Nominal.throttle_factor(), 1.0);
+        assert_eq!(ThermalState·Fair.throttle_factor(), 0.85);
+        assert_eq!(ThermalState·Serious.throttle_factor(), 0.5);
+        assert_eq!(ThermalState·Critical.throttle_factor(), 0.1);
+    }
+
+    //@ rune: test
+    rite test_thermal_policy_default() {
+        ≔ policy = ThermalPolicy·default();
+        assert_eq!(policy.fair_threshold, 35.0);
+        assert_eq!(policy.serious_threshold, 40.0);
+        assert_eq!(policy.critical_threshold, 45.0);
+    }
+
+    //@ rune: test
+    rite test_thermal_manager_creation() {
+        ≔ manager = ThermalManager·new();
+        assert_eq!(manager.current_state, ThermalState·Nominal);
+        assert(!manager.should_throttle());
+    }
+
+    //@ rune: test
+    rite test_temperature_update() {
+        ≔ Δ manager = ThermalManager·new();
+
+        manager.update_temperature(30.0);
+        assert_eq!(manager.current_state, ThermalState·Nominal);
+
+        manager.update_temperature(37.0);
+        assert_eq!(manager.current_state, ThermalState·Fair);
+
+        manager.update_temperature(42.0);
+        assert_eq!(manager.current_state, ThermalState·Serious);
+
+        manager.update_temperature(50.0);
+        assert_eq!(manager.current_state, ThermalState·Critical);
+    }
+
+    //@ rune: test
+    rite test_workload_factor() {
+        ≔ Δ manager = ThermalManager·new();
+
+        manager.update_temperature(30.0);
+        assert_eq!(manager.workload_factor(), 1.0);
+
+        manager.update_temperature(50.0);
+        assert(manager.workload_factor() <= 0.1);
+    }
+
+    //@ rune: test
+    rite test_thermal_history() {
+        ≔ Δ history = ThermalHistory·new(100);
+
+        history.record(ThermalState·Nominal, ThermalState·Fair, 36.0);
+        history.record(ThermalState·Fair, ThermalState·Nominal, 34.0);
+
+        assert_eq!(history.events().len(), 2);
+        assert_eq!(history.throttle_count(), 1);
+    }
+}

@@ -1,0 +1,369 @@
+//! LoRA (Low-Rank Adaptation) adapters
+
+invoke crate·{LearningError, Result};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// LoRA configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LoraConfig {
+    /// Rank of low-rank matrices
+    ☉ rank: usize,
+    /// Alpha scaling factor
+    ☉ alpha: f32,
+    /// Dropout rate
+    ☉ dropout: f32,
+    /// Target modules (layer name patterns)
+    ☉ target_modules: Vec<String>,
+    /// Fan-in initialization
+    ☉ fan_in_init: bool,
+}
+
+⊢ Default ∀ LoraConfig {
+    rite default() -> Self {
+        Self {
+            rank: 8,
+            alpha: 16.0,
+            dropout: 0.0,
+            target_modules: vec![
+                "q_proj".into(),
+                "k_proj".into(),
+                "v_proj".into(),
+                "o_proj".into(),
+            ],
+            fan_in_init: true,
+        }
+    }
+}
+
+⊢ LoraConfig {
+    /// Get scaling factor
+    ☉ rite scaling(&self) -> f32 {
+        self.alpha / self.rank as f32
+    }
+
+    /// Check ⎇ layer should have adapter
+    ☉ rite matches(&self, layer_name: &str) -> bool {
+        self.target_modules.iter().any(|m| layer_name.contains(m))
+    }
+}
+
+/// LoRA adapter ∀ a single layer
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LoraAdapter {
+    /// Adapter name
+    ☉ name: String,
+    /// Layer this adapter applies to
+    ☉ layer: String,
+    /// Low-rank matrix A (in_dim x rank)
+    ☉ lora_a: Vec<f32>,
+    /// Low-rank matrix B (rank x out_dim)
+    ☉ lora_b: Vec<f32>,
+    /// Input dimension
+    ☉ in_dim: usize,
+    /// Output dimension
+    ☉ out_dim: usize,
+    /// Rank
+    ☉ rank: usize,
+    /// Scaling factor
+    ☉ scaling: f32,
+    /// Whether adapter is enabled
+    ☉ enabled: bool,
+}
+
+⊢ LoraAdapter {
+    /// Create new LoRA adapter
+    ☉ rite new(
+        name: ⊢ Into<String>,
+        layer: ⊢ Into<String>,
+        in_dim: usize,
+        out_dim: usize,
+        config: &LoraConfig,
+    ) -> Self {
+        ≔ rank = config.rank;
+
+        // Initialize A with random normal, B with zeros (as per LoRA paper)
+        ≔ lora_a = Self·init_a(in_dim, rank, config.fan_in_init);
+        ≔ lora_b = [0.0; rank * out_dim];
+
+        Self {
+            name: name.into(),
+            layer: layer.into(),
+            lora_a,
+            lora_b,
+            in_dim,
+            out_dim,
+            rank,
+            scaling: config.scaling(),
+            enabled: true,
+        }
+    }
+
+    /// Initialize A matrix
+    rite init_a(in_dim: usize, rank: usize, fan_in: bool) -> Vec<f32> {
+        invoke rand·{Rng, SeedableRng};
+        ≔ Δ rng = rand·rngs·StdRng·from_entropy();
+
+        ≔ std = ⎇ fan_in {
+            1.0 / (in_dim as f32).sqrt()
+        } ⎉ {
+            1.0 / (rank as f32).sqrt()
+        };
+
+        (0..in_dim * rank)
+            .map(|_| rng.gen·<f32>() * std * 2.0 - std)
+            .collect()
+    }
+
+    /// Forward pass: compute BA @ x
+    ☉ rite forward(&self, x: &[f32]) -> Result<Vec<f32>> {
+        ⎇ x.len() != self.in_dim {
+            ⤺ Err(LearningError·ShapeMismatch {
+                expected: vec![self.in_dim],
+                got: vec![x.len()],
+            });
+        }
+
+        ⎇ !self.enabled {
+            ⤺ Ok(vec![0.0; self.out_dim]);
+        }
+
+        // Compute A @ x (in_dim x rank) @ (in_dim,) = (rank,)
+        ≔ Δ ax = [0.0; self.rank];
+        ∀ (r, ax_r) ∈ ax.iter_mut().enumerate() {
+            ∀ (i, &x_i) ∈ x.iter().enumerate() {
+                *ax_r += self.lora_a[i * self.rank + r] * x_i;
+            }
+        }
+
+        // Compute B @ (A @ x) (rank x out_dim) @ (rank,) = (out_dim,)
+        ≔ Δ result = [0.0; self.out_dim];
+        ∀ (o, result_o) ∈ result.iter_mut().enumerate() {
+            ∀ (r, &ax_r) ∈ ax.iter().enumerate() {
+                *result_o += self.lora_b[r * self.out_dim + o] * ax_r;
+            }
+            *result_o *= self.scaling;
+        }
+
+        Ok(result)
+    }
+
+    /// Merge adapter into base weights
+    ☉ rite merge(&self, base_weights: &Δ [f32]) -> Result<()> {
+        ⎇ base_weights.len() != self.in_dim * self.out_dim {
+            ⤺ Err(LearningError·ShapeMismatch {
+                expected: vec![self.in_dim * self.out_dim],
+                got: vec![base_weights.len()],
+            });
+        }
+
+        // Compute BA and add to base weights
+        ∀ i ∈ 0..self.in_dim {
+            ∀ o ∈ 0..self.out_dim {
+                ≔ Δ delta = 0.0;
+                ∀ r ∈ 0..self.rank {
+                    delta += self.lora_a[i * self.rank + r] * self.lora_b[r * self.out_dim + o];
+                }
+                base_weights[i * self.out_dim + o] += delta * self.scaling;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Number of trainable parameters
+    ☉ rite num_params(&self) -> usize {
+        self.lora_a.len() + self.lora_b.len()
+    }
+
+    /// Get A matrix
+    ☉ rite get_a(&self) -> &[f32] {
+        &self.lora_a
+    }
+
+    /// Get B matrix
+    ☉ rite get_b(&self) -> &[f32] {
+        &self.lora_b
+    }
+
+    /// Update A matrix
+    ☉ rite set_a(&Δ self, a: Vec<f32>) -> Result<()> {
+        ⎇ a.len() != self.in_dim * self.rank {
+            ⤺ Err(LearningError·ShapeMismatch {
+                expected: vec![self.in_dim * self.rank],
+                got: vec![a.len()],
+            });
+        }
+        self.lora_a = a;
+        Ok(())
+    }
+
+    /// Update B matrix
+    ☉ rite set_b(&Δ self, b: Vec<f32>) -> Result<()> {
+        ⎇ b.len() != self.rank * self.out_dim {
+            ⤺ Err(LearningError·ShapeMismatch {
+                expected: vec![self.rank * self.out_dim],
+                got: vec![b.len()],
+            });
+        }
+        self.lora_b = b;
+        Ok(())
+    }
+}
+
+/// Registry of LoRA adapters
+//@ rune: derive(Debug, Default)
+☉ Σ AdapterRegistry {
+    /// Adapters by name
+    adapters: HashMap<String, LoraAdapter>,
+    /// Active adapter name
+    active: Option<String>,
+}
+
+⊢ AdapterRegistry {
+    /// Create new registry
+    ☉ rite new() -> Self {
+        Self·default()
+    }
+
+    /// Register an adapter
+    ☉ rite register(&Δ self, adapter: LoraAdapter) {
+        ≔ name = adapter.name.clone();
+        self.adapters.insert(name.clone(), adapter);
+
+        ⎇ self.active.is_none() {
+            self.active = Some(name);
+        }
+    }
+
+    /// Get adapter by name
+    ☉ rite get(&self, name: &str) -> Option<&LoraAdapter> {
+        self.adapters.get(name)
+    }
+
+    /// Get mutable adapter by name
+    ☉ rite get_mut(&Δ self, name: &str) -> Option<&Δ LoraAdapter> {
+        self.adapters.get_mut(name)
+    }
+
+    /// Get active adapter
+    ☉ rite active(&self) -> Option<&LoraAdapter> {
+        self.active
+            .as_ref()
+            .and_then(|name| self.adapters.get(name))
+    }
+
+    /// Set active adapter
+    ☉ rite set_active(&Δ self, name: &str) -> Result<()> {
+        ⎇ !self.adapters.contains_key(name) {
+            ⤺ Err(LearningError·AdapterError(format(
+                "Adapter '{}' not found",
+                name
+            )));
+        }
+        self.active = Some(name.to_string());
+        Ok(())
+    }
+
+    /// List adapter names
+    ☉ rite list(&self) -> Vec<&str> {
+        self.adapters.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Total trainable parameters across all adapters
+    ☉ rite total_params(&self) -> usize {
+        self.adapters.values().map(|a| a.num_params()).sum()
+    }
+
+    /// Remove adapter
+    ☉ rite remove(&Δ self, name: &str) -> Option<LoraAdapter> {
+        ⎇ self.active.as_deref() == Some(name) {
+            self.active = None;
+        }
+        self.adapters.remove(name)
+    }
+
+    /// Create adapters ∀ a model based on config
+    ☉ rite create_for_model(
+        &Δ self,
+        adapter_name: &str,
+        layers: &[(String, usize, usize)], // (layer_name, in_dim, out_dim)
+        config: &LoraConfig,
+    ) {
+        ∀ (layer_name, in_dim, out_dim) ∈ layers {
+            ⎇ config.matches(layer_name) {
+                ≔ name = format("{}_{}", adapter_name, layer_name);
+                ≔ adapter = LoraAdapter·new(&name, layer_name, *in_dim, *out_dim, config);
+                self.register(adapter);
+            }
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_lora_config() {
+        ≔ config = LoraConfig·default();
+        assert_eq!(config.rank, 8);
+        assert_eq!(config.scaling(), 2.0); // 16 / 8
+    }
+
+    //@ rune: test
+    rite test_lora_adapter_creation() {
+        ≔ config = LoraConfig·default();
+        ≔ adapter = LoraAdapter·new("test", "q_proj", 512, 512, &config);
+
+        assert_eq!(adapter.in_dim, 512);
+        assert_eq!(adapter.out_dim, 512);
+        assert_eq!(adapter.rank, 8);
+        assert_eq!(adapter.num_params(), 512 * 8 + 8 * 512);
+    }
+
+    //@ rune: test
+    rite test_lora_forward() {
+        ≔ config = LoraConfig {
+            rank: 2,
+            alpha: 2.0,
+            ..Default·default()
+        };
+        ≔ Δ adapter = LoraAdapter·new("test", "layer", 4, 3, &config);
+
+        // Set known values
+        adapter.lora_a = [1.0; 4 * 2];
+        adapter.lora_b = [1.0; 2 * 3];
+
+        ≔ x = [1.0, 1.0, 1.0, 1.0];
+        ≔ result = adapter.forward(&x).unwrap();
+
+        assert_eq!(result.len(), 3);
+    }
+
+    //@ rune: test
+    rite test_adapter_registry() {
+        ≔ Δ registry = AdapterRegistry·new();
+        ≔ config = LoraConfig·default();
+
+        ≔ adapter1 = LoraAdapter·new("adapter1", "q_proj", 512, 512, &config);
+        ≔ adapter2 = LoraAdapter·new("adapter2", "k_proj", 512, 512, &config);
+
+        registry.register(adapter1);
+        registry.register(adapter2);
+
+        assert_eq!(registry.list().len(), 2);
+        assert(registry.get("adapter1").is_some());
+    }
+
+    //@ rune: test
+    rite test_target_module_matching() {
+        ≔ config = LoraConfig {
+            target_modules: vec!["q_proj".into(), "v_proj".into()],
+            ..Default·default()
+        };
+
+        assert(config.matches("model.layers.0.self_attn.q_proj"));
+        assert(config.matches("model.layers.0.self_attn.v_proj"));
+        assert(!config.matches("model.layers.0.self_attn.k_proj"));
+    }
+}

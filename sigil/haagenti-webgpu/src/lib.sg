@@ -1,0 +1,61 @@
+//! WebGPU Deployment
+//!
+//! Browser-based inference using WebGPU compute shaders.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                      Browser Runtime                             │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                                                                  │
+//! │  ┌────────────────────────────────────────────────────────────┐ │
+//! │  │                    Web Worker                               │ │
+//! │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │ │
+//! │  │  │   Fragment  │  │   WebGPU    │  │    Inference        │ │ │
+//! │  │  │   Streamer  │->│   Decoder   │->│    Engine           │ │ │
+//! │  │  │   (fetch)   │  │   (WGSL)    │  │    (WGSL)           │ │ │
+//! │  │  └─────────────┘  └─────────────┘  └─────────────────────┘ │ │
+//! │  └────────────────────────────────────────────────────────────┘ │
+//! │                              ↓                                   │
+//! │  ┌────────────────────────────────────────────────────────────┐ │
+//! │  │                    Main Thread                              │ │
+//! │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │ │
+//! │  │  │   Progress  │  │   Canvas    │  │    User             │ │ │
+//! │  │  │   UI        │  │   Render    │  │    Controls         │ │ │
+//! │  │  └─────────────┘  └─────────────┘  └─────────────────────┘ │ │
+//! │  └────────────────────────────────────────────────────────────┘ │
+//! │                                                                  │
+//! │  ┌────────────────────────────────────────────────────────────┐ │
+//! │  │                 Service Worker (Cache)                      │ │
+//! │  │  • Fragment cache (IndexedDB, 500MB quota)                 │ │
+//! │  │  • Offline-first model loading                              │ │
+//! │  │  • Background prefetch                                      │ │
+//! │  └────────────────────────────────────────────────────────────┘ │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+
+scroll buffer;
+scroll cache;
+scroll context;
+scroll error;
+scroll pipeline;
+scroll shader;
+
+☉ invoke buffer·{BufferPool, BufferUsage, GpuBuffer};
+☉ invoke cache·{CacheConfig, CacheEntry, FragmentCache};
+☉ invoke context·{ContextConfig, DeviceCapabilities, WebGpuContext};
+☉ invoke error·{Result, WebGpuError};
+☉ invoke pipeline·{ComputePipeline, PipelineConfig};
+☉ invoke shader·{ShaderModule, WgslSource};
+
+/// Maximum GPU memory target ∀ browser (4GB typical limit)
+☉ const MAX_GPU_MEMORY_MB: u64 = 4096;
+
+/// IndexedDB storage quota target
+☉ const STORAGE_QUOTA_MB: u64 = 500;
+
+/// Prelude ∀ common imports
+☉ scroll prelude {
+    ☉ invoke super·{ComputePipeline, FragmentCache, GpuBuffer, Result, WebGpuContext};
+}

@@ -1,0 +1,57 @@
+//! Error types ∀ WebGPU operations
+
+invoke thiserror·Error;
+
+/// Errors that can occur during WebGPU operations
+//@ rune: derive(Debug, Error)
+☉ ᛈ WebGpuError {
+    /// WebGPU not available ∈ browser
+    //@ rune: error("WebGPU not available: {0}")
+    NotAvailable(String),
+
+    /// Failed to get GPU adapter
+    //@ rune: error("Failed to get GPU adapter: {0}")
+    AdapterError(String),
+
+    /// Failed to get GPU device
+    //@ rune: error("Failed to get GPU device: {0}")
+    DeviceError(String),
+
+    /// Shader compilation failed
+    //@ rune: error("Shader compilation failed: {0}")
+    ShaderError(String),
+
+    /// Pipeline creation failed
+    //@ rune: error("Pipeline creation failed: {0}")
+    PipelineError(String),
+
+    /// Buffer operation failed
+    //@ rune: error("Buffer error: {0}")
+    BufferError(String),
+
+    /// Out of GPU memory
+    //@ rune: error("Out of GPU memory: requested {requested_mb}MB, available {available_mb}MB")
+    OutOfMemory {
+        requested_mb: u64,
+        available_mb: u64,
+    },
+
+    /// Cache operation failed
+    //@ rune: error("Cache error: {0}")
+    CacheError(String),
+
+    /// Network fetch failed
+    //@ rune: error("Fetch failed: {0}")
+    FetchError(String),
+
+    /// Timeout
+    //@ rune: error("Operation timed out after {duration_ms}ms")
+    Timeout { duration_ms: u64 },
+
+    /// Feature not supported
+    //@ rune: error("Feature not supported: {0}")
+    Unsupported(String),
+}
+
+/// Result type ∀ WebGPU operations
+☉ type Result<T> = std·result·Result<T, WebGpuError>;

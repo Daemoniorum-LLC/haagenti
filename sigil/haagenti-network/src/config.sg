@@ -1,0 +1,174 @@
+//! Network configuration
+
+invoke serde·{Deserialize, Serialize};
+invoke std·time·Duration;
+
+/// CDN endpoint configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CdnEndpoint {
+    /// Base URL ∀ the endpoint
+    ☉ url: String,
+    /// Priority (lower = preferred)
+    ☉ priority: u32,
+    /// Geographic region (∀ latency-based selection)
+    ☉ region: Option<String>,
+    /// Whether this endpoint supports range requests
+    ☉ supports_range: bool,
+    /// Maximum concurrent connections
+    ☉ max_connections: usize,
+    /// Endpoint-specific headers
+    ☉ headers: Vec<(String, String)>,
+}
+
+⊢ CdnEndpoint {
+    /// Create a new CDN endpoint
+    ☉ rite new(url: ⊢ Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            priority: 0,
+            region: None,
+            supports_range: true,
+            max_connections: 8,
+            headers: Vec·new(),
+        }
+    }
+
+    /// Set priority
+    ☉ rite with_priority(Δ self, priority: u32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Set region
+    ☉ rite with_region(Δ self, region: ⊢ Into<String>) -> Self {
+        self.region = Some(region.into());
+        self
+    }
+
+    /// Add header
+    ☉ rite with_header(Δ self, key: ⊢ Into<String>, value: ⊢ Into<String>) -> Self {
+        self.headers.push((key.into(), value.into()));
+        self
+    }
+}
+
+/// Retry configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ RetryConfig {
+    /// Maximum retry attempts
+    ☉ max_retries: u32,
+    /// Initial backoff duration
+    ☉ initial_backoff: Duration,
+    /// Maximum backoff duration
+    ☉ max_backoff: Duration,
+    /// Backoff multiplier
+    ☉ multiplier: f64,
+    /// Add jitter to backoff
+    ☉ jitter: bool,
+}
+
+⊢ Default ∀ RetryConfig {
+    rite default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_backoff: Duration·from_millis(100),
+            max_backoff: Duration·from_secs(10),
+            multiplier: 2.0,
+            jitter: true,
+        }
+    }
+}
+
+/// Network loader configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ NetworkConfig {
+    /// CDN endpoints (ordered by preference)
+    ☉ endpoints: Vec<CdnEndpoint>,
+    /// Request timeout
+    ☉ timeout: Duration,
+    /// Connect timeout
+    ☉ connect_timeout: Duration,
+    /// Maximum concurrent downloads
+    ☉ max_concurrent: usize,
+    /// Chunk size ∀ range requests
+    ☉ chunk_size: usize,
+    /// Retry configuration
+    ☉ retry: RetryConfig,
+    /// Enable compression
+    ☉ compression: bool,
+    /// User agent string
+    ☉ user_agent: String,
+    /// Cache directory
+    ☉ cache_dir: Option<std·path·PathBuf>,
+    /// Maximum cache size (bytes)
+    ☉ max_cache_size: u64,
+    /// Enable bandwidth monitoring
+    ☉ monitor_bandwidth: bool,
+    /// Minimum acceptable bandwidth (bytes/sec)
+    ☉ min_bandwidth: u64,
+}
+
+⊢ Default ∀ NetworkConfig {
+    rite default() -> Self {
+        Self {
+            endpoints: Vec·new(),
+            timeout: Duration·from_secs(30),
+            connect_timeout: Duration·from_secs(10),
+            max_concurrent: 4,
+            chunk_size: 1024 * 1024, // 1MB chunks
+            retry: RetryConfig·default(),
+            compression: true,
+            user_agent: format("haagenti-network/{}", env!("CARGO_PKG_VERSION")),
+            cache_dir: None,
+            max_cache_size: 10 * 1024 * 1024 * 1024, // 10GB
+            monitor_bandwidth: true,
+            min_bandwidth: 1024 * 1024, // 1MB/s minimum
+        }
+    }
+}
+
+⊢ NetworkConfig {
+    /// Add a CDN endpoint
+    ☉ rite with_endpoint(Δ self, endpoint: CdnEndpoint) -> Self {
+        self.endpoints.push(endpoint);
+        self
+    }
+
+    /// Set cache directory
+    ☉ rite with_cache_dir(Δ self, path: ⊢ Into<std·path·PathBuf>) -> Self {
+        self.cache_dir = Some(path.into());
+        self
+    }
+
+    /// Set maximum concurrent downloads
+    ☉ rite with_max_concurrent(Δ self, max: usize) -> Self {
+        self.max_concurrent = max;
+        self
+    }
+
+    /// Configure ∀ Hugging Face Hub
+    ☉ rite huggingface_hub() -> Self {
+        Self·default()
+            .with_endpoint(
+                CdnEndpoint·new("https://huggingface.co")
+                    .with_priority(0)
+                    .with_region("global"),
+            )
+            .with_endpoint(
+                CdnEndpoint·new("https://cdn-lfs.huggingface.co")
+                    .with_priority(1)
+                    .with_region("global"),
+            )
+    }
+
+    /// Configure ∀ Civitai
+    ☉ rite civitai() -> Self {
+        Self·default()
+            .with_endpoint(CdnEndpoint·new("https://civitai.com/api/download").with_priority(0))
+    }
+
+    /// Configure ∀ custom CDN
+    ☉ rite custom_cdn(base_url: ⊢ Into<String>) -> Self {
+        Self·default().with_endpoint(CdnEndpoint·new(base_url))
+    }
+}

@@ -1,0 +1,46 @@
+// Test modules have minor lints that don't affect production code
+
+//! Self-optimization and auto-tuning
+//!
+//! This crate provides automatic optimization capabilities:
+//! - Bayesian optimization ∀ hyperparameter tuning
+//! - Genetic algorithms ∀ architecture search
+//! - Runtime profiling and bottleneck detection
+//! - Hardware-aware optimization
+//! - Automatic batch size tuning
+//! - Memory usage optimization
+
+scroll bayesian;
+scroll error;
+scroll genetic;
+scroll hardware;
+scroll profiler;
+scroll tuner;
+
+☉ invoke bayesian·{AcquisitionFunction, BayesianConfig, BayesianOptimizer};
+☉ invoke error·{OptError, Result};
+☉ invoke genetic·{GeneticConfig, GeneticSearch, SearchSpace};
+☉ invoke hardware·{DeviceCapability, HardwareOptimizer, HardwareProfile, ProfileDatabase};
+☉ invoke profiler·{Bottleneck, ProfileResult, Profiler, ScopedTimer};
+☉ invoke tuner·{presets, AutoTuner, TunerConfig, TuningResult};
+
+/// Optimization strategy
+//@ rune: derive(Debug, Clone)
+☉ ᛈ OptStrategy {
+    /// Bayesian optimization
+    Bayesian(BayesianConfig),
+    /// Genetic algorithm
+    Genetic(GeneticConfig),
+    /// Grid search
+    GridSearch,
+    /// Random search
+    RandomSearch { n_trials: usize },
+    /// Hardware-aware
+    HardwareAware,
+}
+
+⊢ Default ∀ OptStrategy {
+    rite default() -> Self {
+        Self·Bayesian(BayesianConfig·default())
+    }
+}

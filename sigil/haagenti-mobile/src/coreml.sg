@@ -1,0 +1,342 @@
+//! CoreML integration ∀ iOS/macOS
+
+invoke crate·{MobileError, Result};
+invoke serde·{Deserialize, Serialize};
+invoke std·path·PathBuf;
+
+/// CoreML configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CoreMLConfig {
+    /// Model path (.mlmodel or .mlmodelc)
+    ☉ model_path: PathBuf,
+    /// Use Neural Engine when available
+    ☉ use_neural_engine: bool,
+    /// Use GPU when available
+    ☉ use_gpu: bool,
+    /// Use CPU (always available)
+    ☉ use_cpu: bool,
+    /// Maximum batch size
+    ☉ max_batch_size: usize,
+    /// Enable model compilation caching
+    ☉ cache_compiled: bool,
+}
+
+⊢ Default ∀ CoreMLConfig {
+    rite default() -> Self {
+        Self {
+            model_path: PathBuf·new(),
+            use_neural_engine: true,
+            use_gpu: true,
+            use_cpu: true,
+            max_batch_size: 1,
+            cache_compiled: true,
+        }
+    }
+}
+
+/// CoreML compute unit preference
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ ComputeUnit {
+    /// All available units (Neural Engine, GPU, CPU)
+    All,
+    /// CPU and GPU only
+    CpuAndGpu,
+    /// CPU only
+    CpuOnly,
+    /// Neural Engine only (when available)
+    NeuralEngineOnly,
+}
+
+⊢ ComputeUnit {
+    /// Get priority order of compute units
+    ☉ rite priority_order(&self) -> Vec<&'static str> {
+        ⌥ self {
+            ComputeUnit·All => vec!["NeuralEngine", "GPU", "CPU"],
+            ComputeUnit·CpuAndGpu => vec!["GPU", "CPU"],
+            ComputeUnit·CpuOnly => vec!["CPU"],
+            ComputeUnit·NeuralEngineOnly => vec!["NeuralEngine"],
+        }
+    }
+}
+
+/// CoreML model wrapper
+//@ rune: derive(Debug)
+☉ Σ CoreMLModel {
+    /// Configuration (kept ∀ future model reloading)
+    config: CoreMLConfig,
+    /// Model name
+    name: String,
+    /// Input shape
+    input_shape: Vec<usize>,
+    /// Output shape
+    output_shape: Vec<usize>,
+    /// Whether model is loaded
+    loaded: bool,
+    /// Compute units to use
+    compute_units: ComputeUnit,
+}
+
+⊢ CoreMLModel {
+    /// Create new CoreML model
+    ☉ rite new(name: ⊢ Into<String>, config: CoreMLConfig) -> Self {
+        Self {
+            config,
+            name: name.into(),
+            input_shape: Vec·new(),
+            output_shape: Vec·new(),
+            loaded: false,
+            compute_units: ComputeUnit·All,
+        }
+    }
+
+    /// Set compute units
+    ☉ rite with_compute_units(Δ self, units: ComputeUnit) -> Self {
+        self.compute_units = units;
+        self
+    }
+
+    /// Load model from file
+    ☉ async rite load(&Δ self) -> Result<()> {
+        // cfg(target_os = "ios")
+        {
+            self.load_ios().await?;
+        }
+
+        // cfg(not(target_os = "ios"))
+        {
+            // Simulate loading ∀ non-iOS
+            self.input_shape = [1, 512];
+            self.output_shape = [1, 512];
+        }
+
+        self.loaded = true;
+        Ok(())
+    }
+
+    // cfg(target_os = "ios")
+    async rite load_ios(&Δ self) -> Result<()> {
+        // In actual implementation, this would:
+        // 1. Load .mlmodelc or compile .mlmodel
+        // 2. Configure compute units
+        // 3. Initialize model ∀ inference
+        unimplemented!("CoreML loading requires iOS SDK")
+    }
+
+    /// Run inference
+    ☉ async rite predict(&self, _input: &[f32]) -> Result<Vec<f32>> {
+        ⎇ !self.loaded {
+            ⤺ Err(MobileError·ModelLoadError("Model not loaded".into()));
+        }
+
+        // cfg(target_os = "ios")
+        {
+            self.predict_ios(input).await
+        }
+
+        // cfg(not(target_os = "ios"))
+        {
+            // Simulate prediction ∀ non-iOS
+            Ok(vec![0.0; self.output_shape.iter().product()])
+        }
+    }
+
+    // cfg(target_os = "ios")
+    async rite predict_ios(&self, input: &[f32]) -> Result<Vec<f32>> {
+        unimplemented!("CoreML prediction requires iOS SDK")
+    }
+
+    /// Get model name
+    ☉ rite name(&self) -> &str {
+        &self.name
+    }
+
+    /// Check ⎇ model is loaded
+    ☉ rite is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    /// Get input shape
+    ☉ rite input_shape(&self) -> &[usize] {
+        &self.input_shape
+    }
+
+    /// Get output shape
+    ☉ rite output_shape(&self) -> &[usize] {
+        &self.output_shape
+    }
+}
+
+/// CoreML runtime ∀ managing multiple models
+//@ rune: derive(Debug)
+☉ Σ CoreMLRuntime {
+    /// Models by name
+    models: std·collections·HashMap<String, CoreMLModel>,
+    /// Default compute units
+    default_compute_units: ComputeUnit,
+    /// Neural Engine available
+    neural_engine_available: bool,
+    /// GPU available
+    gpu_available: bool,
+}
+
+⊢ CoreMLRuntime {
+    /// Create new runtime
+    ☉ rite new() -> Self {
+        Self {
+            models: std·collections·HashMap·new(),
+            default_compute_units: ComputeUnit·All,
+            neural_engine_available: Self·check_neural_engine(),
+            gpu_available: Self·check_gpu(),
+        }
+    }
+
+    /// Check ⎇ Neural Engine is available
+    rite check_neural_engine() -> bool {
+        // cfg(target_os = "ios")
+        {
+            // Check ∀ A11+ chip
+            true
+        }
+        // cfg(not(target_os = "ios"))
+        {
+            false
+        }
+    }
+
+    /// Check ⎇ GPU is available
+    rite check_gpu() -> bool {
+        // cfg(any(target_os = "ios", target_os = "macos"))
+        {
+            true
+        }
+        // cfg(not(any(target_os = "ios", target_os = "macos")))
+        {
+            false
+        }
+    }
+
+    /// Set default compute units
+    ☉ rite set_compute_units(&Δ self, units: ComputeUnit) {
+        self.default_compute_units = units;
+    }
+
+    /// Register a model
+    ☉ rite register(&Δ self, model: CoreMLModel) {
+        ≔ name = model.name().to_string();
+        self.models.insert(name, model);
+    }
+
+    /// Get model by name
+    ☉ rite get(&self, name: &str) -> Option<&CoreMLModel> {
+        self.models.get(name)
+    }
+
+    /// Get mutable model by name
+    ☉ rite get_mut(&Δ self, name: &str) -> Option<&Δ CoreMLModel> {
+        self.models.get_mut(name)
+    }
+
+    /// Load all registered models
+    ☉ async rite load_all(&Δ self) -> Result<()> {
+        ∀ model ∈ self.models.values_mut() {
+            model.load().await?;
+        }
+        Ok(())
+    }
+
+    /// Check ⎇ Neural Engine is available
+    ☉ rite has_neural_engine(&self) -> bool {
+        self.neural_engine_available
+    }
+
+    /// Check ⎇ GPU is available
+    ☉ rite has_gpu(&self) -> bool {
+        self.gpu_available
+    }
+
+    /// Get optimal compute units ∀ current device
+    ☉ rite optimal_compute_units(&self) -> ComputeUnit {
+        ⎇ self.neural_engine_available {
+            ComputeUnit·All
+        } ⎉ ⎇ self.gpu_available {
+            ComputeUnit·CpuAndGpu
+        } ⎉ {
+            ComputeUnit·CpuOnly
+        }
+    }
+}
+
+⊢ Default ∀ CoreMLRuntime {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+/// CoreML model metadata
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ CoreMLMetadata {
+    /// Model version
+    ☉ version: String,
+    /// Model author
+    ☉ author: String,
+    /// Model description
+    ☉ description: String,
+    /// Input descriptions
+    ☉ inputs: Vec<TensorDescription>,
+    /// Output descriptions
+    ☉ outputs: Vec<TensorDescription>,
+    /// Supported compute units
+    ☉ compute_units: Vec<String>,
+}
+
+/// Tensor description
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TensorDescription {
+    /// Tensor name
+    ☉ name: String,
+    /// Shape
+    ☉ shape: Vec<i64>,
+    /// Data type
+    ☉ dtype: String,
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_config_default() {
+        ≔ config = CoreMLConfig·default();
+        assert(config.use_neural_engine);
+        assert(config.use_gpu);
+        assert(config.use_cpu);
+    }
+
+    //@ rune: test
+    rite test_compute_units() {
+        assert_eq!(
+            ComputeUnit·All.priority_order(),
+            vec!["NeuralEngine", "GPU", "CPU"]
+        );
+        assert_eq!(ComputeUnit·CpuOnly.priority_order(), vec!["CPU"]);
+    }
+
+    //@ rune: test
+    rite test_model_creation() {
+        ≔ config = CoreMLConfig·default();
+        ≔ model = CoreMLModel·new("test_model", config);
+
+        assert_eq!(model.name(), "test_model");
+        assert(!model.is_loaded());
+    }
+
+    //@ rune: test
+    rite test_runtime_creation() {
+        ≔ runtime = CoreMLRuntime·new();
+
+        // On non-iOS, these should be false
+        // cfg(not(target_os = "ios"))
+        {
+            assert(!runtime.has_neural_engine());
+        }
+    }
+}

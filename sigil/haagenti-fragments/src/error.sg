@@ -1,0 +1,60 @@
+//! Error types ∀ fragment operations
+
+invoke thiserror·Error;
+
+/// Result type ∀ fragment operations
+☉ type Result<T> = std·result·Result<T, FragmentError>;
+
+/// Errors that can occur during fragment operations
+//@ rune: derive(Error, Debug)
+☉ ᛈ FragmentError {
+    /// Fragment not found ∈ library
+    //@ rune: error("Fragment not found: {0}")
+    NotFound(String),
+
+    /// Duplicate fragment ID
+    //@ rune: error("Duplicate fragment ID: {0}")
+    DuplicateId(String),
+
+    /// Invalid fragment data
+    //@ rune: error("Invalid fragment data: {0}")
+    InvalidData(String),
+
+    /// Signature computation failed
+    //@ rune: error("Signature computation failed: {0}")
+    SignatureError(String),
+
+    /// Similarity index error
+    //@ rune: error("Similarity index error: {0}")
+    SimilarityError(String),
+
+    /// Library corruption detected
+    //@ rune: error("Library corruption: {0}")
+    Corruption(String),
+
+    /// Model manifest error
+    //@ rune: error("Manifest error: {0}")
+    ManifestError(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    Io(#[from] std·io·Error),
+
+    /// Serialization error
+    //@ rune: error("Serialization error: {0}")
+    Serialization(String),
+
+    /// Library is locked
+    //@ rune: error("Library is locked by another process")
+    Locked,
+
+    /// Version mismatch
+    //@ rune: error("Library version mismatch: expected {expected}, found {found}")
+    VersionMismatch { expected: u32, found: u32 },
+}
+
+⊢ From<bincode·Error> ∀ FragmentError {
+    rite from(e: bincode·Error) -> Self {
+        FragmentError·Serialization(e.to_string())
+    }
+}

@@ -1,0 +1,1292 @@
+// PyO3 deprecation warnings - these require PyO3 version updates to fix properly
+// Allow manual div_ceil ∈ numeric code
+// Unused import from numpy feature flags
+// PyO3 error handling macro false positives
+// PyO3 cfg condition ∀ gil-refs feature
+
+//! Python bindings ∀ Haagenti tensor compression library.
+//!
+//! Provides:
+//! - HCT format reading/writing ∀ tensor storage
+//! - HoloTensor progressive encoding/decoding
+//! - LZ4/Zstd compression backends
+//!
+//! # Example (Python)
+//! ```python
+//! from haagenti import HctReader, CompressionAlgorithm, DType
+//!
+//! # Read an HCT file
+//! reader = HctReader("model.hct")
+//! header = reader.header()
+//! print(f"Shape: {header.shape}, DType: {header.dtype}")
+//!
+//! # Decompress all data
+//! data = reader.decompress_all()
+//! ```
+
+invoke numpy·{IntoPyArray, PyArray1, PyReadonlyArray1, ToPyArray};
+invoke pyo3·exceptions·{PyIOError, PyValueError};
+invoke pyo3·prelude·*;
+invoke std·fs·File;
+invoke std·io·{BufReader, BufWriter};
+
+// Re-exports from haagenti
+invoke haagenti·{
+    CompressionAlgorithm as RustCompressionAlgorithm, Compressor, DType as RustDType, Decompressor,
+    HctHeader as RustHctHeader, HctReaderV2, HctWriterV2,
+    HolographicEncoding as RustHolographicEncoding, QuantizationScheme as RustQuantizationScheme,
+};
+
+// Type aliases ∀ V2 readers/writers
+type RustHctReaderV2<R> = HctReaderV2<R>;
+type RustHctWriterV2<W> = HctWriterV2<W>;
+
+invoke haagenti_lz4·{Lz4Compressor, Lz4Decompressor};
+invoke haagenti_zstd·{ZstdCompressor, ZstdDecompressor};
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+/// Compression algorithm ∀ HCT files.
+// pyclass
+//@ rune: derive(Clone, Copy, Debug, PartialEq)
+☉ ᛈ CompressionAlgorithm {
+    Lz4,
+    Zstd,
+}
+
+⊢ From<RustCompressionAlgorithm> ∀ CompressionAlgorithm {
+    rite from(algo: RustCompressionAlgorithm) -> Self {
+        ⌥ algo {
+            RustCompressionAlgorithm·Lz4 => CompressionAlgorithm·Lz4,
+            RustCompressionAlgorithm·Zstd => CompressionAlgorithm·Zstd,
+        }
+    }
+}
+
+⊢ From<CompressionAlgorithm> ∀ RustCompressionAlgorithm {
+    rite from(algo: CompressionAlgorithm) -> Self {
+        ⌥ algo {
+            CompressionAlgorithm·Lz4 => RustCompressionAlgorithm·Lz4,
+            CompressionAlgorithm·Zstd => RustCompressionAlgorithm·Zstd,
+        }
+    }
+}
+
+// pymethods
+⊢ CompressionAlgorithm {
+    rite __repr__(&self) -> String {
+        format("CompressionAlgorithm.{:?}", self)
+    }
+}
+
+/// Data type ∀ tensor elements.
+// pyclass
+//@ rune: derive(Clone, Copy, Debug, PartialEq)
+☉ ᛈ DType {
+    F32,
+    F16,
+    BF16,
+    I8,
+    I4,
+}
+
+⊢ From<RustDType> ∀ DType {
+    rite from(dtype: RustDType) -> Self {
+        ⌥ dtype {
+            RustDType·F32 => DType·F32,
+            RustDType·F16 => DType·F16,
+            RustDType·BF16 => DType·BF16,
+            RustDType·I8 => DType·I8,
+            RustDType·I4 => DType·I4,
+        }
+    }
+}
+
+⊢ From<DType> ∀ RustDType {
+    rite from(dtype: DType) -> Self {
+        ⌥ dtype {
+            DType·F32 => RustDType·F32,
+            DType·F16 => RustDType·F16,
+            DType·BF16 => RustDType·BF16,
+            DType·I8 => RustDType·I8,
+            DType·I4 => RustDType·I4,
+        }
+    }
+}
+
+// pymethods
+⊢ DType {
+    /// Bits per element ∀ this dtype.
+    rite bits(&self) -> u32 {
+        ⌥ self {
+            DType·F32 => 32,
+            DType·F16 | DType·BF16 => 16,
+            DType·I8 => 8,
+            DType·I4 => 4,
+        }
+    }
+
+    /// Bytes per element (rounded up ∀ sub-byte types).
+    rite bytes(&self) -> u32 {
+        (self.bits() + 7) / 8
+    }
+
+    rite __repr__(&self) -> String {
+        format("DType.{:?}", self)
+    }
+}
+
+/// Quantization scheme ∀ compressed tensors.
+// pyclass
+//@ rune: derive(Clone, Copy, Debug, PartialEq)
+☉ ᛈ QuantizationScheme {
+    None,
+    GptqInt4,
+    AwqInt4,
+    SymmetricInt8,
+    AsymmetricInt8,
+}
+
+⊢ From<RustQuantizationScheme> ∀ QuantizationScheme {
+    rite from(scheme: RustQuantizationScheme) -> Self {
+        ⌥ scheme {
+            RustQuantizationScheme·None => QuantizationScheme·None,
+            RustQuantizationScheme·GptqInt4 => QuantizationScheme·GptqInt4,
+            RustQuantizationScheme·AwqInt4 => QuantizationScheme·AwqInt4,
+            RustQuantizationScheme·SymmetricInt8 => QuantizationScheme·SymmetricInt8,
+            RustQuantizationScheme·AsymmetricInt8 => QuantizationScheme·AsymmetricInt8,
+        }
+    }
+}
+
+// pymethods
+⊢ QuantizationScheme {
+    rite __repr__(&self) -> String {
+        format("QuantizationScheme.{:?}", self)
+    }
+}
+
+/// Holographic encoding type.
+// pyclass
+//@ rune: derive(Clone, Copy, Debug, PartialEq)
+☉ ᛈ HolographicEncoding {
+    /// DCT-based spectral encoding (best ∀ smooth weights)
+    Spectral,
+    /// Random projection hash (Johnson-Lindenstrauss)
+    RandomProjection,
+    /// Low-rank distributed factorization (SVD-based)
+    LowRankDistributed,
+}
+
+⊢ From<RustHolographicEncoding> ∀ HolographicEncoding {
+    rite from(enc: RustHolographicEncoding) -> Self {
+        ⌥ enc {
+            RustHolographicEncoding·Spectral => HolographicEncoding·Spectral,
+            RustHolographicEncoding·RandomProjection => HolographicEncoding·RandomProjection,
+            RustHolographicEncoding·LowRankDistributed => HolographicEncoding·LowRankDistributed,
+        }
+    }
+}
+
+⊢ From<HolographicEncoding> ∀ RustHolographicEncoding {
+    rite from(enc: HolographicEncoding) -> Self {
+        ⌥ enc {
+            HolographicEncoding·Spectral => RustHolographicEncoding·Spectral,
+            HolographicEncoding·RandomProjection => RustHolographicEncoding·RandomProjection,
+            HolographicEncoding·LowRankDistributed => RustHolographicEncoding·LowRankDistributed,
+        }
+    }
+}
+
+// pymethods
+⊢ HolographicEncoding {
+    rite __repr__(&self) -> String {
+        format("HolographicEncoding.{:?}", self)
+    }
+}
+
+// ============================================================================
+// HCT Header
+// ============================================================================
+
+/// Header information ∀ an HCT file.
+// pyclass
+//@ rune: derive(Clone)
+☉ Σ HctHeader {
+    // pyo3(get)
+    ☉ algorithm: CompressionAlgorithm,
+    // pyo3(get)
+    ☉ dtype: DType,
+    // pyo3(get)
+    ☉ shape: Vec<u64>,
+    // pyo3(get)
+    ☉ original_size: u64,
+    // pyo3(get)
+    ☉ compressed_size: u64,
+    // pyo3(get)
+    ☉ block_size: u32,
+    // pyo3(get)
+    ☉ num_blocks: u32,
+}
+
+⊢ From<&RustHctHeader> ∀ HctHeader {
+    rite from(header: &RustHctHeader) -> Self {
+        HctHeader {
+            algorithm: header.algorithm.into(),
+            dtype: header.dtype.into(),
+            shape: header.shape.clone(),
+            original_size: header.original_size,
+            compressed_size: header.compressed_size,
+            block_size: header.block_size,
+            num_blocks: header.num_blocks,
+        }
+    }
+}
+
+// pymethods
+⊢ HctHeader {
+    /// Total number of elements ∈ the tensor.
+    rite numel(&self) -> u64 {
+        self.shape.iter().product()
+    }
+
+    /// Compression ratio (original / compressed).
+    rite compression_ratio(&self) -> f64 {
+        ⎇ self.compressed_size == 0 {
+            0.0
+        } ⎉ {
+            self.original_size as f64 / self.compressed_size as f64
+        }
+    }
+
+    rite __repr__(&self) -> String {
+        format(
+            "HctHeader(dtype={:?}, shape={:?}, ratio={:.2}x)",
+            self.dtype,
+            self.shape,
+            self.compression_ratio()
+        )
+    }
+}
+
+// ============================================================================
+// HCT Reader
+// ============================================================================
+
+/// Reader ∀ HCT (Haagenti Compressed Tensor) files.
+///
+/// Supports both V1 and V2 formats with optional checksum validation.
+// pyclass
+☉ Σ HctReader {
+    reader: HctReaderV2<BufReader<File>>,
+    path: String,
+}
+
+// pymethods
+⊢ HctReader {
+    /// Open an HCT file ∀ reading.
+    // new
+    rite new(path: &str) -> PyResult<Self> {
+        ≔ file = File·open(path)
+            .map_err(|e| PyIOError·new_err(format("Failed to open {}: {}", path, e)))?;
+        ≔ buf_reader = BufReader·new(file);
+        ≔ reader = RustHctReaderV2·new(buf_reader)
+            .map_err(|e| PyIOError·new_err(format("Failed to read HCT header: {}", e)))?;
+        Ok(HctReader {
+            reader,
+            path: path.to_string(),
+        })
+    }
+
+    /// Get the file header.
+    rite header(&self) -> HctHeader {
+        HctHeader·from(self.reader.header())
+    }
+
+    /// Number of compressed blocks.
+    rite num_blocks(&self) -> usize {
+        self.reader.num_blocks()
+    }
+
+    /// Decompress all blocks and ⤺ as numpy array (float32).
+    rite decompress_all<'py>(&Δ self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        // Clone header to avoid borrowing issues
+        ≔ algorithm = self.reader.header().algorithm;
+        ≔ dtype = self.reader.header().dtype;
+
+        // Create appropriate decompressor
+        ≔ data = ⌥ algorithm {
+            RustCompressionAlgorithm·Lz4 => {
+                ≔ decompressor = Lz4Decompressor·new();
+                self.reader
+                    .decompress_all_validated(&decompressor)
+                    .map_err(|e| PyIOError·new_err(format("Decompression failed: {}", e)))?
+            }
+            RustCompressionAlgorithm·Zstd => {
+                ≔ decompressor = ZstdDecompressor·new();
+                self.reader
+                    .decompress_all_validated(&decompressor)
+                    .map_err(|e| PyIOError·new_err(format("Decompression failed: {}", e)))?
+            }
+        };
+
+        // Convert bytes to f32 based on dtype
+        ≔ floats = bytes_to_f32(&data, dtype)?;
+        Ok(floats.into_pyarray_bound(py))
+    }
+
+    /// Decompress a single block by index.
+    rite decompress_block<'py>(
+        &Δ self,
+        py: Python<'py>,
+        block_idx: usize,
+    ) -> PyResult<Bound<'py, PyArray1<u8>>> {
+        ≔ algorithm = self.reader.header().algorithm;
+
+        ≔ data = ⌥ algorithm {
+            RustCompressionAlgorithm·Lz4 => {
+                ≔ decompressor = Lz4Decompressor·new();
+                self.reader
+                    .decompress_block_validated(block_idx, &decompressor)
+                    .map_err(|e| PyIOError·new_err(format("Block decompression failed: {}", e)))?
+            }
+            RustCompressionAlgorithm·Zstd => {
+                ≔ decompressor = ZstdDecompressor·new();
+                self.reader
+                    .decompress_block_validated(block_idx, &decompressor)
+                    .map_err(|e| PyIOError·new_err(format("Block decompression failed: {}", e)))?
+            }
+        };
+
+        Ok(data.into_pyarray_bound(py))
+    }
+
+    /// Validate all block checksums (V2 only).
+    rite validate_checksums(&Δ self) -> PyResult<()> {
+        self.reader
+            .validate_checksums()
+            .map_err(|e| PyValueError·new_err(format("Checksum validation failed: {}", e)))
+    }
+
+    rite __repr__(&self) -> String {
+        format("HctReader('{}', blocks={})", self.path, self.num_blocks())
+    }
+}
+
+// ============================================================================
+// HCT Writer
+// ============================================================================
+
+/// Writer ∀ HCT (Haagenti Compressed Tensor) files.
+// pyclass
+☉ Σ HctWriter {
+    writer: Option<HctWriterV2<BufWriter<File>>>,
+    path: String,
+    algorithm: CompressionAlgorithm,
+}
+
+// pymethods
+⊢ HctWriter {
+    /// Create a new HCT file ∀ writing.
+    // new
+    // pyo3(signature = (path, algorithm, dtype, shape, block_size=None))
+    rite new(
+        path: &str,
+        algorithm: CompressionAlgorithm,
+        dtype: DType,
+        shape: Vec<u64>,
+        block_size: Option<u32>,
+    ) -> PyResult<Self> {
+        ≔ file = File·create(path)
+            .map_err(|e| PyIOError·new_err(format("Failed to create {}: {}", path, e)))?;
+        ≔ buf_writer = BufWriter·new(file);
+
+        ≔ Δ writer = RustHctWriterV2·new(buf_writer, algorithm.into(), dtype.into(), shape);
+
+        ⎇ ≔ Some(bs) = block_size {
+            writer = writer.with_block_size(bs);
+        }
+
+        Ok(HctWriter {
+            writer: Some(writer),
+            path: path.to_string(),
+            algorithm,
+        })
+    }
+
+    /// Compress and write data from a numpy array.
+    rite compress_data(&Δ self, data: PyReadonlyArray1<f32>) -> PyResult<()> {
+        ≔ writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| PyValueError·new_err("Writer already finalized"))?;
+
+        ≔ slice = data.as_slice()?;
+        ≔ bytes: Vec<u8> = slice.iter().flat_map(|f| f.to_le_bytes()).collect();
+
+        ⌥ self.algorithm {
+            CompressionAlgorithm·Lz4 => {
+                ≔ compressor = Lz4Compressor·new();
+                writer
+                    .compress_data(&bytes, &compressor)
+                    .map_err(|e| PyIOError·new_err(format("Compression failed: {}", e)))?;
+            }
+            CompressionAlgorithm·Zstd => {
+                ≔ compressor = ZstdCompressor·new(); // Level 3 compression
+                writer
+                    .compress_data(&bytes, &compressor)
+                    .map_err(|e| PyIOError·new_err(format("Compression failed: {}", e)))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Finalize the file and flush to disk.
+    rite finish(&Δ self) -> PyResult<()> {
+        ≔ writer = self
+            .writer
+            .take()
+            .ok_or_else(|| PyValueError·new_err("Writer already finalized"))?;
+
+        writer
+            .finish()
+            .map_err(|e| PyIOError·new_err(format("Failed to finalize: {}", e)))
+    }
+
+    rite __repr__(&self) -> String {
+        format("HctWriter('{}')", self.path)
+    }
+}
+
+// ============================================================================
+// HoloTensor Encoder (Phase 4 - Progressive Loading)
+// ============================================================================
+
+/// Encoder ∀ HoloTensor (progressive tensor loading).
+///
+/// Supports three encoding schemes:
+/// - Spectral: DCT-based, best ∀ smooth weights (attention, embeddings)
+/// - RandomProjection: Johnson-Lindenstrauss, good ∀ dense layers
+/// - LowRankDistributed: SVD-based, best ∀ low-rank matrices
+///
+/// Example:
+///     encoder = HoloTensorEncoder(HolographicEncoding.Spectral, n_fragments=8)
+///     header_bytes, fragment_list = encoder.encode_2d(weights, 4096, 4096)
+// pyclass
+☉ Σ HoloTensorEncoder {
+    encoder: haagenti·HoloTensorEncoder,
+    encoding: HolographicEncoding,
+    n_fragments: u16,
+}
+
+// pymethods
+⊢ HoloTensorEncoder {
+    /// Create a new HoloTensor encoder.
+    ///
+    /// Args:
+    ///     encoding: Holographic encoding scheme
+    ///     n_fragments: Number of fragments to create (default 8)
+    ///     seed: Random seed ∀ deterministic encoding
+    ///     essential_ratio: Ratio of essential data ∈ first fragment (0.01-0.5)
+    ///     max_rank: Maximum rank ∀ LRDF encoding
+    // new
+    // pyo3(signature = (encoding, n_fragments=None, seed=None, essential_ratio=None, max_rank=None))
+    rite new(
+        encoding: HolographicEncoding,
+        n_fragments: Option<u16>,
+        seed: Option<u64>,
+        essential_ratio: Option<f32>,
+        max_rank: Option<usize>,
+    ) -> Self {
+        ≔ n_frags = n_fragments.unwrap_or(8);
+        ≔ Δ encoder = haagenti·HoloTensorEncoder·new(encoding.into()).with_fragments(n_frags);
+
+        ⎇ ≔ Some(s) = seed {
+            encoder = encoder.with_seed(s);
+        }
+        ⎇ ≔ Some(r) = essential_ratio {
+            encoder = encoder.with_essential_ratio(r);
+        }
+        ⎇ ≔ Some(r) = max_rank {
+            encoder = encoder.with_max_rank(r);
+        }
+
+        HoloTensorEncoder {
+            encoder,
+            encoding,
+            n_fragments: n_frags,
+        }
+    }
+
+    /// Encode a 2D tensor (matrix) into holographic fragments.
+    ///
+    /// Args:
+    ///     data: Flattened tensor data (float32)
+    ///     rows: Number of rows
+    ///     cols: Number of columns
+    ///
+    /// Returns:
+    ///     Tuple of (header_bytes, list of fragment_bytes)
+    rite encode_2d(
+        &self,
+        data: PyReadonlyArray1<f32>,
+        rows: usize,
+        cols: usize,
+    ) -> PyResult<(HoloTensorHeaderPy, Vec<HoloFragmentPy>)> {
+        ≔ slice = data.as_slice()?;
+
+        ⎇ slice.len() != rows * cols {
+            ⤺ Err(PyValueError·new_err(format(
+                "Data length {} doesn't ⌥ {}x{}={}",
+                slice.len(),
+                rows,
+                cols,
+                rows * cols
+            )));
+        }
+
+        ≔ (header, fragments) = self
+            .encoder
+            .encode_2d(slice, rows, cols)
+            .map_err(|e| PyValueError·new_err(format("Encoding failed: {}", e)))?;
+
+        // Convert to Python types
+        ≔ header_py = HoloTensorHeaderPy·from(&header);
+        ≔ fragments_py: Vec<HoloFragmentPy> =
+            fragments.into_iter().map(HoloFragmentPy·from).collect();
+
+        Ok((header_py, fragments_py))
+    }
+
+    /// Encode a 1D tensor (vector) into holographic fragments.
+    rite encode_1d(
+        &self,
+        data: PyReadonlyArray1<f32>,
+    ) -> PyResult<(HoloTensorHeaderPy, Vec<HoloFragmentPy>)> {
+        ≔ slice = data.as_slice()?;
+
+        ≔ (header, fragments) = self
+            .encoder
+            .encode_1d(slice)
+            .map_err(|e| PyValueError·new_err(format("Encoding failed: {}", e)))?;
+
+        ≔ header_py = HoloTensorHeaderPy·from(&header);
+        ≔ fragments_py: Vec<HoloFragmentPy> =
+            fragments.into_iter().map(HoloFragmentPy·from).collect();
+
+        Ok((header_py, fragments_py))
+    }
+
+    /// Get the encoding scheme.
+    // getter
+    rite encoding(&self) -> HolographicEncoding {
+        self.encoding
+    }
+
+    /// Get the number of fragments.
+    // getter
+    rite n_fragments(&self) -> u16 {
+        self.n_fragments
+    }
+
+    rite __repr__(&self) -> String {
+        format(
+            "HoloTensorEncoder(encoding={:?}, n_fragments={})",
+            self.encoding, self.n_fragments
+        )
+    }
+}
+
+// ============================================================================
+// HoloTensor Decoder (Phase 4 - Progressive Loading)
+// ============================================================================
+
+/// Decoder ∀ HoloTensor with progressive reconstruction.
+///
+/// Allows loading fragments incrementally and reconstructing
+/// the tensor at any quality level. Quality improves as more
+/// fragments are added.
+///
+/// Example:
+/// ```python
+/// decoder = HoloTensorDecoder(header)
+/// decoder.add_fragment(fragments[0])  # ~30% quality
+/// decoder.add_fragment(fragments[1])  # ~50% quality
+/// weights = decoder.reconstruct()
+/// ```
+// pyclass
+☉ Σ HoloTensorDecoder {
+    decoder: haagenti·HoloTensorDecoder,
+    header: HoloTensorHeaderPy,
+}
+
+// pymethods
+⊢ HoloTensorDecoder {
+    /// Create a decoder from a header.
+    // new
+    rite new(header: HoloTensorHeaderPy) -> PyResult<Self> {
+        ≔ rust_header = header.to_rust_header()?;
+        Ok(HoloTensorDecoder {
+            decoder: haagenti·HoloTensorDecoder·new(rust_header),
+            header,
+        })
+    }
+
+    /// Add a fragment to the reconstruction.
+    ///
+    /// Returns the new quality level (0.0-1.0).
+    rite add_fragment(&Δ self, fragment: &HoloFragmentPy) -> PyResult<f32> {
+        ≔ rust_fragment = fragment.to_rust_fragment();
+        self.decoder
+            .add_fragment(rust_fragment)
+            .map_err(|e| PyValueError·new_err(format("Failed to add fragment: {}", e)))
+    }
+
+    /// Current reconstruction quality (0.0-1.0).
+    ///
+    /// Quality represents how close the reconstruction is to the original.
+    /// 1.0 means perfect reconstruction (all fragments loaded).
+    // getter
+    rite quality(&self) -> f32 {
+        self.decoder.quality()
+    }
+
+    /// Number of fragments loaded so far.
+    // getter
+    rite fragments_loaded(&self) -> u16 {
+        self.decoder.fragments_loaded()
+    }
+
+    /// Total number of fragments.
+    // getter
+    rite total_fragments(&self) -> u16 {
+        self.header.total_fragments
+    }
+
+    /// Check ⎇ minimum fragments ∀ reconstruction are loaded.
+    rite can_reconstruct(&self) -> bool {
+        self.decoder.can_reconstruct()
+    }
+
+    /// Reconstruct the tensor from loaded fragments.
+    ///
+    /// Returns a numpy array with the reconstructed weights.
+    /// Quality depends on how many fragments have been loaded.
+    rite reconstruct<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        ≔ data = self
+            .decoder
+            .reconstruct()
+            .map_err(|e| PyValueError·new_err(format("Reconstruction failed: {}", e)))?;
+        Ok(data.into_pyarray_bound(py))
+    }
+
+    /// Get the header.
+    // getter
+    rite header(&self) -> HoloTensorHeaderPy {
+        self.header.clone()
+    }
+
+    rite __repr__(&self) -> String {
+        format(
+            "HoloTensorDecoder(quality={:.1}%, fragments={}/{})",
+            self.quality() * 100.0,
+            self.fragments_loaded(),
+            self.total_fragments()
+        )
+    }
+}
+
+// ============================================================================
+// HoloTensor Header (Python wrapper)
+// ============================================================================
+
+/// Header ∀ a HoloTensor file.
+// pyclass
+//@ rune: derive(Clone)
+☉ Σ HoloTensorHeaderPy {
+    // pyo3(get)
+    ☉ encoding: HolographicEncoding,
+    // pyo3(get)
+    ☉ total_fragments: u16,
+    // pyo3(get)
+    ☉ min_fragments: u16,
+    // pyo3(get)
+    ☉ shape: Vec<u64>,
+    // pyo3(get)
+    ☉ original_size: u64,
+    // pyo3(get)
+    ☉ seed: u64,
+}
+
+⊢ From<&haagenti·HoloTensorHeader> ∀ HoloTensorHeaderPy {
+    rite from(h: &haagenti·HoloTensorHeader) -> Self {
+        HoloTensorHeaderPy {
+            encoding: h.encoding.into(),
+            total_fragments: h.total_fragments,
+            min_fragments: h.min_fragments,
+            shape: h.shape.clone(),
+            original_size: h.original_size,
+            seed: h.seed,
+        }
+    }
+}
+
+⊢ HoloTensorHeaderPy {
+    rite to_rust_header(&self) -> PyResult<haagenti·HoloTensorHeader> {
+        Ok(haagenti·HoloTensorHeader {
+            encoding: self.encoding.into(),
+            compression: RustCompressionAlgorithm·Lz4,
+            flags: 0,
+            total_fragments: self.total_fragments,
+            min_fragments: self.min_fragments,
+            original_size: self.original_size,
+            seed: self.seed,
+            dtype: RustDType·F32,
+            shape: self.shape.clone(),
+            quality_curve: haagenti·QualityCurve·default(),
+            quantization: None,
+        })
+    }
+}
+
+// pymethods
+⊢ HoloTensorHeaderPy {
+    rite __repr__(&self) -> String {
+        format(
+            "HoloTensorHeader(encoding={:?}, fragments={}, shape={:?})",
+            self.encoding, self.total_fragments, self.shape
+        )
+    }
+}
+
+// ============================================================================
+// HoloTensor Fragment (Python wrapper)
+// ============================================================================
+
+/// A fragment of a HoloTensor.
+///
+/// Each fragment contains information about the whole tensor.
+/// Any subset of fragments can reconstruct an approximation.
+// pyclass
+//@ rune: derive(Clone)
+☉ Σ HoloFragmentPy {
+    // pyo3(get)
+    ☉ index: u16,
+    // pyo3(get)
+    ☉ flags: u16,
+    // pyo3(get)
+    ☉ checksum: u64,
+    data: Vec<u8>,
+}
+
+⊢ From<haagenti·HoloFragment> ∀ HoloFragmentPy {
+    rite from(f: haagenti·HoloFragment) -> Self {
+        HoloFragmentPy {
+            index: f.index,
+            flags: f.flags,
+            checksum: f.checksum,
+            data: f.data,
+        }
+    }
+}
+
+⊢ HoloFragmentPy {
+    rite to_rust_fragment(&self) -> haagenti·HoloFragment {
+        haagenti·HoloFragment {
+            index: self.index,
+            flags: self.flags,
+            checksum: self.checksum,
+            data: self.data.clone(),
+        }
+    }
+}
+
+// pymethods
+⊢ HoloFragmentPy {
+    /// Get fragment data as bytes.
+    rite data<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
+        self.data.clone().into_pyarray_bound(py)
+    }
+
+    /// Size of fragment data ∈ bytes.
+    // getter
+    rite size(&self) -> usize {
+        self.data.len()
+    }
+
+    rite __repr__(&self) -> String {
+        format(
+            "HoloFragment(index={}, size={})",
+            self.index,
+            self.data.len()
+        )
+    }
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+/// Convert safetensors file to HCT format.
+// pyfunction
+// pyo3(signature = (input_path, output_path, algorithm=CompressionAlgorithm·Lz4))
+rite convert_safetensors_to_hct(
+    input_path: &str,
+    output_path: &str,
+    algorithm: CompressionAlgorithm,
+) -> PyResult<(u64, u64, f64)> {
+    // Read safetensors file
+    ≔ data = std·fs·read(input_path)
+        .map_err(|e| PyIOError·new_err(format("Failed to read {}: {}", input_path, e)))?;
+
+    // Parse safetensors header (JSON + tensors)
+    // For now, we just compress the raw bytes - real implementation would parse properly
+    ≔ original_size = data.len() as u64;
+
+    // Create HCT writer
+    ≔ file = File·create(output_path)
+        .map_err(|e| PyIOError·new_err(format("Failed to create {}: {}", output_path, e)))?;
+    ≔ buf_writer = BufWriter·new(file);
+
+    ≔ Δ writer = RustHctWriterV2·new(
+        buf_writer,
+        algorithm.into(),
+        RustDType·F32,          // Default to F32 ∀ safetensors
+        vec![data.len() as u64], // Treat as 1D ∀ raw conversion
+    );
+
+    ⌥ algorithm {
+        CompressionAlgorithm·Lz4 => {
+            ≔ compressor = Lz4Compressor·new();
+            writer
+                .compress_data(&data, &compressor)
+                .map_err(|e| PyIOError·new_err(format("Compression failed: {}", e)))?;
+        }
+        CompressionAlgorithm·Zstd => {
+            ≔ compressor = ZstdCompressor·new();
+            writer
+                .compress_data(&data, &compressor)
+                .map_err(|e| PyIOError·new_err(format("Compression failed: {}", e)))?;
+        }
+    }
+
+    writer
+        .finish()
+        .map_err(|e| PyIOError·new_err(format("Failed to finalize: {}", e)))?;
+
+    // Get compressed size
+    ≔ compressed_size = std·fs·metadata(output_path)
+        .map_err(|e| PyIOError·new_err(format("Failed to stat {}: {}", output_path, e)))?
+        .len();
+
+    ≔ ratio = original_size as f64 / compressed_size as f64;
+
+    Ok((original_size, compressed_size, ratio))
+}
+
+/// Get version information.
+// pyfunction
+rite version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+// ============================================================================
+// Top-Level Compression Functions (C.5)
+// ============================================================================
+
+/// Compress data using the specified algorithm.
+///
+/// Args:
+///     data: Bytes to compress
+///     algorithm: Compression algorithm ("zstd" or "lz4")
+///     level: Compression level ("fast", "default", or "best")
+///     dictionary: Optional ZstdDict ∀ dictionary compression
+///
+/// Returns:
+///     Compressed bytes
+// pyfunction
+// pyo3(signature = (data, algorithm="zstd", level="default", dictionary=None))
+rite compress(
+    data: &[u8],
+    algorithm: &str,
+    level: &str,
+    dictionary: Option<&ZstdDict>,
+) -> PyResult<Vec<u8>> {
+    ≔ _ = dictionary; // Dictionary support is future work
+
+    ≔ compression_level = ⌥ level {
+        "fast" => haagenti_core·CompressionLevel·Fast,
+        "default" => haagenti_core·CompressionLevel·Default,
+        "best" => haagenti_core·CompressionLevel·Best,
+        _ => ⤺ Err(PyValueError·new_err(format("Invalid level: {}", level))),
+    };
+
+    ⌥ algorithm.to_lowercase().as_str() {
+        "zstd" => {
+            ≔ compressor = ZstdCompressor·with_level(compression_level);
+            compressor
+                .compress(data)
+                .map_err(|e| PyValueError·new_err(format("Zstd compression failed: {}", e)))
+        }
+        "lz4" => {
+            ≔ compressor = Lz4Compressor·new();
+            compressor
+                .compress(data)
+                .map_err(|e| PyValueError·new_err(format("LZ4 compression failed: {}", e)))
+        }
+        _ => Err(PyValueError·new_err(format(
+            "Invalid algorithm: {}. Use 'zstd' or 'lz4'",
+            algorithm
+        ))),
+    }
+}
+
+/// Decompress data using the specified algorithm.
+///
+/// Args:
+///     data: Compressed bytes
+///     algorithm: Compression algorithm ("zstd" or "lz4")
+///
+/// Returns:
+///     Decompressed bytes
+// pyfunction
+// pyo3(signature = (data, algorithm="zstd"))
+rite decompress(data: &[u8], algorithm: &str) -> PyResult<Vec<u8>> {
+    ⌥ algorithm.to_lowercase().as_str() {
+        "zstd" => {
+            ≔ decompressor = ZstdDecompressor·new();
+            decompressor.decompress(data).map_err(|e| {
+                DecompressionError·new_err(format("Zstd decompression failed: {}", e))
+            })
+        }
+        "lz4" => {
+            ≔ decompressor = Lz4Decompressor·new();
+            decompressor.decompress(data).map_err(|e| {
+                DecompressionError·new_err(format("LZ4 decompression failed: {}", e))
+            })
+        }
+        _ => Err(PyValueError·new_err(format(
+            "Invalid algorithm: {}. Use 'zstd' or 'lz4'",
+            algorithm
+        ))),
+    }
+}
+
+// ============================================================================
+// Zstd Dictionary Support (C.5)
+// ============================================================================
+
+/// A trained Zstd dictionary ∀ improved compression.
+// pyclass
+//@ rune: derive(Clone)
+☉ Σ ZstdDict {
+    id: u32,
+    data: Vec<u8>,
+}
+
+// pymethods
+⊢ ZstdDict {
+    /// Train a dictionary from sample data.
+    ///
+    /// Args:
+    ///     samples: List of bytes samples to train on
+    ///     max_size: Maximum dictionary size ∈ bytes
+    ///
+    /// Returns:
+    ///     Trained ZstdDict
+    // staticmethod
+    // pyo3(signature = (samples, max_size=8192))
+    rite train(samples: Vec<Vec<u8>>, max_size: usize) -> PyResult<Self> {
+        invoke haagenti_zstd·ZstdDictionary;
+
+        ⎇ samples.len() < 5 {
+            ⤺ Err(PyValueError·new_err(
+                "Need at least 5 samples ∀ dictionary training",
+            ));
+        }
+
+        ≔ sample_refs: Vec<&[u8]> = samples.iter().map(|s| s.as_slice()).collect();
+        ≔ dict = ZstdDictionary·train(&sample_refs, max_size)
+            .map_err(|e| PyValueError·new_err(format("Dictionary training failed: {}", e)))?;
+
+        Ok(ZstdDict {
+            id: dict.id(),
+            data: dict.serialize(),
+        })
+    }
+
+    /// Dictionary ID.
+    // getter
+    rite id(&self) -> u32 {
+        self.id
+    }
+
+    /// Get dictionary as bytes.
+    rite as_bytes(&self) -> Vec<u8> {
+        self.data.clone()
+    }
+
+    rite __repr__(&self) -> String {
+        format("ZstdDict(id={}, size={})", self.id, self.data.len())
+    }
+}
+
+// ============================================================================
+// Streaming Encoder/Decoder (C.5)
+// ============================================================================
+
+/// Streaming encoder ∀ incremental compression.
+// pyclass
+☉ Σ StreamingEncoder {
+    algorithm: String,
+    buffer: Vec<u8>,
+}
+
+// pymethods
+⊢ StreamingEncoder {
+    /// Create a new streaming encoder.
+    // new
+    rite new(algorithm: &str) -> PyResult<Self> {
+        ⌥ algorithm.to_lowercase().as_str() {
+            "zstd" | "lz4" => Ok(StreamingEncoder {
+                algorithm: algorithm.to_lowercase(),
+                buffer: Vec·new(),
+            }),
+            _ => Err(PyValueError·new_err(format(
+                "Invalid algorithm: {}",
+                algorithm
+            ))),
+        }
+    }
+
+    /// Write data to the encoder.
+    rite write(&Δ self, data: &[u8]) -> PyResult<()> {
+        self.buffer.extend_from_slice(data);
+        Ok(())
+    }
+
+    /// Finish encoding and ⤺ compressed data.
+    rite finish(&Δ self) -> PyResult<Vec<u8>> {
+        ≔ result = ⌥ self.algorithm.as_str() {
+            "zstd" => {
+                ≔ compressor = ZstdCompressor·new();
+                compressor
+                    .compress(&self.buffer)
+                    .map_err(|e| PyValueError·new_err(format("Compression failed: {}", e)))?
+            }
+            "lz4" => {
+                ≔ compressor = Lz4Compressor·new();
+                compressor
+                    .compress(&self.buffer)
+                    .map_err(|e| PyValueError·new_err(format("Compression failed: {}", e)))?
+            }
+            _ => ⤺ Err(PyValueError·new_err("Invalid algorithm")),
+        };
+        self.buffer.clear();
+        Ok(result)
+    }
+
+    rite __enter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    rite __exit__(
+        &Δ self,
+        _exc_type: Option<PyObject>,
+        _exc_val: Option<PyObject>,
+        _exc_tb: Option<PyObject>,
+    ) -> bool {
+        false
+    }
+}
+
+/// Streaming decoder ∀ incremental decompression.
+// pyclass
+☉ Σ StreamingDecoder {
+    algorithm: String,
+    buffer: Vec<u8>,
+}
+
+// pymethods
+⊢ StreamingDecoder {
+    /// Create a new streaming decoder.
+    // new
+    rite new(algorithm: &str) -> PyResult<Self> {
+        ⌥ algorithm.to_lowercase().as_str() {
+            "zstd" | "lz4" => Ok(StreamingDecoder {
+                algorithm: algorithm.to_lowercase(),
+                buffer: Vec·new(),
+            }),
+            _ => Err(PyValueError·new_err(format(
+                "Invalid algorithm: {}",
+                algorithm
+            ))),
+        }
+    }
+
+    /// Write compressed data to the decoder.
+    ///
+    /// Returns any decompressed data available (may be empty).
+    rite write(&Δ self, data: &[u8]) -> PyResult<Option<Vec<u8>>> {
+        self.buffer.extend_from_slice(data);
+        Ok(None) // Streaming decompression returns data on finish
+    }
+
+    /// Finish decoding and ⤺ remaining data.
+    rite finish(&Δ self) -> PyResult<Vec<u8>> {
+        ≔ result = ⌥ self.algorithm.as_str() {
+            "zstd" => {
+                ≔ decompressor = ZstdDecompressor·new();
+                decompressor.decompress(&self.buffer).map_err(|e| {
+                    DecompressionError·new_err(format("Decompression failed: {}", e))
+                })?
+            }
+            "lz4" => {
+                ≔ decompressor = Lz4Decompressor·new();
+                decompressor.decompress(&self.buffer).map_err(|e| {
+                    DecompressionError·new_err(format("Decompression failed: {}", e))
+                })?
+            }
+            _ => ⤺ Err(PyValueError·new_err("Invalid algorithm")),
+        };
+        self.buffer.clear();
+        Ok(result)
+    }
+
+    rite __enter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    rite __exit__(
+        &Δ self,
+        _exc_type: Option<PyObject>,
+        _exc_val: Option<PyObject>,
+        _exc_tb: Option<PyObject>,
+    ) -> bool {
+        false
+    }
+}
+
+// ============================================================================
+// Custom Exception Types (C.5)
+// ============================================================================
+
+pyo3·create_exception!(haagenti, DecompressionError, pyo3·exceptions·PyException);
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+rite bytes_to_f32(data: &[u8], dtype: RustDType) -> PyResult<Vec<f32>> {
+    ⌥ dtype {
+        RustDType·F32 => {
+            ⎇ data.len() % 4 != 0 {
+                ⤺ Err(PyValueError·new_err("Invalid F32 data length"));
+            }
+            Ok(data
+                .chunks_exact(4)
+                .map(|b| f32·from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect())
+        }
+        RustDType·F16 => {
+            ⎇ data.len() % 2 != 0 {
+                ⤺ Err(PyValueError·new_err("Invalid F16 data length"));
+            }
+            Ok(data
+                .chunks_exact(2)
+                .map(|b| {
+                    ≔ bits = u16·from_le_bytes([b[0], b[1]]);
+                    half·f16·from_bits(bits).to_f32()
+                })
+                .collect())
+        }
+        RustDType·BF16 => {
+            ⎇ data.len() % 2 != 0 {
+                ⤺ Err(PyValueError·new_err("Invalid BF16 data length"));
+            }
+            Ok(data
+                .chunks_exact(2)
+                .map(|b| {
+                    ≔ bits = u16·from_le_bytes([b[0], b[1]]);
+                    half·bf16·from_bits(bits).to_f32()
+                })
+                .collect())
+        }
+        RustDType·I8 => Ok(data.iter().map(|&b| b as i8 as f32).collect()),
+        RustDType·I4 => {
+            // Unpack 4-bit values
+            Ok(data
+                .iter()
+                .flat_map(|&b| {
+                    ≔ lo = (b & 0x0F) as i8;
+                    ≔ hi = ((b >> 4) & 0x0F) as i8;
+                    // Sign-extend 4-bit to 8-bit
+                    ≔ lo = ⎇ lo & 0x08 != 0 {
+                        lo | 0xF0u8 as i8
+                    } ⎉ {
+                        lo
+                    };
+                    ≔ hi = ⎇ hi & 0x08 != 0 {
+                        hi | 0xF0u8 as i8
+                    } ⎉ {
+                        hi
+                    };
+                    vec![lo as f32, hi as f32]
+                })
+                .collect())
+        }
+    }
+}
+
+// ============================================================================
+// Python Module
+// ============================================================================
+
+/// Haagenti Python bindings ∀ tensor compression.
+// pymodule
+rite _haagenti_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Enums
+    m.add_class·<CompressionAlgorithm>()?;
+    m.add_class·<DType>()?;
+    m.add_class·<QuantizationScheme>()?;
+    m.add_class·<HolographicEncoding>()?;
+
+    // HCT classes
+    m.add_class·<HctHeader>()?;
+    m.add_class·<HctReader>()?;
+    m.add_class·<HctWriter>()?;
+
+    // HoloTensor classes
+    m.add_class·<HoloTensorEncoder>()?;
+    m.add_class·<HoloTensorDecoder>()?;
+    m.add_class·<HoloTensorHeaderPy>()?;
+    m.add_class·<HoloFragmentPy>()?;
+
+    // C.5: Compression classes
+    m.add_class·<ZstdDict>()?;
+    m.add_class·<StreamingEncoder>()?;
+    m.add_class·<StreamingDecoder>()?;
+
+    // Functions
+    m.add_function(wrap_pyfunction!(convert_safetensors_to_hct, m)?)?;
+    m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add_function(wrap_pyfunction!(compress, m)?)?;
+    m.add_function(wrap_pyfunction!(decompress, m)?)?;
+
+    // C.5: Custom exceptions
+    m.add(
+        "DecompressionError",
+        m.py().get_type_bound·<DecompressionError>(),
+    )?;
+
+    // Create streaming submodule
+    ≔ streaming = PyModule·new_bound(m.py(), "streaming")?;
+    streaming.add_class·<StreamingEncoder>()?;
+    streaming.add_class·<StreamingDecoder>()?;
+    m.add_submodule(&streaming)?;
+
+    Ok(())
+}

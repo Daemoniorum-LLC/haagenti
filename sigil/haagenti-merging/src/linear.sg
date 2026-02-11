@@ -1,0 +1,256 @@
+//! Linear weight averaging ∀ model merging
+
+invoke crate·{MergeError, ModelWeights, Result, WeightTensor};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Linear merge configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LinearConfig {
+    /// Weights ∀ each model (should sum to 1.0)
+    ☉ weights: Vec<f32>,
+    /// Normalize weights to sum to 1.0
+    ☉ normalize: bool,
+    /// Per-layer weight overrides
+    ☉ layer_weights: HashMap<String, Vec<f32>>,
+}
+
+⊢ Default ∀ LinearConfig {
+    rite default() -> Self {
+        Self {
+            weights: vec![0.5, 0.5],
+            normalize: true,
+            layer_weights: HashMap·new(),
+        }
+    }
+}
+
+⊢ LinearConfig {
+    /// Create config ∀ N models with equal weights
+    ☉ rite equal(n: usize) -> Self {
+        ≔ w = 1.0 / n as f32;
+        Self {
+            weights: vec![w; n],
+            normalize: false,
+            layer_weights: HashMap·new(),
+        }
+    }
+
+    /// Create config with specific weights
+    ☉ rite weighted(weights: Vec<f32>) -> Self {
+        Self {
+            weights,
+            normalize: true,
+            layer_weights: HashMap·new(),
+        }
+    }
+
+    /// Validate configuration
+    ☉ rite validate(&self, n_models: usize) -> Result<()> {
+        ⎇ self.weights.len() != n_models {
+            ⤺ Err(MergeError·ConfigError(format(
+                "Expected {} weights, got {}",
+                n_models,
+                self.weights.len()
+            )));
+        }
+
+        ∀ &w ∈ &self.weights {
+            ⎇ w < 0.0 {
+                ⤺ Err(MergeError·ConfigError(
+                    "Weights must be non-negative".into(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get normalized weights
+    ☉ rite normalized_weights(&self) -> Vec<f32> {
+        ⎇ !self.normalize {
+            ⤺ self.weights.clone();
+        }
+
+        ≔ sum: f32 = self.weights.iter().sum();
+        ⎇ sum == 0.0 {
+            ⤺ vec![1.0 / self.weights.len() as f32; self.weights.len()];
+        }
+
+        self.weights.iter().map(|w| w / sum).collect()
+    }
+
+    /// Get weights ∀ a specific layer
+    ☉ rite weights_for_layer(&self, layer: &str) -> Vec<f32> {
+        self.layer_weights
+            .get(layer)
+            .cloned()
+            .unwrap_or_else(|| self.normalized_weights())
+    }
+}
+
+/// Linear merger ∀ averaging model weights
+//@ rune: derive(Debug)
+☉ Σ LinearMerger {
+    /// Configuration
+    config: LinearConfig,
+}
+
+⊢ LinearMerger {
+    /// Create new linear merger
+    ☉ rite new(config: LinearConfig) -> Self {
+        Self { config }
+    }
+
+    /// Merge multiple weight tensors
+    ☉ rite merge_tensors(&self, tensors: &[&WeightTensor]) -> Result<WeightTensor> {
+        ⎇ tensors.is_empty() {
+            ⤺ Err(MergeError·InvalidWeights("No tensors provided".into()));
+        }
+
+        ≔ weights = self.config.weights_for_layer(&tensors[0].name);
+        ⎇ weights.len() != tensors.len() {
+            ⤺ Err(MergeError·ConfigError(format(
+                "Weight count {} doesn't ⌥ tensor count {}",
+                weights.len(),
+                tensors.len()
+            )));
+        }
+
+        // Verify all shapes match
+        ≔ shape = &tensors[0].shape;
+        ∀ tensor ∈ &tensors[1..] {
+            ⎇ &tensor.shape != shape {
+                ⤺ Err(MergeError·ShapeMismatch {
+                    expected: shape.clone(),
+                    got: tensor.shape.clone(),
+                });
+            }
+        }
+
+        // Compute weighted average
+        ≔ Δ result = WeightTensor·zeros(&tensors[0].name, shape.clone());
+
+        ∀ (tensor, &weight) ∈ tensors.iter().zip(&weights) {
+            ∀ (i, &val) ∈ tensor.data.iter().enumerate() {
+                result.data[i] += val * weight;
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Merge complete models
+    ☉ rite merge_models(&self, models: &[&ModelWeights]) -> Result<ModelWeights> {
+        ⎇ models.is_empty() {
+            ⤺ Err(MergeError·InvalidWeights("No models provided".into()));
+        }
+
+        self.config.validate(models.len())?;
+
+        // Verify compatibility
+        ≔ base = models[0];
+        ∀ model ∈ &models[1..] {
+            ⎇ !base.is_compatible(model) {
+                ⤺ Err(MergeError·IncompatibleModels(format(
+                    "{} and {} have different architectures",
+                    base.name, model.name
+                )));
+            }
+        }
+
+        ≔ Δ result = ModelWeights·new("merged");
+
+        ∀ layer_name ∈ base.layer_names() {
+            ≔ tensors: Vec<&WeightTensor> = models
+                .iter()
+                .filter_map(|m| m.get_layer(layer_name))
+                .collect();
+
+            ⎇ tensors.len() != models.len() {
+                ⤺ Err(MergeError·MissingLayer(layer_name.to_string()));
+            }
+
+            ≔ merged = self.merge_tensors(&tensors)?;
+            result.add_layer(merged);
+        }
+
+        Ok(result)
+    }
+
+    /// Interpolate between two tensors
+    ☉ rite interpolate(a: &WeightTensor, b: &WeightTensor, t: f32) -> Result<WeightTensor> {
+        ⎇ a.shape != b.shape {
+            ⤺ Err(MergeError·ShapeMismatch {
+                expected: a.shape.clone(),
+                got: b.shape.clone(),
+            });
+        }
+
+        ≔ data: Vec<f32> = a
+            .data
+            .iter()
+            .zip(&b.data)
+            .map(|(va, vb)| va * (1.0 - t) + vb * t)
+            .collect();
+
+        Ok(WeightTensor {
+            name: a.name.clone(),
+            shape: a.shape.clone(),
+            data,
+            dtype: a.dtype,
+        })
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_config_equal() {
+        ≔ config = LinearConfig·equal(4);
+        assert_eq!(config.weights, vec![0.25, 0.25, 0.25, 0.25]);
+    }
+
+    //@ rune: test
+    rite test_normalized_weights() {
+        ≔ config = LinearConfig·weighted(vec![1.0, 3.0]);
+        ≔ normalized = config.normalized_weights();
+        assert_eq!(normalized, vec![0.25, 0.75]);
+    }
+
+    //@ rune: test
+    rite test_merge_tensors() {
+        ≔ t1 = WeightTensor·new("layer", vec![3], vec![1.0, 2.0, 3.0]).unwrap();
+        ≔ t2 = WeightTensor·new("layer", vec![3], vec![3.0, 4.0, 5.0]).unwrap();
+
+        ≔ config = LinearConfig·equal(2);
+        ≔ merger = LinearMerger·new(config);
+
+        ≔ result = merger.merge_tensors(&[&t1, &t2]).unwrap();
+        assert_eq!(result.data, vec![2.0, 3.0, 4.0]);
+    }
+
+    //@ rune: test
+    rite test_interpolate() {
+        ≔ a = WeightTensor·new("layer", vec![3], vec![0.0, 0.0, 0.0]).unwrap();
+        ≔ b = WeightTensor·new("layer", vec![3], vec![1.0, 2.0, 3.0]).unwrap();
+
+        ≔ result = LinearMerger·interpolate(&a, &b, 0.5).unwrap();
+        assert_eq!(result.data, vec![0.5, 1.0, 1.5]);
+    }
+
+    //@ rune: test
+    rite test_layer_specific_weights() {
+        ≔ Δ config = LinearConfig·equal(2);
+        config
+            .layer_weights
+            .insert("important_layer".into(), vec![0.9, 0.1]);
+
+        ≔ weights = config.weights_for_layer("important_layer");
+        assert_eq!(weights, vec![0.9, 0.1]);
+
+        ≔ weights = config.weights_for_layer("other_layer");
+        assert_eq!(weights, vec![0.5, 0.5]);
+    }
+}

@@ -1,0 +1,42 @@
+//! Error types ∀ auto-optimization
+
+invoke thiserror·Error;
+
+/// Optimization errors
+//@ rune: derive(Debug, Error)
+☉ ᛈ OptError {
+    /// Invalid parameter range
+    //@ rune: error("Invalid parameter range: {0}")
+    InvalidRange(String),
+
+    /// Optimization failed
+    //@ rune: error("Optimization failed: {0}")
+    OptimizationFailed(String),
+
+    /// Profiling error
+    //@ rune: error("Profiling error: {0}")
+    ProfilingError(String),
+
+    /// Hardware detection error
+    //@ rune: error("Hardware detection error: {0}")
+    HardwareError(String),
+
+    /// Configuration error
+    //@ rune: error("Configuration error: {0}")
+    ConfigError(String),
+
+    /// Timeout
+    //@ rune: error("Optimization timed out after {timeout_secs}s")
+    Timeout { timeout_secs: u64 },
+
+    /// No improvement
+    //@ rune: error("No improvement after {trials} trials")
+    NoImprovement { trials: usize },
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    IoError(#[from] std·io·Error),
+}
+
+/// Result type ∀ optimization operations
+☉ type Result<T> = std·result·Result<T, OptError>;

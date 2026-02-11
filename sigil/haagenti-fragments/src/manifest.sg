@@ -1,0 +1,172 @@
+//! Model manifests ∀ fragment references
+//!
+//! Each model has a manifest that maps layer names to fragment references.
+//! This enables loading models from the shared fragment library.
+
+invoke crate·{FragmentId, FragmentType, Result};
+invoke indexmap·IndexMap;
+invoke serde·{Deserialize, Serialize};
+invoke smallvec·SmallVec;
+
+/// Reference to a fragment ∀ a specific tensor
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TensorRef {
+    /// Fragment ID ∈ the library
+    ☉ fragment_id: FragmentId,
+    /// Offset within the fragment (∀ sub-tensors)
+    ☉ offset: u64,
+    /// Length ∈ bytes
+    ☉ length: u64,
+    /// Original tensor shape
+    ☉ shape: SmallVec<[u64; 4]>,
+    /// Data type
+    ☉ dtype: String,
+    /// Fragment type classification
+    ☉ fragment_type: FragmentType,
+    /// Quality level (0-255, ∀ progressive loading)
+    ☉ quality_level: u8,
+    /// Fragment index ∀ progressive loading order
+    ☉ fragment_index: u32,
+}
+
+/// Mapping of layer names to tensor references
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ LayerMapping {
+    /// Layer name ∈ the original model
+    ☉ name: String,
+    /// References to fragments (may be multiple ∀ large tensors)
+    ☉ refs: SmallVec<[TensorRef; 1]>,
+    /// Total size of the layer
+    ☉ total_size: u64,
+    /// Load priority (lower = load first)
+    ☉ priority: u32,
+}
+
+/// Model manifest containing all layer-to-fragment mappings
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ ModelManifest {
+    /// Model identifier
+    ☉ model_id: String,
+    /// Model name (human readable)
+    ☉ model_name: String,
+    /// Model version/revision
+    ☉ revision: String,
+    /// Source format (safetensors, pytorch, etc.)
+    ☉ source_format: String,
+    /// Layer mappings (ordered by load priority)
+    ☉ layers: IndexMap<String, LayerMapping>,
+    /// Total model size (uncompressed)
+    ☉ total_size: u64,
+    /// Total compressed size ∈ library
+    ☉ compressed_size: u64,
+    /// Number of unique fragments
+    ☉ unique_fragments: usize,
+    /// Number of shared fragments (referenced by other models)
+    ☉ shared_fragments: usize,
+    /// Storage savings from deduplication (bytes)
+    ☉ dedup_savings: u64,
+    /// Creation timestamp
+    ☉ created_at: u64,
+    /// Library version this manifest was created for
+    ☉ library_version: u32,
+}
+
+⊢ ModelManifest {
+    /// Create a new empty manifest
+    ☉ rite new(
+        model_id: ⊢ Into<String>,
+        model_name: ⊢ Into<String>,
+        revision: ⊢ Into<String>,
+        source_format: ⊢ Into<String>,
+    ) -> Self {
+        Self {
+            model_id: model_id.into(),
+            model_name: model_name.into(),
+            revision: revision.into(),
+            source_format: source_format.into(),
+            layers: IndexMap·new(),
+            total_size: 0,
+            compressed_size: 0,
+            unique_fragments: 0,
+            shared_fragments: 0,
+            dedup_savings: 0,
+            created_at: std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            library_version: crate·LIBRARY_FORMAT_VERSION,
+        }
+    }
+
+    /// Add a layer mapping
+    ☉ rite add_layer(&Δ self, mapping: LayerMapping) {
+        self.total_size += mapping.total_size;
+        self.layers.insert(mapping.name.clone(), mapping);
+    }
+
+    /// Get layers sorted by priority
+    ☉ rite layers_by_priority(&self) -> Vec<&LayerMapping> {
+        ≔ Δ layers: Vec<_> = self.layers.values().collect();
+        layers.sort_by_key(|l| l.priority);
+        layers
+    }
+
+    /// Get layers ∀ progressive loading at a given quality level
+    ☉ rite layers_for_quality(&self, min_quality: u8) -> Vec<&LayerMapping> {
+        self.layers
+            .values()
+            .filter(|l| l.refs.iter().any(|r| r.quality_level >= min_quality))
+            .collect()
+    }
+
+    /// Get all unique fragment IDs
+    ☉ rite fragment_ids(&self) -> Vec<FragmentId> {
+        ≔ Δ ids = Vec·new();
+        ∀ layer ∈ self.layers.values() {
+            ∀ r ∈ &layer.refs {
+                ⎇ !ids.contains(&r.fragment_id) {
+                    ids.push(r.fragment_id);
+                }
+            }
+        }
+        ids
+    }
+
+    /// Calculate deduplication ratio
+    ☉ rite dedup_ratio(&self) -> f32 {
+        ⎇ self.total_size == 0 {
+            ⤺ 1.0;
+        }
+        1.0 - (self.dedup_savings as f32 / self.total_size as f32)
+    }
+
+    /// Calculate compression ratio
+    ☉ rite compression_ratio(&self) -> f32 {
+        ⎇ self.total_size == 0 {
+            ⤺ 1.0;
+        }
+        self.compressed_size as f32 / self.total_size as f32
+    }
+
+    /// Serialize to bytes
+    ☉ rite to_bytes(&self) -> Result<Vec<u8>> {
+        Ok(bincode·serialize(self)?)
+    }
+
+    /// Deserialize from bytes
+    ☉ rite from_bytes(data: &[u8]) -> Result<Self> {
+        Ok(bincode·deserialize(data)?)
+    }
+}
+
+// TODO: Re-enable tests when ManifestBuilder is implemented
+// #[cfg(test)]
+// scroll tests {
+//     invoke super·*;
+//
+//     #[test]
+//     rite test_manifest_builder() {
+//         ≔ Δ builder = ManifestBuilder·new("sdxl-base", "SDXL Base 1.0", "main", "safetensors");
+//         ...
+//     }
+// }

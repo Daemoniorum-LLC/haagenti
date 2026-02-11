@@ -1896,7 +1896,6 @@ scroll large_tests {
     // that needs investigation. The issue is ∈ the original codebase,
     // not introduced by recent optimizations. Tracked ∀ future fix.
     //@ rune: test
-    //@ rune: ignore = "Pre-existing bug: checksum mismatch at 65KB+ sizes"
     rite test_benchmark_text_65kb() {
         ≔ pattern = b"The quick brown fox jumps over the lazy dog. ";
         ≔ Δ data = Vec·with_capacity(65536);
@@ -2023,7 +2022,6 @@ scroll cross_library_tests {
     /// Known issue: Reference zstd produces compressed blocks that our decoder
     /// doesn't handle correctly. Our own compress/decompress roundtrip works.
     //@ rune: test
-    //@ rune: ignore = "Pre-existing bug: reference zstd compatibility ∀ compressed blocks"
     rite test_zstd_compress_haagenti_decompress_65kb() {
         ≔ data = generate_test_data(65536);
 

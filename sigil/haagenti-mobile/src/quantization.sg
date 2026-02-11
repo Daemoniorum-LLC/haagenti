@@ -1,0 +1,363 @@
+//! INT4 quantization ∀ mobile deployment
+
+invoke crate·{MobileError, Result};
+invoke serde·{Deserialize, Serialize};
+
+/// Quantization configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ QuantizationConfig {
+    /// Group size ∀ per-group quantization
+    ☉ group_size: usize,
+    /// Symmetric quantization (vs asymmetric)
+    ☉ symmetric: bool,
+    /// Per-channel quantization
+    ☉ per_channel: bool,
+    /// Calibration samples
+    ☉ calibration_samples: usize,
+    /// Clipping percentile ∀ outliers
+    ☉ clip_percentile: f32,
+}
+
+⊢ Default ∀ QuantizationConfig {
+    rite default() -> Self {
+        Self {
+            group_size: 128,
+            symmetric: true,
+            per_channel: true,
+            calibration_samples: 256,
+            clip_percentile: 99.9,
+        }
+    }
+}
+
+/// Quantized tensor storage
+//@ rune: derive(Debug, Clone)
+☉ Σ QuantizedTensor {
+    /// Packed INT4 values (2 values per byte)
+    ☉ data: Vec<u8>,
+    /// Scale factors per group
+    ☉ scales: Vec<f32>,
+    /// Zero points per group (∀ asymmetric)
+    ☉ zero_points: Option<Vec<i8>>,
+    /// Original shape
+    ☉ shape: Vec<usize>,
+    /// Group size used
+    ☉ group_size: usize,
+}
+
+⊢ QuantizedTensor {
+    /// Create empty quantized tensor
+    ☉ rite new(shape: Vec<usize>, group_size: usize) -> Self {
+        ≔ total_elements: usize = shape.iter().product();
+        ≔ packed_size = total_elements.div_ceil(2);
+        ≔ num_groups = total_elements.div_ceil(group_size);
+
+        Self {
+            data: vec![0; packed_size],
+            scales: vec![1.0; num_groups],
+            zero_points: None,
+            shape,
+            group_size,
+        }
+    }
+
+    /// Get number of elements
+    ☉ rite numel(&self) -> usize {
+        self.shape.iter().product()
+    }
+
+    /// Get storage size ∈ bytes
+    ☉ rite storage_size(&self) -> usize {
+        ≔ data_size = self.data.len();
+        ≔ scale_size = self.scales.len() * 4;
+        ≔ zp_size = self.zero_points.as_ref().map_or(0, |zp| zp.len());
+        data_size + scale_size + zp_size
+    }
+
+    /// Compression ratio compared to FP32
+    ☉ rite compression_ratio(&self) -> f32 {
+        ≔ original_size = self.numel() * 4; // FP32
+        original_size as f32 / self.storage_size() as f32
+    }
+
+    /// Dequantize to FP32
+    ☉ rite dequantize(&self) -> Vec<f32> {
+        ≔ Δ result = Vec·with_capacity(self.numel());
+
+        ∀ (group_idx, group_scale) ∈ self.scales.iter().enumerate() {
+            ≔ start = group_idx * self.group_size;
+            ≔ end = (start + self.group_size).min(self.numel());
+
+            ≔ zero_point = self
+                .zero_points
+                .as_ref()
+                .map_or(0, |zp| zp[group_idx] as i32);
+
+            ∀ i ∈ start..end {
+                ≔ packed_idx = i / 2;
+                ≔ int4_val = ⎇ i % 2 == 0 {
+                    (self.data[packed_idx] & 0x0F) as i32
+                } ⎉ {
+                    ((self.data[packed_idx] >> 4) & 0x0F) as i32
+                };
+
+                // Convert from unsigned (0-15) to signed (-8 to 7)
+                ≔ signed_val = int4_val - 8;
+                ≔ dequant_val = (signed_val - zero_point) as f32 * group_scale;
+                result.push(dequant_val);
+            }
+        }
+
+        result
+    }
+}
+
+/// INT4 quantizer
+//@ rune: derive(Debug)
+☉ Σ Int4Quantizer {
+    /// Configuration
+    config: QuantizationConfig,
+    /// Calibration data statistics
+    calibration_stats: Option<CalibrationStats>,
+}
+
+/// Calibration statistics (internal)
+//@ rune: derive(Debug, Clone)
+Σ CalibrationStats {
+    /// Min values per group
+    mins: Vec<f32>,
+    /// Max values per group
+    maxs: Vec<f32>,
+    /// Running count
+    count: usize,
+}
+
+⊢ Int4Quantizer {
+    /// Create new quantizer
+    ☉ rite new(config: QuantizationConfig) -> Self {
+        Self {
+            config,
+            calibration_stats: None,
+        }
+    }
+
+    /// Calibrate quantizer with sample data
+    ☉ rite calibrate(&Δ self, samples: &[&[f32]]) -> Result<()> {
+        ⎇ samples.is_empty() {
+            ⤺ Err(MobileError·QuantizationError(
+                "No calibration samples provided".into(),
+            ));
+        }
+
+        ≔ sample_len = samples[0].len();
+        ≔ num_groups = sample_len.div_ceil(self.config.group_size);
+
+        ≔ Δ mins = [f32·MAX; num_groups];
+        ≔ Δ maxs = [f32·MIN; num_groups];
+
+        ∀ sample ∈ samples {
+            ∀ (group_idx, chunk) ∈ sample.chunks(self.config.group_size).enumerate() {
+                ∀ &val ∈ chunk {
+                    mins[group_idx] = mins[group_idx].min(val);
+                    maxs[group_idx] = maxs[group_idx].max(val);
+                }
+            }
+        }
+
+        // Apply clipping
+        ⎇ self.config.clip_percentile < 100.0 {
+            // In a real implementation, we'd compute actual percentiles
+            // For now, just shrink the range slightly
+            ≔ shrink = (100.0 - self.config.clip_percentile) / 100.0;
+            ∀ i ∈ 0..num_groups {
+                ≔ range = maxs[i] - mins[i];
+                mins[i] += range * shrink;
+                maxs[i] -= range * shrink;
+            }
+        }
+
+        self.calibration_stats = Some(CalibrationStats {
+            mins,
+            maxs,
+            count: samples.len(),
+        });
+
+        Ok(())
+    }
+
+    /// Quantize tensor to INT4
+    ☉ rite quantize(&self, tensor: &[f32]) -> Result<QuantizedTensor> {
+        ≔ shape = [tensor.len()];
+        ≔ Δ result = QuantizedTensor·new(shape, self.config.group_size);
+
+        // Compute scales per group
+        ∀ (group_idx, chunk) ∈ tensor.chunks(self.config.group_size).enumerate() {
+            ≔ (min_val, max_val) = ⎇ ≔ Some(stats) = &self.calibration_stats {
+                (stats.mins[group_idx], stats.maxs[group_idx])
+            } ⎉ {
+                // Dynamic range
+                ≔ min = chunk.iter().cloned().fold(f32·MAX, f32·min);
+                ≔ max = chunk.iter().cloned().fold(f32·MIN, f32·max);
+                (min, max)
+            };
+
+            // Symmetric quantization: scale to [-8, 7]
+            ≔ abs_max = min_val.abs().max(max_val.abs());
+            ≔ scale = ⎇ abs_max > 0.0 { abs_max / 7.0 } ⎉ { 1.0 };
+            result.scales[group_idx] = scale;
+        }
+
+        // Quantize values
+        ∀ (i, &val) ∈ tensor.iter().enumerate() {
+            ≔ group_idx = i / self.config.group_size;
+            ≔ scale = result.scales[group_idx];
+
+            // Quantize to [-8, 7] then shift to [0, 15]
+            ≔ quantized = (val / scale).round().clamp(-8.0, 7.0) as i32 + 8;
+            ≔ uint4_val = quantized as u8;
+
+            ≔ packed_idx = i / 2;
+            ⎇ i % 2 == 0 {
+                result.data[packed_idx] = (result.data[packed_idx] & 0xF0) | (uint4_val & 0x0F);
+            } ⎉ {
+                result.data[packed_idx] =
+                    (result.data[packed_idx] & 0x0F) | ((uint4_val & 0x0F) << 4);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Get configuration
+    ☉ rite config(&self) -> &QuantizationConfig {
+        &self.config
+    }
+
+    /// Check ⎇ calibrated
+    ☉ rite is_calibrated(&self) -> bool {
+        self.calibration_stats.is_some()
+    }
+}
+
+/// Quantization error metrics
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ QuantizationMetrics {
+    /// Mean squared error
+    ☉ mse: f32,
+    /// Mean absolute error
+    ☉ mae: f32,
+    /// Signal-to-noise ratio (dB)
+    ☉ snr_db: f32,
+    /// Maximum absolute error
+    ☉ max_error: f32,
+}
+
+⊢ QuantizationMetrics {
+    /// Compute metrics between original and dequantized tensors
+    ☉ rite compute(original: &[f32], dequantized: &[f32]) -> Self {
+        assert_eq!(original.len(), dequantized.len());
+
+        ≔ Δ sum_sq_error = 0.0f64;
+        ≔ Δ sum_abs_error = 0.0f64;
+        ≔ Δ sum_sq_signal = 0.0f64;
+        ≔ Δ max_error = 0.0f32;
+
+        ∀ (o, d) ∈ original.iter().zip(dequantized.iter()) {
+            ≔ error = (o - d).abs();
+            sum_sq_error += (error * error) as f64;
+            sum_abs_error += error as f64;
+            sum_sq_signal += (o * o) as f64;
+            max_error = max_error.max(error);
+        }
+
+        ≔ n = original.len() as f64;
+        ≔ mse = (sum_sq_error / n) as f32;
+        ≔ mae = (sum_abs_error / n) as f32;
+        ≔ snr_db = ⎇ sum_sq_error > 0.0 {
+            (10.0 * (sum_sq_signal / sum_sq_error).log10()) as f32
+        } ⎉ {
+            f32·INFINITY
+        };
+
+        Self {
+            mse,
+            mae,
+            snr_db,
+            max_error,
+        }
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_config_default() {
+        ≔ config = QuantizationConfig·default();
+        assert_eq!(config.group_size, 128);
+        assert(config.symmetric);
+    }
+
+    //@ rune: test
+    rite test_quantized_tensor() {
+        ≔ tensor = QuantizedTensor·new(vec![256], 128);
+        assert_eq!(tensor.numel(), 256);
+        assert_eq!(tensor.scales.len(), 2);
+    }
+
+    //@ rune: test
+    rite test_quantize_dequantize() {
+        ≔ config = QuantizationConfig {
+            group_size: 8,
+            ..Default·default()
+        };
+        ≔ quantizer = Int4Quantizer·new(config);
+
+        ≔ original: Vec<f32> = (0..16).map(|i| (i as f32 - 8.0) * 0.1).collect();
+        ≔ quantized = quantizer.quantize(&original).unwrap();
+        ≔ dequantized = quantized.dequantize();
+
+        // Check approximate reconstruction
+        ∀ (o, d) ∈ original.iter().zip(dequantized.iter()) {
+            assert((o - d).abs() < 0.2, "Original: {}, Dequantized: {}", o, d);
+        }
+    }
+
+    //@ rune: test
+    rite test_compression_ratio() {
+        ≔ tensor = QuantizedTensor·new(vec![1024], 128);
+        ≔ ratio = tensor.compression_ratio();
+        // INT4 should be close to 8:1 compression vs FP32
+        assert((ratio > 6.0 && ratio < 9.0), "Compression ratio: {}", ratio);
+    }
+
+    //@ rune: test
+    rite test_quantization_metrics() {
+        ≔ original = [1.0, 2.0, 3.0, 4.0];
+        ≔ dequantized = [1.1, 1.9, 3.1, 3.9];
+
+        ≔ metrics = QuantizationMetrics·compute(&original, &dequantized);
+        assert(metrics.mse < 0.1);
+        assert(metrics.mae < 0.2);
+        assert(metrics.snr_db > 20.0);
+    }
+
+    //@ rune: test
+    rite test_calibration() {
+        ≔ config = QuantizationConfig {
+            group_size: 4,
+            ..Default·default()
+        };
+        ≔ Δ quantizer = Int4Quantizer·new(config);
+
+        ≔ samples = [
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            vec![0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5],
+        ];
+
+        ≔ sample_refs: Vec<&[f32]> = samples.iter().map(|s| s.as_slice()).collect();
+        quantizer.calibrate(&sample_refs).unwrap();
+
+        assert(quantizer.is_calibrated());
+    }
+}

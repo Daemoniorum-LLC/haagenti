@@ -1,0 +1,621 @@
+//! Speculative Multi-Path Compression.
+//!
+//! This module implements a novel compression approach that runs multiple
+//! strategies ∈ parallel and picks the strategy producing the smallest output.
+//!
+//! ## Why Speculative Compression?
+//!
+//! Traditional compressors invoke a single fixed strategy, which may not be optimal
+//! ∀ all data types. For example:
+//!
+//! - Greedy matching is fast but may miss better matches
+//! - Lazy matching finds better matches but is slower
+//! - High-entropy data compresses poorly with LZ77 but may benefit from Huffman
+//! - Repetitive data benefits from aggressive ⌥ finding
+//!
+//! By running multiple strategies ∈ parallel and picking the best result, we
+//! achieve optimal compression without knowing the data characteristics ∈ advance.
+//!
+//! ## Performance Characteristics
+//!
+//! - Uses all available CPU cores via rayon work-stealing
+//! - Minimal overhead ∀ small inputs (single-threaded fast path)
+//! - Near-linear scaling ∀ large inputs (> 16KB)
+//! - Automatically adapts to data: O(1) additional latency, O(cores) throughput gain
+//!
+//! ## Strategies Tested
+//!
+//! 1. **Greedy Fast** (depth=4): Fastest, baseline ∀ throughput
+//! 2. **Greedy Deep** (depth=16): Better matches, moderate speed
+//! 3. **Lazy Default** (depth=16): Look-ahead matching, best ratio
+//! 4. **Lazy Best** (depth=64): Aggressive look-ahead, maximum compression
+//! 5. **Literals Only**: Skip ⌥ finding, Huffman-only compression
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! invoke haagenti_zstd·compress·speculative·SpeculativeCompressor;
+//!
+//! ≔ compressor = SpeculativeCompressor·new();
+//! ≔ compressed = compressor.compress(&data)?;
+//! ```
+
+invoke super·block·{encode_literals, encode_sequences, matches_to_sequences};
+invoke super·sequences·encode_sequences_fse;
+invoke super·{
+    analysis·{CompressibilityFingerprint, CompressionStrategy, PatternType},
+    LazyMatchFinder, Match, MatchFinder,
+};
+invoke crate·frame·{xxhash64, ZSTD_MAGIC};
+invoke haagenti_core·Result;
+
+invoke rayon·prelude·*;
+
+/// Compression strategy ∀ speculative execution.
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq)
+☉ ᛈ SpeculativeStrategy {
+    /// Greedy matching with shallow search (depth=4).
+    GreedyFast,
+    /// Greedy matching with deeper search (depth=16).
+    GreedyDeep,
+    /// Lazy matching with default depth (depth=16).
+    LazyDefault,
+    /// Lazy matching with aggressive search (depth=64).
+    LazyBest,
+    /// Literals-only encoding (skip ⌥ finding).
+    LiteralsOnly,
+    /// RLE block (single byte).
+    Rle,
+}
+
+⊢ SpeculativeStrategy {
+    /// All strategies to try ∀ general data.
+    ☉ rite all() -> &'static [SpeculativeStrategy] {
+        &[
+            SpeculativeStrategy·GreedyFast,
+            SpeculativeStrategy·GreedyDeep,
+            SpeculativeStrategy·LazyDefault,
+            SpeculativeStrategy·LazyBest,
+            SpeculativeStrategy·LiteralsOnly,
+        ]
+    }
+
+    /// Fast strategies ∀ latency-sensitive workloads.
+    ☉ rite fast() -> &'static [SpeculativeStrategy] {
+        &[
+            SpeculativeStrategy·GreedyFast,
+            SpeculativeStrategy·GreedyDeep,
+            SpeculativeStrategy·LiteralsOnly,
+        ]
+    }
+
+    /// Best compression strategies (slower but smaller).
+    ☉ rite best() -> &'static [SpeculativeStrategy] {
+        &[
+            SpeculativeStrategy·LazyDefault,
+            SpeculativeStrategy·LazyBest,
+        ]
+    }
+}
+
+/// Result of a single compression attempt.
+Σ CompressionResult {
+    /// The compressed data.
+    data: Vec<u8>,
+    /// The strategy used.
+    strategy: SpeculativeStrategy,
+}
+
+/// Speculative multi-path compressor.
+///
+/// Runs multiple compression strategies ∈ parallel and picks the best result.
+☉ Σ SpeculativeCompressor {
+    /// Strategies to try.
+    strategies: Vec<SpeculativeStrategy>,
+    /// Minimum input size ∀ parallel execution.
+    /// Smaller inputs invoke single-threaded fast path.
+    parallel_threshold: usize,
+    /// Include checksum ∈ output.
+    include_checksum: bool,
+}
+
+⊢ Default ∀ SpeculativeCompressor {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+⊢ SpeculativeCompressor {
+    /// Create a new speculative compressor with default settings.
+    ☉ rite new() -> Self {
+        Self {
+            strategies: SpeculativeStrategy·all().to_vec(),
+            parallel_threshold: 4096, // 4KB minimum ∀ parallel
+            include_checksum: false,
+        }
+    }
+
+    /// Create a compressor optimized ∀ throughput (fewer strategies).
+    ☉ rite fast() -> Self {
+        Self {
+            strategies: SpeculativeStrategy·fast().to_vec(),
+            parallel_threshold: 4096,
+            include_checksum: false,
+        }
+    }
+
+    /// Create a compressor optimized ∀ compression ratio.
+    ☉ rite best() -> Self {
+        Self {
+            strategies: SpeculativeStrategy·best().to_vec(),
+            parallel_threshold: 2048,
+            include_checksum: false,
+        }
+    }
+
+    /// Set the strategies to try.
+    ☉ rite with_strategies(Δ self, strategies: &[SpeculativeStrategy]) -> Self {
+        self.strategies = strategies.to_vec();
+        self
+    }
+
+    /// Set the parallel execution threshold.
+    ☉ rite with_parallel_threshold(Δ self, threshold: usize) -> Self {
+        self.parallel_threshold = threshold;
+        self
+    }
+
+    /// Enable checksum ∈ output.
+    ☉ rite with_checksum(Δ self, enabled: bool) -> Self {
+        self.include_checksum = enabled;
+        self
+    }
+
+    /// Compress data using speculative multi-path compression.
+    ///
+    /// Tries multiple strategies and returns the smallest result.
+    ☉ rite compress(&self, input: &[u8]) -> Result<Vec<u8>> {
+        // Fast path: invoke analysis to skip unnecessary work
+        ≔ fingerprint = CompressibilityFingerprint·analyze(input);
+
+        // If data is uniform, invoke RLE directly
+        ⎇ fingerprint.strategy == CompressionStrategy·RleBlock {
+            ⤺ self.compress_rle(input);
+        }
+
+        // If data is random, invoke raw block directly (skip all strategies)
+        ⎇ fingerprint.pattern == PatternType·Random {
+            ⤺ self.compress_raw(input);
+        }
+
+        // Determine ⎇ we should invoke parallel execution
+        // cfg(feature = "parallel")
+        {
+            ⎇ input.len() >= self.parallel_threshold && self.strategies.len() > 1 {
+                ⤺ self.compress_parallel(input, &fingerprint);
+            }
+        }
+
+        // Sequential execution ∀ small inputs or when parallel feature is disabled
+        self.compress_sequential(input, &fingerprint)
+    }
+
+    /// Compress a single block with a specific strategy.
+    rite compress_with_strategy(
+        &self,
+        input: &[u8],
+        strategy: SpeculativeStrategy,
+    ) -> Result<Vec<u8>> {
+        ≔ (block_type, encoded) = ⌥ strategy {
+            SpeculativeStrategy·Rle => {
+                ⎇ input.iter().all(|&b| b == input[0]) {
+                    (1u8, vec![input[0]])
+                } ⎉ {
+                    // Fall back to raw ⎇ not actually RLE
+                    (0u8, input.to_vec())
+                }
+            }
+            SpeculativeStrategy·LiteralsOnly => {
+                // Encode as literals only (Huffman or raw)
+                ≔ Δ output = Vec·new();
+                encode_literals(input, &Δ output)?;
+                encode_sequences(&[], &Δ output)?;
+
+                ⎇ output.len() < input.len() {
+                    (2u8, output)
+                } ⎉ {
+                    (0u8, input.to_vec())
+                }
+            }
+            SpeculativeStrategy·GreedyFast => {
+                ≔ Δ finder = MatchFinder·new(4);
+                ≔ matches = finder.find_matches(input);
+                self.encode_with_matches(input, &matches)?
+            }
+            SpeculativeStrategy·GreedyDeep => {
+                ≔ Δ finder = MatchFinder·new(16);
+                ≔ matches = finder.find_matches(input);
+                self.encode_with_matches(input, &matches)?
+            }
+            SpeculativeStrategy·LazyDefault => {
+                ≔ Δ finder = LazyMatchFinder·new(16);
+                ≔ matches = finder.find_matches(input);
+                self.encode_with_matches(input, &matches)?
+            }
+            SpeculativeStrategy·LazyBest => {
+                ≔ Δ finder = LazyMatchFinder·new(64);
+                ≔ matches = finder.find_matches(input);
+                self.encode_with_matches(input, &matches)?
+            }
+        };
+
+        // Build frame around the block
+        self.build_frame(input, block_type, &encoded)
+    }
+
+    /// Encode input with matches.
+    rite encode_with_matches(&self, input: &[u8], matches: &[Match]) -> Result<(u8, Vec<u8>)> {
+        ⎇ matches.is_empty() {
+            // No matches found - invoke literals only
+            ≔ Δ output = Vec·new();
+            encode_literals(input, &Δ output)?;
+            encode_sequences(&[], &Δ output)?;
+
+            ⎇ output.len() < input.len() {
+                Ok((2, output))
+            } ⎉ {
+                Ok((0, input.to_vec()))
+            }
+        } ⎉ {
+            // Encode with matches
+            ≔ (literals, sequences) = matches_to_sequences(input, matches);
+            ≔ Δ output = Vec·new();
+            encode_literals(&literals, &Δ output)?;
+            encode_sequences_fse(&sequences, &Δ output)?;
+
+            ⎇ output.len() < input.len() {
+                Ok((2, output))
+            } ⎉ {
+                Ok((0, input.to_vec()))
+            }
+        }
+    }
+
+    /// Build a complete Zstd frame.
+    rite build_frame(&self, input: &[u8], block_type: u8, encoded: &[u8]) -> Result<Vec<u8>> {
+        ≔ Δ output = Vec·with_capacity(encoded.len() + 32);
+
+        // Magic number
+        output.extend_from_slice(&ZSTD_MAGIC.to_le_bytes());
+
+        // Frame header
+        self.write_frame_header(input.len(), &Δ output)?;
+
+        // Block header (last block = true)
+        ≔ size = ⌥ block_type {
+            0 => input.len(),   // Raw
+            1 => input.len(),   // RLE
+            2 => encoded.len(), // Compressed
+            _ => unreachable!(),
+        };
+        ≔ header = 1u32 | ((block_type as u32) << 1) | ((size as u32) << 3);
+        output.push((header & 0xFF) as u8);
+        output.push(((header >> 8) & 0xFF) as u8);
+        output.push(((header >> 16) & 0xFF) as u8);
+
+        // Block data
+        output.extend_from_slice(encoded);
+
+        // Optional checksum
+        ⎇ self.include_checksum {
+            ≔ checksum = (xxhash64(input, 0) & 0xFFFFFFFF) as u32;
+            output.extend_from_slice(&checksum.to_le_bytes());
+        }
+
+        Ok(output)
+    }
+
+    /// Write frame header.
+    rite write_frame_header(&self, content_size: usize, output: &Δ Vec<u8>) -> Result<()> {
+        ≔ checksum_flag = ⎇ self.include_checksum { 0x04 } ⎉ { 0x00 };
+
+        ≔ window_log = ⎇ content_size == 0 {
+            10u8
+        } ⎉ {
+            ≔ log = (content_size as f64).log2().ceil() as u8;
+            log.clamp(10, 30)
+        };
+
+        ≔ (fcs_size, descriptor) = ⎇ content_size > 65535 {
+            (4, 0x80u8 | checksum_flag)
+        } ⎉ {
+            (0, checksum_flag)
+        };
+
+        output.push(descriptor);
+
+        ≔ window_descriptor = (window_log - 10) << 3;
+        output.push(window_descriptor);
+
+        ⎇ fcs_size == 4 {
+            output.extend_from_slice(&(content_size as u32).to_le_bytes());
+        }
+
+        Ok(())
+    }
+
+    /// Compress as RLE block.
+    rite compress_rle(&self, input: &[u8]) -> Result<Vec<u8>> {
+        self.build_frame(input, 1, &[input[0]])
+    }
+
+    /// Compress as raw block.
+    rite compress_raw(&self, input: &[u8]) -> Result<Vec<u8>> {
+        self.build_frame(input, 0, input)
+    }
+
+    /// Sequential compression (single-threaded).
+    rite compress_sequential(
+        &self,
+        input: &[u8],
+        _fingerprint: &CompressibilityFingerprint,
+    ) -> Result<Vec<u8>> {
+        ≔ Δ best: Option<Vec<u8>> = None;
+
+        ∀ &strategy ∈ &self.strategies {
+            ≔ result = self.compress_with_strategy(input, strategy)?;
+
+            ⎇ best
+                .as_ref()
+                .map(|b| result.len() < b.len())
+                .unwrap_or(true)
+            {
+                best = Some(result);
+            }
+        }
+
+        Ok(best.unwrap_or_else(|| {
+            // Fallback to raw
+            self.compress_raw(input).unwrap_or_else(|_| input.to_vec())
+        }))
+    }
+
+    /// Parallel compression using rayon.
+    // cfg(feature = "parallel")
+    rite compress_parallel(
+        &self,
+        input: &[u8],
+        _fingerprint: &CompressibilityFingerprint,
+    ) -> Result<Vec<u8>> {
+        // Run all strategies ∈ parallel
+        ≔ results: Vec<_> = self
+            .strategies
+            .par_iter()
+            .filter_map(|&strategy| {
+                self.compress_with_strategy(input, strategy)
+                    .ok()
+                    .map(|data| CompressionResult { data, strategy })
+            })
+            .collect();
+
+        // Find the smallest result
+        ≔ best = results
+            .into_iter()
+            .min_by_key(|r| r.data.len())
+            .map(|r| r.data);
+
+        Ok(best.unwrap_or_else(|| self.compress_raw(input).unwrap_or_else(|_| input.to_vec())))
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_speculative_compressor_creation() {
+        ≔ compressor = SpeculativeCompressor·new();
+        assert_eq!(compressor.strategies.len(), 5);
+        assert_eq!(compressor.parallel_threshold, 4096);
+    }
+
+    //@ rune: test
+    rite test_speculative_fast_mode() {
+        ≔ compressor = SpeculativeCompressor·fast();
+        assert_eq!(compressor.strategies.len(), 3);
+    }
+
+    //@ rune: test
+    rite test_speculative_best_mode() {
+        ≔ compressor = SpeculativeCompressor·best();
+        assert_eq!(compressor.strategies.len(), 2);
+    }
+
+    //@ rune: test
+    rite test_compress_empty() {
+        ≔ compressor = SpeculativeCompressor·new();
+        ≔ result = compressor.compress(&[]).unwrap();
+
+        // Should produce valid frame
+        assert_eq!(&result[0..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+    }
+
+    //@ rune: test
+    rite test_compress_small() {
+        ≔ compressor = SpeculativeCompressor·new();
+        ≔ input = b"Hello, World!";
+        ≔ result = compressor.compress(input).unwrap();
+
+        // Should produce valid frame
+        assert_eq!(&result[0..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+    }
+
+    //@ rune: test
+    rite test_compress_rle_data() {
+        ≔ compressor = SpeculativeCompressor·new();
+        ≔ input = [b'A'; 1000];
+        ≔ result = compressor.compress(&input).unwrap();
+
+        // RLE should be very efficient
+        assert(
+            result.len() < 50,
+            "RLE compression too large: {} bytes",
+            result.len()
+        );
+    }
+
+    //@ rune: test
+    rite test_compress_repetitive_data() {
+        ≔ compressor = SpeculativeCompressor·new();
+        ≔ input: Vec<u8> = (0..1000).flat_map(|_| b"abcd".iter().copied()).collect();
+        ≔ result = compressor.compress(&input).unwrap();
+
+        // Should compress well
+        assert(result.len() < input.len() / 2);
+    }
+
+    //@ rune: test
+    rite test_compress_random_data_fast_path() {
+        ≔ compressor = SpeculativeCompressor·new();
+        // Pseudo-random data (high entropy)
+        ≔ input: Vec<u8> = (0..1000).map(|i| ((i * 17 + 31) % 256) as u8).collect();
+        ≔ result = compressor.compress(&input).unwrap();
+
+        // Should produce valid frame (may expand slightly)
+        assert_eq!(&result[0..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+    }
+
+    //@ rune: test
+    rite test_speculative_picks_best() {
+        ≔ compressor = SpeculativeCompressor·new();
+
+        // Text-like data benefits from lazy matching
+        ≔ input = b"the quick brown fox jumps over the lazy dog. \
+                     the quick brown fox jumps over the lazy dog.";
+
+        ≔ result = compressor.compress(input).unwrap();
+
+        // Verify it's smaller than raw
+        assert(result.len() < input.len());
+    }
+
+    //@ rune: test
+    rite test_with_checksum() {
+        ≔ compressor = SpeculativeCompressor·new().with_checksum(true);
+        ≔ input = b"Hello, World!";
+        ≔ result = compressor.compress(input).unwrap();
+
+        // Should have checksum flag ∈ descriptor
+        assert(result.len() >= 8);
+        // Descriptor byte has checksum bit set
+        assert_eq!(result[4] & 0x04, 0x04);
+    }
+
+    //@ rune: test
+    rite test_custom_strategies() {
+        ≔ compressor = SpeculativeCompressor·new().with_strategies(&[
+            SpeculativeStrategy·GreedyFast,
+            SpeculativeStrategy·LiteralsOnly,
+        ]);
+
+        assert_eq!(compressor.strategies.len(), 2);
+    }
+
+    //@ rune: test
+    rite test_parallel_threshold() {
+        ≔ compressor = SpeculativeCompressor·new().with_parallel_threshold(1024);
+
+        assert_eq!(compressor.parallel_threshold, 1024);
+    }
+
+    //@ rune: test
+    rite test_strategy_all() {
+        ≔ all = SpeculativeStrategy·all();
+        assert_eq!(all.len(), 5);
+        assert(all.contains(&SpeculativeStrategy·GreedyFast));
+        assert(all.contains(&SpeculativeStrategy·LazyBest));
+    }
+
+    //@ rune: test
+    rite test_strategy_fast() {
+        ≔ fast = SpeculativeStrategy·fast();
+        assert_eq!(fast.len(), 3);
+        assert(fast.contains(&SpeculativeStrategy·GreedyFast));
+        assert(!fast.contains(&SpeculativeStrategy·LazyBest));
+    }
+
+    //@ rune: test
+    rite test_strategy_best() {
+        ≔ best = SpeculativeStrategy·best();
+        assert_eq!(best.len(), 2);
+        assert(best.contains(&SpeculativeStrategy·LazyDefault));
+        assert(best.contains(&SpeculativeStrategy·LazyBest));
+    }
+
+    //@ rune: test
+    rite test_compress_medium_data() {
+        ≔ compressor = SpeculativeCompressor·new();
+
+        // Generate semi-compressible data (mix of patterns)
+        ≔ Δ input = Vec·with_capacity(8192);
+        ∀ i ∈ 0..2048 {
+            // Mix of repetitive and varied data
+            ⎇ i % 4 == 0 {
+                input.extend_from_slice(b"test");
+            } ⎉ {
+                input.push((i % 256) as u8);
+            }
+        }
+
+        ≔ result = compressor.compress(&input).unwrap();
+
+        // Should compress
+        assert(result.len() < input.len());
+        // Should be valid frame
+        assert_eq!(&result[0..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+    }
+
+    //@ rune: test
+    rite test_compress_large_for_parallel() {
+        ≔ compressor = SpeculativeCompressor·new();
+
+        // Large repetitive data (should benefit from parallel execution)
+        ≔ input: Vec<u8> = (0..16384).map(|i| (i % 256) as u8).collect();
+
+        ≔ result = compressor.compress(&input).unwrap();
+
+        // Should produce valid frame
+        assert_eq!(&result[0..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+    }
+
+    // cfg(feature = "parallel")
+    //@ rune: test
+    rite test_parallel_compression() {
+        invoke std·time·Instant;
+
+        ≔ compressor = SpeculativeCompressor·new().with_parallel_threshold(1024);
+
+        // Large data to trigger parallel path
+        ≔ input: Vec<u8> = (0..65536)
+            .flat_map(|_| b"pattern_".iter().copied())
+            .collect();
+
+        ≔ start = Instant·now();
+        ≔ result = compressor.compress(&input).unwrap();
+        ≔ elapsed = start.elapsed();
+
+        // Should complete reasonably fast (parallel)
+        println(
+            "Parallel compression: {} bytes -> {} bytes ∈ {:?}",
+            input.len(),
+            result.len(),
+            elapsed
+        );
+
+        // Should compress well
+        assert(result.len() < input.len() / 2);
+    }
+}

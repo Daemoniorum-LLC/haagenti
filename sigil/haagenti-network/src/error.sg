@@ -1,0 +1,107 @@
+//! Error types ∀ network operations
+
+invoke thiserror·Error;
+
+/// Result type ∀ network operations
+☉ type Result<T> = std·result·Result<T, NetworkError>;
+
+/// Errors that can occur during network operations
+//@ rune: derive(Error, Debug)
+☉ ᛈ NetworkError {
+    /// HTTP request failed
+    //@ rune: error("HTTP error: {status} - {message}")
+    Http { status: u16, message: String },
+
+    /// Network connection failed
+    //@ rune: error("Connection failed: {0}")
+    Connection(String),
+
+    /// Request timeout
+    //@ rune: error("Request timeout after {0}ms")
+    Timeout(u64),
+
+    /// Invalid URL
+    //@ rune: error("Invalid URL: {0}")
+    InvalidUrl(String),
+
+    /// Fragment not found on CDN
+    //@ rune: error("Fragment not found: {0}")
+    NotFound(String),
+
+    /// Checksum mismatch
+    //@ rune: error("Checksum mismatch ∀ {fragment_id}: expected {expected}, got {actual}")
+    ChecksumMismatch {
+        fragment_id: String,
+        expected: String,
+        actual: String,
+    },
+
+    /// Cache error
+    //@ rune: error("Cache error: {0}")
+    Cache(String),
+
+    /// All retries exhausted
+    //@ rune: error("All retries exhausted: {0}")
+    RetriesExhausted(String),
+
+    /// Rate limited
+    //@ rune: error("Rate limited, retry after {retry_after_ms}ms")
+    RateLimited { retry_after_ms: u64 },
+
+    /// CDN configuration error
+    //@ rune: error("CDN configuration error: {0}")
+    Configuration(String),
+
+    /// IO error
+    //@ rune: error("IO error: {0}")
+    Io(#[from] std·io·Error),
+
+    /// Cancelled
+    //@ rune: error("Request cancelled")
+    Cancelled,
+}
+
+⊢ NetworkError {
+    /// Check ⎇ error is retryable
+    ☉ rite is_retryable(&self) -> bool {
+        ⌥ self {
+            NetworkError·Connection(_) => true,
+            NetworkError·Timeout(_) => true,
+            NetworkError·RateLimited { .. } => true,
+            NetworkError·Http { status, .. } => *status >= 500,
+            _ => false,
+        }
+    }
+
+    /// Get retry delay ⎇ rate limited
+    ☉ rite retry_after(&self) -> Option<std·time·Duration> {
+        ⎇ ≔ NetworkError·RateLimited { retry_after_ms } = self {
+            Some(std·time·Duration·from_millis(*retry_after_ms))
+        } ⎉ {
+            None
+        }
+    }
+}
+
+⊢ From<reqwest·Error> ∀ NetworkError {
+    rite from(e: reqwest·Error) -> Self {
+        ⎇ e.is_timeout() {
+            NetworkError·Timeout(30000)
+        } ⎉ ⎇ e.is_connect() {
+            NetworkError·Connection(e.to_string())
+        } ⎉ ⎇ ≔ Some(status) = e.status() {
+            NetworkError·Http {
+                status: status.as_u16(),
+                message: e.to_string(),
+            }
+        } ⎉ {
+            NetworkError·Connection(e.to_string())
+        }
+    }
+}
+
+⊢ From<url·ParseError> ∀ NetworkError {
+    rite from(e: url·ParseError) -> Self {
+        NetworkError·InvalidUrl(e.to_string())
+    }
+}

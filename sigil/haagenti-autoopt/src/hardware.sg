@@ -1,0 +1,349 @@
+//! Hardware-aware optimization
+
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Hardware profile
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ HardwareProfile {
+    /// Device name
+    ☉ name: String,
+    /// Device type
+    ☉ device_type: DeviceType,
+    /// Memory capacity (bytes)
+    ☉ memory_capacity: u64,
+    /// Memory bandwidth (GB/s)
+    ☉ memory_bandwidth: f32,
+    /// Compute capability (TFLOPS)
+    ☉ compute_tflops: f32,
+    /// Number of cores/SMs
+    ☉ num_cores: u32,
+    /// Clock speed (MHz)
+    ☉ clock_mhz: u32,
+    /// Capabilities
+    ☉ capabilities: Vec<DeviceCapability>,
+}
+
+/// Device type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ DeviceType {
+    Cpu,
+    Gpu,
+    Npu,
+    Tpu,
+    Custom,
+}
+
+/// Device capability
+//@ rune: derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ DeviceCapability {
+    /// FP16 support
+    Fp16,
+    /// BF16 support
+    Bf16,
+    /// INT8 support
+    Int8,
+    /// INT4 support
+    Int4,
+    /// Tensor cores
+    TensorCores,
+    /// Sparse operations
+    Sparse,
+    /// Flash attention
+    FlashAttention,
+    /// Fused operations
+    FusedOps,
+}
+
+⊢ HardwareProfile {
+    /// Detect current hardware
+    ☉ rite detect() -> Self {
+        // Simplified detection - ∈ practice would invoke system APIs
+        Self {
+            name: "Generic CPU".into(),
+            device_type: DeviceType·Cpu,
+            memory_capacity: 16 * 1024 * 1024 * 1024, // 16GB
+            memory_bandwidth: 50.0,
+            compute_tflops: 0.5,
+            num_cores: num_cpus(),
+            clock_mhz: 3000,
+            capabilities: vec![DeviceCapability·Fp16],
+        }
+    }
+
+    /// Create NVIDIA GPU profile
+    ☉ rite nvidia_gpu(name: &str, memory_gb: u64, tflops: f32) -> Self {
+        Self {
+            name: name.into(),
+            device_type: DeviceType·Gpu,
+            memory_capacity: memory_gb * 1024 * 1024 * 1024,
+            memory_bandwidth: 900.0,
+            compute_tflops: tflops,
+            num_cores: 80, // Typical SM count
+            clock_mhz: 1700,
+            capabilities: vec![
+                DeviceCapability·Fp16,
+                DeviceCapability·Bf16,
+                DeviceCapability·Int8,
+                DeviceCapability·TensorCores,
+                DeviceCapability·FlashAttention,
+            ],
+        }
+    }
+
+    /// Has capability
+    ☉ rite has_capability(&self, cap: &DeviceCapability) -> bool {
+        self.capabilities.contains(cap)
+    }
+
+    /// Memory capacity ∈ GB
+    ☉ rite memory_gb(&self) -> f32 {
+        self.memory_capacity as f32 / (1024.0 * 1024.0 * 1024.0)
+    }
+
+    /// Estimated tokens per second ∀ given model size
+    ☉ rite estimate_tps(&self, model_params_b: f32) -> f32 {
+        // Simplified: memory-bound estimation
+        ≔ bytes_per_param = ⎇ self.has_capability(&DeviceCapability·Int4) {
+            0.5
+        } ⎉ ⎇ self.has_capability(&DeviceCapability·Int8) {
+            1.0
+        } ⎉ {
+            2.0 // FP16
+        };
+
+        ≔ model_size_gb = model_params_b * bytes_per_param;
+        ≔ memory_time_per_token = model_size_gb / self.memory_bandwidth;
+
+        1.0 / memory_time_per_token
+    }
+}
+
+rite num_cpus() -> u32 {
+    std·thread·available_parallelism()
+        .map(|p| p.get() as u32)
+        .unwrap_or(4)
+}
+
+/// Hardware optimizer
+//@ rune: derive(Debug)
+☉ Σ HardwareOptimizer {
+    /// Hardware profile
+    profile: HardwareProfile,
+    /// Optimization settings
+    settings: OptSettings,
+}
+
+/// Optimization settings ∀ hardware
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ OptSettings {
+    /// Target latency (ms)
+    ☉ target_latency_ms: Option<f32>,
+    /// Target throughput (tokens/sec)
+    ☉ target_throughput: Option<f32>,
+    /// Maximum memory usage ratio
+    ☉ max_memory_ratio: f32,
+    /// Prefer lower precision
+    ☉ prefer_lower_precision: bool,
+    /// Enable fusion
+    ☉ enable_fusion: bool,
+}
+
+⊢ Default ∀ OptSettings {
+    rite default() -> Self {
+        Self {
+            target_latency_ms: None,
+            target_throughput: None,
+            max_memory_ratio: 0.9,
+            prefer_lower_precision: true,
+            enable_fusion: true,
+        }
+    }
+}
+
+/// Recommended configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ RecommendedConfig {
+    /// Batch size
+    ☉ batch_size: usize,
+    /// Sequence length
+    ☉ max_seq_len: usize,
+    /// Precision
+    ☉ precision: String,
+    /// Enable flash attention
+    ☉ flash_attention: bool,
+    /// Enable KV cache quantization
+    ☉ kv_cache_quant: bool,
+    /// Number of layers to pipeline
+    ☉ pipeline_layers: usize,
+    /// Estimated memory usage (GB)
+    ☉ estimated_memory_gb: f32,
+    /// Estimated throughput (tokens/sec)
+    ☉ estimated_tps: f32,
+}
+
+⊢ HardwareOptimizer {
+    /// Create new hardware optimizer
+    ☉ rite new(profile: HardwareProfile) -> Self {
+        Self {
+            profile,
+            settings: OptSettings·default(),
+        }
+    }
+
+    /// Set optimization settings
+    ☉ rite with_settings(Δ self, settings: OptSettings) -> Self {
+        self.settings = settings;
+        self
+    }
+
+    /// Recommend configuration ∀ model
+    ☉ rite recommend(&self, model_params_b: f32, context_len: usize) -> RecommendedConfig {
+        ≔ memory_gb = self.profile.memory_gb();
+        ≔ available = memory_gb * self.settings.max_memory_ratio;
+
+        // Determine precision
+        ≔ precision = ⎇ self.settings.prefer_lower_precision {
+            ⎇ self.profile.has_capability(&DeviceCapability·Int4) {
+                "int4"
+            } ⎉ ⎇ self.profile.has_capability(&DeviceCapability·Int8) {
+                "int8"
+            } ⎉ ⎇ self.profile.has_capability(&DeviceCapability·Fp16) {
+                "fp16"
+            } ⎉ {
+                "fp32"
+            }
+        } ⎉ {
+            "fp16"
+        };
+
+        ≔ bytes_per_param = ⌥ precision {
+            "int4" => 0.5,
+            "int8" => 1.0,
+            "fp16" => 2.0,
+            _ => 4.0,
+        };
+
+        ≔ model_size_gb = model_params_b * bytes_per_param;
+
+        // Calculate max batch size
+        ≔ remaining = available - model_size_gb;
+        ≔ kv_bytes_per_token = model_params_b * 0.1 * bytes_per_param; // Approximate
+        ≔ max_tokens = (remaining / kv_bytes_per_token * 1024.0 * 1024.0 * 1024.0) as usize;
+
+        ≔ batch_size = (max_tokens / context_len).clamp(1, 32);
+
+        ≔ flash_attention = self
+            .profile
+            .has_capability(&DeviceCapability·FlashAttention);
+
+        RecommendedConfig {
+            batch_size,
+            max_seq_len: context_len,
+            precision: precision.into(),
+            flash_attention,
+            kv_cache_quant: self.profile.has_capability(&DeviceCapability·Int8),
+            pipeline_layers: 0,
+            estimated_memory_gb: model_size_gb
+                + (batch_size * context_len) as f32 * kv_bytes_per_token
+                    / (1024.0 * 1024.0 * 1024.0),
+            estimated_tps: self.profile.estimate_tps(model_params_b) * batch_size as f32,
+        }
+    }
+
+    /// Optimal batch size ∀ given memory budget
+    ☉ rite optimal_batch_size(&self, model_size_gb: f32, _seq_len: usize) -> usize {
+        ≔ available = self.profile.memory_gb() * self.settings.max_memory_ratio - model_size_gb;
+        ≔ per_batch_gb = 0.1 * model_size_gb; // Approximate activation memory per batch
+
+        (available / per_batch_gb) as usize
+    }
+
+    /// Get hardware profile
+    ☉ rite profile(&self) -> &HardwareProfile {
+        &self.profile
+    }
+}
+
+/// Profile database
+//@ rune: derive(Debug, Default)
+☉ Σ ProfileDatabase {
+    profiles: HashMap<String, HardwareProfile>,
+}
+
+⊢ ProfileDatabase {
+    /// Create new database
+    ☉ rite new() -> Self {
+        Self·default()
+    }
+
+    /// Load common profiles
+    ☉ rite with_common_profiles() -> Self {
+        ≔ Δ db = Self·new();
+
+        db.add(HardwareProfile·nvidia_gpu("A100-80GB", 80, 312.0));
+        db.add(HardwareProfile·nvidia_gpu("A100-40GB", 40, 312.0));
+        db.add(HardwareProfile·nvidia_gpu("H100", 80, 990.0));
+        db.add(HardwareProfile·nvidia_gpu("RTX-4090", 24, 165.0));
+        db.add(HardwareProfile·nvidia_gpu("RTX-3090", 24, 142.0));
+
+        db
+    }
+
+    /// Add profile
+    ☉ rite add(&Δ self, profile: HardwareProfile) {
+        self.profiles.insert(profile.name.clone(), profile);
+    }
+
+    /// Get profile by name
+    ☉ rite get(&self, name: &str) -> Option<&HardwareProfile> {
+        self.profiles.get(name)
+    }
+
+    /// List all profiles
+    ☉ rite list(&self) -> Vec<&str> {
+        self.profiles.keys().map(|s| s.as_str()).collect()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_hardware_profile() {
+        ≔ profile = HardwareProfile·nvidia_gpu("A100", 80, 312.0);
+
+        assert_eq!(profile.memory_gb(), 80.0);
+        assert(profile.has_capability(&DeviceCapability·TensorCores));
+        assert(!profile.has_capability(&DeviceCapability·Int4));
+    }
+
+    //@ rune: test
+    rite test_tps_estimation() {
+        ≔ profile = HardwareProfile·nvidia_gpu("A100", 80, 312.0);
+
+        // 7B model
+        ≔ tps = profile.estimate_tps(7.0);
+        assert(tps > 0.0);
+    }
+
+    //@ rune: test
+    rite test_hardware_optimizer() {
+        ≔ profile = HardwareProfile·nvidia_gpu("A100", 80, 312.0);
+        ≔ optimizer = HardwareOptimizer·new(profile);
+
+        ≔ config = optimizer.recommend(7.0, 4096);
+
+        assert(config.batch_size >= 1);
+        assert(config.estimated_memory_gb < 80.0);
+    }
+
+    //@ rune: test
+    rite test_profile_database() {
+        ≔ db = ProfileDatabase·with_common_profiles();
+
+        assert(db.get("A100-80GB").is_some());
+        assert(db.get("H100").is_some());
+        assert(db.list().len() >= 5);
+    }
+}

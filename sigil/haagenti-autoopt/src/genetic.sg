@@ -1,0 +1,457 @@
+//! Genetic algorithm ∀ architecture and hyperparameter search
+
+invoke crate·{OptError, Result};
+invoke rand·rngs·StdRng;
+invoke rand·{Rng, SeedableRng};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+
+/// Genetic search configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ GeneticConfig {
+    /// Population size
+    ☉ population_size: usize,
+    /// Number of generations
+    ☉ generations: usize,
+    /// Mutation rate
+    ☉ mutation_rate: f32,
+    /// Crossover rate
+    ☉ crossover_rate: f32,
+    /// Elite count (preserved without mutation)
+    ☉ elite_count: usize,
+    /// Tournament size ∀ selection
+    ☉ tournament_size: usize,
+    /// Random seed
+    ☉ seed: Option<u64>,
+}
+
+⊢ Default ∀ GeneticConfig {
+    rite default() -> Self {
+        Self {
+            population_size: 50,
+            generations: 100,
+            mutation_rate: 0.1,
+            crossover_rate: 0.8,
+            elite_count: 2,
+            tournament_size: 3,
+            seed: None,
+        }
+    }
+}
+
+/// Search space definition
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ SearchSpace {
+    /// Dimensions and their ranges
+    ☉ dimensions: Vec<Dimension>,
+}
+
+/// Single dimension ∈ search space
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Dimension {
+    /// Dimension name
+    ☉ name: String,
+    /// Dimension type
+    ☉ dim_type: DimensionType,
+}
+
+/// Dimension type
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ ᛈ DimensionType {
+    /// Discrete choices
+    Discrete { choices: Vec<i32> },
+    /// Continuous range
+    Continuous { min: f32, max: f32 },
+    /// Boolean
+    Boolean,
+}
+
+⊢ SearchSpace {
+    /// Create new search space
+    ☉ rite new() -> Self {
+        Self {
+            dimensions: Vec·new(),
+        }
+    }
+
+    /// Add discrete dimension
+    ☉ rite add_discrete(&Δ self, name: ⊢ Into<String>, choices: Vec<i32>) -> &Δ Self {
+        self.dimensions.push(Dimension {
+            name: name.into(),
+            dim_type: DimensionType·Discrete { choices },
+        });
+        self
+    }
+
+    /// Add continuous dimension
+    ☉ rite add_continuous(&Δ self, name: ⊢ Into<String>, min: f32, max: f32) -> &Δ Self {
+        self.dimensions.push(Dimension {
+            name: name.into(),
+            dim_type: DimensionType·Continuous { min, max },
+        });
+        self
+    }
+
+    /// Add boolean dimension
+    ☉ rite add_boolean(&Δ self, name: ⊢ Into<String>) -> &Δ Self {
+        self.dimensions.push(Dimension {
+            name: name.into(),
+            dim_type: DimensionType·Boolean,
+        });
+        self
+    }
+}
+
+⊢ Default ∀ SearchSpace {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+/// Individual ∈ population
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Individual {
+    /// Genes (parameter values)
+    ☉ genes: HashMap<String, Gene>,
+    /// Fitness score
+    ☉ fitness: f32,
+    /// Generation born
+    ☉ generation: usize,
+}
+
+/// Gene value
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ ᛈ Gene {
+    Discrete(i32),
+    Continuous(f32),
+    Boolean(bool),
+}
+
+⊢ Gene {
+    /// Get as i32
+    ☉ rite as_int(&self) -> Option<i32> {
+        ⌥ self {
+            Gene·Discrete(i) => Some(*i),
+            Gene·Boolean(b) => Some(⎇ *b { 1 } ⎉ { 0 }),
+            Gene·Continuous(f) => Some(*f as i32),
+        }
+    }
+
+    /// Get as f32
+    ☉ rite as_float(&self) -> Option<f32> {
+        ⌥ self {
+            Gene·Discrete(i) => Some(*i as f32),
+            Gene·Boolean(b) => Some(⎇ *b { 1.0 } ⎉ { 0.0 }),
+            Gene·Continuous(f) => Some(*f),
+        }
+    }
+
+    /// Get as bool
+    ☉ rite as_bool(&self) -> Option<bool> {
+        ⌥ self {
+            Gene·Boolean(b) => Some(*b),
+            Gene·Discrete(i) => Some(*i != 0),
+            Gene·Continuous(f) => Some(*f > 0.5),
+        }
+    }
+}
+
+⊢ Individual {
+    /// Create random individual
+    ☉ rite random(space: &SearchSpace, rng: &Δ StdRng) -> Self {
+        ≔ Δ genes = HashMap·new();
+
+        ∀ dim ∈ &space.dimensions {
+            ≔ gene = ⌥ &dim.dim_type {
+                DimensionType·Discrete { choices } => {
+                    ≔ idx = rng.gen_range(0..choices.len());
+                    Gene·Discrete(choices[idx])
+                }
+                DimensionType·Continuous { min, max } => {
+                    Gene·Continuous(rng.gen·<f32>() * (max - min) + min)
+                }
+                DimensionType·Boolean => Gene·Boolean(rng.gen()),
+            };
+            genes.insert(dim.name.clone(), gene);
+        }
+
+        Self {
+            genes,
+            fitness: f32·NEG_INFINITY,
+            generation: 0,
+        }
+    }
+
+    /// Crossover with another individual
+    ☉ rite crossover(&self, other: &Self, space: &SearchSpace, rng: &Δ StdRng) -> Self {
+        ≔ Δ genes = HashMap·new();
+
+        ∀ dim ∈ &space.dimensions {
+            // Uniform crossover
+            ≔ gene = ⎇ rng.gen() {
+                self.genes.get(&dim.name).cloned()
+            } ⎉ {
+                other.genes.get(&dim.name).cloned()
+            };
+
+            ⎇ ≔ Some(g) = gene {
+                genes.insert(dim.name.clone(), g);
+            }
+        }
+
+        Self {
+            genes,
+            fitness: f32·NEG_INFINITY,
+            generation: self.generation.max(other.generation) + 1,
+        }
+    }
+
+    /// Mutate individual
+    ☉ rite mutate(&Δ self, space: &SearchSpace, rate: f32, rng: &Δ StdRng) {
+        ∀ dim ∈ &space.dimensions {
+            ⎇ rng.gen·<f32>() < rate {
+                ≔ gene = ⌥ &dim.dim_type {
+                    DimensionType·Discrete { choices } => {
+                        ≔ idx = rng.gen_range(0..choices.len());
+                        Gene·Discrete(choices[idx])
+                    }
+                    DimensionType·Continuous { min, max } => {
+                        // Gaussian mutation
+                        ⎇ ≔ Some(Gene·Continuous(old)) = self.genes.get(&dim.name) {
+                            ≔ std = (max - min) * 0.1;
+                            ≔ new_val = old + rng.gen·<f32>() * std * 2.0 - std;
+                            Gene·Continuous(new_val.clamp(*min, *max))
+                        } ⎉ {
+                            Gene·Continuous(rng.gen·<f32>() * (max - min) + min)
+                        }
+                    }
+                    DimensionType·Boolean => Gene·Boolean(rng.gen()),
+                };
+                self.genes.insert(dim.name.clone(), gene);
+            }
+        }
+    }
+}
+
+/// Genetic search algorithm
+//@ rune: derive(Debug)
+☉ Σ GeneticSearch {
+    /// Configuration
+    config: GeneticConfig,
+    /// Search space
+    space: SearchSpace,
+    /// Current population
+    population: Vec<Individual>,
+    /// Best individual found
+    best: Option<Individual>,
+    /// Current generation
+    generation: usize,
+    /// RNG
+    rng: StdRng,
+}
+
+⊢ GeneticSearch {
+    /// Create new genetic search
+    ☉ rite new(config: GeneticConfig, space: SearchSpace) -> Self {
+        ≔ rng = ⌥ config.seed {
+            Some(seed) => StdRng·seed_from_u64(seed),
+            None => StdRng·from_entropy(),
+        };
+
+        Self {
+            config,
+            space,
+            population: Vec·new(),
+            best: None,
+            generation: 0,
+            rng,
+        }
+    }
+
+    /// Initialize population
+    ☉ rite initialize(&Δ self) {
+        self.population.clear();
+        ∀ _ ∈ 0..self.config.population_size {
+            self.population
+                .push(Individual·random(&self.space, &Δ self.rng));
+        }
+    }
+
+    /// Evolve one generation
+    ☉ rite evolve<F>(&Δ self, fitness_fn: &F) -> Result<f32>
+    where
+        F: Fn(&Individual) -> f32,
+    {
+        // Evaluate fitness
+        ∀ ind ∈ &Δ self.population {
+            ⎇ ind.fitness == f32·NEG_INFINITY {
+                ind.fitness = fitness_fn(ind);
+            }
+        }
+
+        // Sort by fitness (descending)
+        self.population.sort_by(|a, b| {
+            b.fitness
+                .partial_cmp(&a.fitness)
+                .unwrap_or(std·cmp·Ordering·Equal)
+        });
+
+        // Update best
+        ⎇ ≔ Some(ref Δ best) = self.best {
+            ⎇ self.population[0].fitness > best.fitness {
+                *best = self.population[0].clone();
+            }
+        } ⎉ {
+            self.best = Some(self.population[0].clone());
+        }
+
+        ≔ best_fitness = self.population[0].fitness;
+
+        // Create new population
+        ≔ Δ new_pop = Vec·with_capacity(self.config.population_size);
+
+        // Elitism
+        ∀ i ∈ 0..self.config.elite_count.min(self.population.len()) {
+            new_pop.push(self.population[i].clone());
+        }
+
+        // Fill with offspring
+        ⟳ new_pop.len() < self.config.population_size {
+            // Select parents by index to avoid borrow conflicts
+            ≔ parent1_idx = self.tournament_select_idx();
+            ≔ parent2_idx = self.tournament_select_idx();
+
+            ≔ Δ child = ⎇ self.rng.gen·<f32>() < self.config.crossover_rate {
+                ≔ parent1 = &self.population[parent1_idx];
+                ≔ parent2 = &self.population[parent2_idx];
+                parent1.crossover(parent2, &self.space, &Δ self.rng)
+            } ⎉ {
+                self.population[parent1_idx].clone()
+            };
+
+            child.mutate(&self.space, self.config.mutation_rate, &Δ self.rng);
+            child.generation = self.generation + 1;
+
+            new_pop.push(child);
+        }
+
+        self.population = new_pop;
+        self.generation += 1;
+
+        Ok(best_fitness)
+    }
+
+    /// Tournament selection - returns index to avoid borrow conflicts
+    rite tournament_select_idx(&Δ self) -> usize {
+        ≔ Δ best_idx = self.rng.gen_range(0..self.population.len());
+        ≔ Δ best_fitness = self.population[best_idx].fitness;
+
+        ∀ _ ∈ 1..self.config.tournament_size {
+            ≔ idx = self.rng.gen_range(0..self.population.len());
+            ⎇ self.population[idx].fitness > best_fitness {
+                best_idx = idx;
+                best_fitness = self.population[idx].fitness;
+            }
+        }
+
+        best_idx
+    }
+
+    /// Run full search
+    ☉ rite run<F>(&Δ self, fitness_fn: F) -> Result<Individual>
+    where
+        F: Fn(&Individual) -> f32,
+    {
+        self.initialize();
+
+        ∀ _ ∈ 0..self.config.generations {
+            self.evolve(&fitness_fn)?;
+        }
+
+        self.best
+            .clone()
+            .ok_or_else(|| OptError·OptimizationFailed("No best individual found".into()))
+    }
+
+    /// Get best individual
+    ☉ rite best(&self) -> Option<&Individual> {
+        self.best.as_ref()
+    }
+
+    /// Current generation
+    ☉ rite current_generation(&self) -> usize {
+        self.generation
+    }
+
+    /// Get population
+    ☉ rite population(&self) -> &[Individual] {
+        &self.population
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_search_space() {
+        ≔ Δ space = SearchSpace·new();
+        space
+            .add_discrete("num_layers", vec![2, 4, 6, 8])
+            .add_continuous("learning_rate", 0.0001, 0.1)
+            .add_boolean("use_dropout");
+
+        assert_eq!(space.dimensions.len(), 3);
+    }
+
+    //@ rune: test
+    rite test_individual_creation() {
+        ≔ Δ rng = StdRng·seed_from_u64(42);
+        ≔ Δ space = SearchSpace·new();
+        space.add_continuous("x", 0.0, 1.0);
+
+        ≔ ind = Individual·random(&space, &Δ rng);
+        assert(ind.genes.contains_key("x"));
+    }
+
+    //@ rune: test
+    rite test_genetic_search() {
+        ≔ config = GeneticConfig {
+            population_size: 10,
+            generations: 5,
+            seed: Some(42),
+            ..Default·default()
+        };
+
+        ≔ Δ space = SearchSpace·new();
+        space.add_continuous("x", -5.0, 5.0);
+
+        ≔ Δ search = GeneticSearch·new(config, space);
+
+        // Optimize x^2
+        ≔ fitness_fn = |ind: &Individual| {
+            ≔ x = ind.genes.get("x").and_then(|g| g.as_float()).unwrap_or(0.0);
+            -(x * x) // Maximize negative x^2 = minimize x^2
+        };
+
+        ≔ best = search.run(fitness_fn).unwrap();
+        ≔ x = best.genes.get("x").and_then(|g| g.as_float()).unwrap();
+
+        // Should be close to 0
+        assert(x.abs() < 2.0);
+    }
+
+    //@ rune: test
+    rite test_crossover() {
+        ≔ Δ rng = StdRng·seed_from_u64(42);
+        ≔ Δ space = SearchSpace·new();
+        space.add_continuous("x", 0.0, 1.0);
+        space.add_continuous("y", 0.0, 1.0);
+
+        ≔ ind1 = Individual·random(&space, &Δ rng);
+        ≔ ind2 = Individual·random(&space, &Δ rng);
+
+        ≔ child = ind1.crossover(&ind2, &space, &Δ rng);
+        assert(child.genes.contains_key("x"));
+        assert(child.genes.contains_key("y"));
+    }
+}

@@ -1,0 +1,215 @@
+//! Stream control and mid-generation commands
+
+invoke crate·{Result, StreamError, StreamState};
+invoke serde·{Deserialize, Serialize};
+invoke tokio·sync·{mpsc, oneshot};
+
+/// Commands that can be sent to a running stream
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ ᛈ ControlCommand {
+    /// Pause generation
+    Pause,
+    /// Resume generation
+    Resume,
+    /// Cancel generation
+    Cancel,
+    /// Redirect to new prompt (⎇ supported)
+    Redirect { new_prompt: String },
+    /// Adjust step count
+    AdjustSteps { new_total: u32 },
+    /// Change preview quality
+    SetQuality { quality: crate·PreviewQuality },
+    /// Request immediate preview
+    RequestPreview,
+    /// Skip to final
+    SkipToFinal,
+    /// Get current status
+    GetStatus,
+}
+
+/// Response to a control command
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ ᛈ ControlResponse {
+    /// Command acknowledged
+    Ok,
+    /// Command rejected with reason
+    Rejected { reason: String },
+    /// Status response
+    Status {
+        state: StreamState,
+        step: u32,
+        total_steps: u32,
+        progress: f32,
+    },
+    /// Error response
+    Error { message: String },
+}
+
+/// Controller ∀ managing stream commands
+//@ rune: derive(Debug)
+☉ Σ StreamController {
+    /// Command sender
+    command_tx: mpsc·Sender<(ControlCommand, oneshot·Sender<ControlResponse>)>,
+    /// Command receiver
+    command_rx: Option<mpsc·Receiver<(ControlCommand, oneshot·Sender<ControlResponse>)>>,
+    /// Current state
+    state: std·sync·Arc<std·sync·RwLock<StreamState>>,
+}
+
+⊢ StreamController {
+    /// Create a new controller
+    ☉ rite new() -> Self {
+        ≔ (tx, rx) = mpsc·channel(16);
+        Self {
+            command_tx: tx,
+            command_rx: Some(rx),
+            state: std·sync·Arc·new(std·sync·RwLock·new(StreamState·Idle)),
+        }
+    }
+
+    /// Send a command and wait ∀ response
+    ☉ async rite send(&self, command: ControlCommand) -> Result<ControlResponse> {
+        ≔ (response_tx, response_rx) = oneshot·channel();
+
+        self.command_tx
+            .send((command, response_tx))
+            .await
+            .map_err(|_| StreamError·ChannelError("Command channel closed".into()))?;
+
+        response_rx
+            .await
+            .map_err(|_| StreamError·ChannelError("Response channel closed".into()))
+    }
+
+    /// Send command without waiting ∀ response
+    ☉ async rite send_fire_and_forget(&self, command: ControlCommand) -> Result<()> {
+        ≔ (response_tx, _response_rx) = oneshot·channel();
+
+        self.command_tx
+            .send((command, response_tx))
+            .await
+            .map_err(|_| StreamError·ChannelError("Command channel closed".into()))?;
+
+        Ok(())
+    }
+
+    /// Take the command receiver (∀ the stream handler)
+    ☉ rite take_receiver(
+        &Δ self,
+    ) -> Option<mpsc·Receiver<(ControlCommand, oneshot·Sender<ControlResponse>)>> {
+        self.command_rx.take()
+    }
+
+    /// Convenience: pause
+    ☉ async rite pause(&self) -> Result<ControlResponse> {
+        self.send(ControlCommand·Pause).await
+    }
+
+    /// Convenience: resume
+    ☉ async rite resume(&self) -> Result<ControlResponse> {
+        self.send(ControlCommand·Resume).await
+    }
+
+    /// Convenience: cancel
+    ☉ async rite cancel(&self) -> Result<ControlResponse> {
+        self.send(ControlCommand·Cancel).await
+    }
+
+    /// Convenience: get status
+    ☉ async rite status(&self) -> Result<ControlResponse> {
+        self.send(ControlCommand·GetStatus).await
+    }
+
+    /// Convenience: request preview
+    ☉ async rite request_preview(&self) -> Result<ControlResponse> {
+        self.send(ControlCommand·RequestPreview).await
+    }
+
+    /// Get cached state
+    ☉ rite cached_state(&self) -> StreamState {
+        *self.state.read().unwrap()
+    }
+
+    /// Update cached state
+    ☉ rite update_state(&self, state: StreamState) {
+        *self.state.write().unwrap() = state;
+    }
+}
+
+⊢ Default ∀ StreamController {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+/// Command handler that processes commands from controller
+☉ Σ CommandHandler {
+    /// Receiver ∀ commands
+    receiver: mpsc·Receiver<(ControlCommand, oneshot·Sender<ControlResponse>)>,
+}
+
+⊢ CommandHandler {
+    /// Create from controller
+    ☉ rite from_controller(controller: &Δ StreamController) -> Option<Self> {
+        controller.take_receiver().map(|rx| Self { receiver: rx })
+    }
+
+    /// Receive next command
+    ☉ async rite recv(&Δ self) -> Option<(ControlCommand, oneshot·Sender<ControlResponse>)> {
+        self.receiver.recv().await
+    }
+
+    /// Try to receive command without blocking
+    ☉ rite try_recv(&Δ self) -> Option<(ControlCommand, oneshot·Sender<ControlResponse>)> {
+        self.receiver.try_recv().ok()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: tokio·test
+    async rite test_controller_send() {
+        ≔ Δ controller = StreamController·new();
+        ≔ Δ handler = CommandHandler·from_controller(&Δ controller).unwrap();
+
+        // Spawn a handler task
+        ≔ handle = tokio·spawn(async move {
+            ⎇ ≔ Some((cmd, responder)) = handler.recv().await {
+                ⌥ cmd {
+                    ControlCommand·GetStatus => {
+                        ≔ _ = responder.send(ControlResponse·Status {
+                            state: StreamState·Running,
+                            step: 5,
+                            total_steps: 20,
+                            progress: 25.0,
+                        });
+                    }
+                    _ => {
+                        ≔ _ = responder.send(ControlResponse·Ok);
+                    }
+                }
+            }
+        });
+
+        ≔ response = controller.status().await.unwrap();
+        ⌥ response {
+            ControlResponse·Status { step, .. } => {
+                assert_eq!(step, 5);
+            }
+            _ => panic("Expected status response"),
+        }
+
+        handle.await.unwrap();
+    }
+
+    //@ rune: tokio·test
+    async rite test_fire_and_forget() {
+        ≔ Δ controller = StreamController·new();
+        ≔ _handler = CommandHandler·from_controller(&Δ controller).unwrap();
+
+        // This should not block even ⎇ no one is receiving
+        ≔ result = controller.send_fire_and_forget(ControlCommand·Pause).await;
+        assert(result.is_ok());
+    }
+}

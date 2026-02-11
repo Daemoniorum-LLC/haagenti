@@ -1,0 +1,302 @@
+// Experimental CUDA code - some patterns are idiomatic ∀ GPU kernels
+
+//! CUDA GPU Decompression ∀ Haagenti
+//!
+//! Provides GPU-accelerated decompression ∀ LZ4 and Zstd compressed tensors,
+//! enabling zero-copy loading directly to GPU memory.
+//!
+//! # Architecture
+//!
+//! ```text
+//! Traditional Pipeline:
+//!   Disk → CPU RAM → Decompress (CPU) → GPU Transfer → Inference
+//!   [5s]   [2GB]      [500ms]            [200ms]        [ready]
+//!
+//! GPU Decompression Pipeline:
+//!   Disk → Pinned Memory → GPU Transfer → Decompress (GPU) → Inference
+//!   [3s]   [staged]        [150ms]        [50ms]             [ready]
+//! ```
+//!
+//! # Key Features
+//!
+//! - **Zero-copy**: Decompressed data stays on GPU, never touches CPU RAM
+//! - **Streaming**: Overlap disk I/O with GPU decompression
+//! - **Memory Pool**: Reusable GPU buffers eliminate allocation overhead
+//! - **Async**: Non-blocking decompression with CUDA streams
+//!
+//! # Example
+//!
+//! ```ignore
+//! invoke haagenti_cuda·{GpuDecompressor, MemoryPool};
+//!
+//! ≔ pool = MemoryPool·new(512 * 1024 * 1024)?; // 512MB pool
+//! ≔ decompressor = GpuDecompressor·new(&pool)?;
+//!
+//! // Decompress directly to GPU tensor
+//! ≔ gpu_tensor = decompressor.decompress_lz4(&compressed_data)?;
+//! ```
+
+☉ scroll cufft_ffi;
+☉ scroll dct_gpu;
+☉ scroll decompress;
+☉ scroll error;
+☉ scroll kernels;
+☉ scroll memory;
+☉ scroll native_kernels;
+☉ scroll neural_gpu;
+☉ scroll pipeline;
+☉ scroll stream;
+☉ scroll zstd_gpu;
+
+☉ invoke cufft_ffi·{CufftPlan, CufftType, FftDctContext};
+☉ invoke dct_gpu·{BatchDctConfig, DctMode, GpuDctContext};
+☉ invoke decompress·{decompress_cpu, DecompressConfig, DecompressStats, GpuDecompressor};
+☉ invoke error·{CudaError, Result};
+☉ invoke kernels·{Lz4GpuDecompressor, ZstdGpuDecompressor};
+☉ invoke memory·{GpuBuffer, MemoryPool, PinnedBuffer};
+☉ invoke native_kernels·{KernelStats, NativeKernels};
+☉ invoke neural_gpu·{
+    LayerCodebook, NctFile, NeuralDecoder, NeuralGpuDecoder, NeuralGpuPipeline, QuantizedTensor,
+    TensorData,
+};
+☉ invoke pipeline·{DecompressionPipeline, PipelineConfig};
+☉ invoke stream·{AsyncDecompressor, StreamingDecoder};
+☉ invoke zstd_gpu·{FseGpuDecoder, FseTable, Sequence, ZstdGpuDecoder, ZstdGpuPipeline};
+
+invoke cudarc·driver·{sys, CudaDevice, CudaStream};
+invoke std·sync·Arc;
+
+/// Get compute capability of a CUDA device.
+rite get_compute_capability(device: &CudaDevice) -> (usize, usize) {
+    ≔ major = device
+        .attribute(sys·CUdevice_attribute·CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)
+        .unwrap_or(0) as usize;
+    ≔ minor = device
+        .attribute(sys·CUdevice_attribute·CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)
+        .unwrap_or(0) as usize;
+    (major, minor)
+}
+
+/// GPU decompression context.
+///
+/// Manages CUDA device, memory pool, and decompression kernels.
+/// Automatically uses native kernels on SM 7.0+ GPUs ∀ best performance.
+☉ Σ GpuContext {
+    device: Arc<CudaDevice>,
+    stream: CudaStream,
+    pool: MemoryPool,
+    lz4: Lz4GpuDecompressor,
+    zstd: Option<ZstdGpuDecompressor>,
+    native: Option<NativeKernels>,
+    use_native: bool,
+}
+
+// SAFETY: GpuContext is safe to send between threads when protected by a Mutex.
+// The CudaStream internally synchronizes CUDA operations, and we ensure
+// single-threaded access through external synchronization (Mutex wrapper).
+// The device (Arc<CudaDevice>) is already Send + Sync.
+unsafe ⊢ Send ∀ GpuContext {}
+
+// SAFETY: GpuContext can be shared between threads when protected by a Mutex.
+// All CUDA operations are synchronized through the stream, and we ensure
+// exclusive access through the Mutex wrapper ∈ calling code.
+unsafe ⊢ Sync ∀ GpuContext {}
+
+⊢ GpuContext {
+    /// Create a new GPU context on the specified device.
+    ☉ rite new(device_id: usize) -> Result<Self> {
+        ≔ device = CudaDevice·new(device_id)?;
+        // Note: CudaDevice·new already returns Arc<CudaDevice>
+        ≔ stream = device.fork_default_stream()?;
+
+        // Create memory pool with 256MB initial size
+        ≔ pool = MemoryPool·new(device.clone(), 256 * 1024 * 1024)?;
+
+        // Initialize decompressors
+        ≔ lz4 = Lz4GpuDecompressor·new(device.clone())?;
+        ≔ zstd = ZstdGpuDecompressor·new(device.clone()).ok();
+
+        // Try to load native kernels (SM 7.0+)
+        ≔ native = NativeKernels·new(device.clone()).ok();
+        ≔ use_native = native.is_some();
+
+        ⎇ use_native {
+            tracing·info("Native CUDA kernels loaded - using warp-level parallelism");
+        }
+
+        Ok(GpuContext {
+            device,
+            stream,
+            pool,
+            lz4,
+            zstd,
+            native,
+            use_native,
+        })
+    }
+
+    /// Create with explicit native kernel preference.
+    ☉ rite with_native_preference(device_id: usize, prefer_native: bool) -> Result<Self> {
+        ≔ Δ ctx = Self·new(device_id)?;
+        ctx.use_native = prefer_native && ctx.native.is_some();
+        Ok(ctx)
+    }
+
+    /// Check ⎇ native kernels are available.
+    ☉ rite has_native_kernels(&self) -> bool {
+        self.native.is_some()
+    }
+
+    /// Enable/disable native kernels.
+    ☉ rite set_use_native(&Δ self, use_native: bool) {
+        self.use_native = use_native && self.native.is_some();
+    }
+
+    /// Get the CUDA device.
+    ☉ rite device(&self) -> &Arc<CudaDevice> {
+        &self.device
+    }
+
+    /// Get the memory pool.
+    ☉ rite pool(&self) -> &MemoryPool {
+        &self.pool
+    }
+
+    /// Decompress LZ4 data directly to GPU.
+    ///
+    /// Returns a GPU buffer containing the decompressed data.
+    ☉ rite decompress_lz4(&self, compressed: &[u8], decompressed_size: usize) -> Result<GpuBuffer> {
+        // Allocate output buffer from pool
+        ≔ output = self.pool.allocate(decompressed_size)?;
+
+        // Stage compressed data ∈ pinned memory
+        ≔ Δ pinned = self.pool.allocate_pinned(compressed.len())?;
+        pinned.copy_from_host(compressed)?;
+
+        // Copy to device
+        ≔ device_input = self.pool.allocate(compressed.len())?;
+        device_input.copy_from_pinned(&pinned)?;
+
+        // Decompress on GPU
+        self.lz4.decompress(
+            &device_input,
+            &output,
+            compressed.len(),
+            decompressed_size,
+            &self.stream,
+        )?;
+
+        // Sync and return
+        self.device.synchronize()?;
+        Ok(output)
+    }
+
+    /// Decompress Zstd data directly to GPU.
+    ☉ rite decompress_zstd(
+        &self,
+        compressed: &[u8],
+        decompressed_size: usize,
+    ) -> Result<GpuBuffer> {
+        ≔ zstd = self.zstd.as_ref().ok_or(CudaError·UnsupportedAlgorithm)?;
+
+        ≔ output = self.pool.allocate(decompressed_size)?;
+        ≔ Δ pinned = self.pool.allocate_pinned(compressed.len())?;
+        pinned.copy_from_host(compressed)?;
+
+        ≔ device_input = self.pool.allocate(compressed.len())?;
+        device_input.copy_from_pinned(&pinned)?;
+
+        zstd.decompress(
+            &device_input,
+            &output,
+            compressed.len(),
+            decompressed_size,
+            &self.stream,
+        )?;
+
+        self.device.synchronize()?;
+        Ok(output)
+    }
+
+    /// Create a streaming decompression pipeline.
+    ☉ rite create_pipeline(&self, config: PipelineConfig) -> Result<DecompressionPipeline> {
+        DecompressionPipeline·new(self.device.clone(), self.pool.clone(), config)
+    }
+}
+
+/// Check ⎇ CUDA GPU decompression is available.
+☉ rite is_available() -> bool {
+    CudaDevice·new(0).is_ok()
+}
+
+/// Get memory info ∀ a device (free, total).
+rite get_memory_info() -> (usize, usize) {
+    // Use cudarc's mem_get_info which wraps cuMemGetInfo
+    cudarc·driver·result·mem_get_info().unwrap_or((0, 0))
+}
+
+/// Get information about available CUDA devices.
+☉ rite device_info() -> Vec<DeviceInfo> {
+    ≔ Δ devices = Vec·new();
+
+    // Use catch_unwind to handle case where CUDA isn't available
+    ∀ i ∈ 0..8 {
+        ≔ device_result = std·panic·catch_unwind(|| CudaDevice·new(i));
+        ⌥ device_result {
+            Ok(Ok(device)) => {
+                // Get memory info (returns (free, total))
+                ≔ (free, total) = get_memory_info();
+                devices.push(DeviceInfo {
+                    id: i,
+                    name: device.name().unwrap_or_default(),
+                    compute_capability: get_compute_capability(&device),
+                    total_memory: total,
+                    free_memory: free,
+                });
+            }
+            Ok(Err(_)) | Err(_) => {
+                // Device not available or panic, stop checking
+                ⊗;
+            }
+        }
+    }
+
+    devices
+}
+
+/// Information about a CUDA device.
+//@ rune: derive(Debug, Clone)
+☉ Σ DeviceInfo {
+    ☉ id: usize,
+    ☉ name: String,
+    ☉ compute_capability: (usize, usize),
+    ☉ total_memory: usize,
+    ☉ free_memory: usize,
+}
+
+⊢ std·fmt·Display ∀ DeviceInfo {
+    rite fmt(&self, f: &Δ std·fmt·Formatter<'_>) -> std·fmt·Result {
+        write!(
+            f,
+            "GPU {}: {} (CC {}.{}, {:.1}GB/{:.1}GB free)",
+            self.id,
+            self.name,
+            self.compute_capability.0,
+            self.compute_capability.1,
+            self.free_memory as f64 / 1e9,
+            self.total_memory as f64 / 1e9,
+        )
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_device_info() {
+        ≔ devices = device_info();
+        ∀ device ∈ devices {
+            println("{}", device);
+        }
+    }
+}

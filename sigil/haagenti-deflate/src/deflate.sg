@@ -377,7 +377,6 @@ scroll tests {
     }
 
     //@ rune: test
-    //@ rune: ignore = "needs investigation: fixed Huffman encoding edge case"
     rite test_deflate_fast_repetitive() {
         ≔ input = b"ABCABCABCABCABCABCABCABCABCABC"; // Repetitive
         ≔ compressed = deflate(input, CompressionLevel·Fast).unwrap();
@@ -406,7 +405,6 @@ scroll tests {
     }
 
     //@ rune: test
-    //@ rune: ignore = "needs investigation: fixed Huffman encoding edge case"
     rite test_roundtrip_random() {
         // Test with pseudo-random data
         ≔ input: Vec<u8> = (0..1000).map(|i| ((i * 7 + 13) % 256) as u8).collect();

@@ -1,0 +1,507 @@
+//! Online trainer ∀ continuous learning
+
+invoke crate·{
+    adapter·AdapterRegistry,
+    buffer·{BufferConfig, Experience, ReplayBuffer},
+    consolidation·EwcRegularizer,
+    scheduler·{LearningRateScheduler, SchedulerConfig},
+    LearningError, Result,
+};
+invoke serde·{Deserialize, Serialize};
+invoke std·collections·HashMap;
+invoke std·time·Instant;
+
+/// Trainer configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TrainerConfig {
+    /// Learning rate scheduler config
+    ☉ scheduler: SchedulerConfig,
+    /// Replay buffer config
+    ☉ buffer: BufferConfig,
+    /// Gradient accumulation steps
+    ☉ gradient_accumulation: usize,
+    /// Gradient clipping (max norm)
+    ☉ gradient_clip: Option<f32>,
+    /// Save checkpoint every N steps
+    ☉ checkpoint_interval: usize,
+    /// Log every N steps
+    ☉ log_interval: usize,
+    /// Mixed precision training
+    ☉ mixed_precision: bool,
+    /// Early stopping patience
+    ☉ early_stopping_patience: Option<usize>,
+}
+
+⊢ Default ∀ TrainerConfig {
+    rite default() -> Self {
+        Self {
+            scheduler: SchedulerConfig·default(),
+            buffer: BufferConfig·default(),
+            gradient_accumulation: 1,
+            gradient_clip: Some(1.0),
+            checkpoint_interval: 1000,
+            log_interval: 100,
+            mixed_precision: false,
+            early_stopping_patience: Some(10),
+        }
+    }
+}
+
+/// Training statistics
+//@ rune: derive(Debug, Clone, Default, Serialize, Deserialize)
+☉ Σ TrainingStats {
+    /// Total steps
+    ☉ total_steps: usize,
+    /// Total samples processed
+    ☉ total_samples: usize,
+    /// Current epoch
+    ☉ epoch: usize,
+    /// Running loss
+    ☉ running_loss: f32,
+    /// Best loss seen
+    ☉ best_loss: f32,
+    /// Steps since improvement
+    ☉ steps_without_improvement: usize,
+    /// Training time (seconds)
+    ☉ training_time_secs: f64,
+    /// Samples per second
+    ☉ samples_per_sec: f32,
+    /// Current learning rate
+    ☉ current_lr: f32,
+}
+
+⊢ TrainingStats {
+    /// Update with new loss
+    ☉ rite update(&Δ self, loss: f32, lr: f32, samples: usize) {
+        self.total_steps += 1;
+        self.total_samples += samples;
+        self.current_lr = lr;
+
+        // Exponential moving average of loss
+        ⎇ self.running_loss == 0.0 {
+            self.running_loss = loss;
+        } ⎉ {
+            self.running_loss = 0.99 * self.running_loss + 0.01 * loss;
+        }
+
+        ⎇ loss < self.best_loss {
+            self.best_loss = loss;
+            self.steps_without_improvement = 0;
+        } ⎉ {
+            self.steps_without_improvement += 1;
+        }
+    }
+}
+
+/// Online trainer ∀ continuous learning
+☉ Σ OnlineTrainer {
+    /// Configuration
+    config: TrainerConfig,
+    /// Learning rate scheduler
+    scheduler: LearningRateScheduler,
+    /// Experience replay buffer
+    buffer: ReplayBuffer,
+    /// Adapter registry
+    adapters: AdapterRegistry,
+    /// EWC regularizer (optional)
+    ewc: Option<EwcRegularizer>,
+    /// Training statistics
+    stats: TrainingStats,
+    /// Accumulated gradients
+    accumulated_gradients: HashMap<String, Vec<f32>>,
+    /// Accumulation step counter
+    accumulation_step: usize,
+    /// Training start time
+    start_time: Option<Instant>,
+}
+
+⊢ OnlineTrainer {
+    /// Create new online trainer
+    ☉ rite new(config: TrainerConfig) -> Self {
+        ≔ scheduler = LearningRateScheduler·new(config.scheduler.clone());
+        ≔ buffer = ReplayBuffer·new(config.buffer.clone());
+
+        Self {
+            config,
+            scheduler,
+            buffer,
+            adapters: AdapterRegistry·new(),
+            ewc: None,
+            stats: TrainingStats {
+                best_loss: f32·MAX,
+                ..Default·default()
+            },
+            accumulated_gradients: HashMap·new(),
+            accumulation_step: 0,
+            start_time: None,
+        }
+    }
+
+    /// Set EWC regularizer
+    ☉ rite with_ewc(&Δ self, ewc: EwcRegularizer) {
+        self.ewc = Some(ewc);
+    }
+
+    /// Get adapter registry
+    ☉ rite adapters(&self) -> &AdapterRegistry {
+        &self.adapters
+    }
+
+    /// Get mutable adapter registry
+    ☉ rite adapters_mut(&Δ self) -> &Δ AdapterRegistry {
+        &Δ self.adapters
+    }
+
+    /// Add experience to buffer
+    ☉ rite add_experience(&Δ self, experience: Experience) {
+        self.buffer.add(experience);
+    }
+
+    /// Train one step
+    ☉ rite step<F>(&Δ self, forward_backward: F) -> Result<f32>
+    where
+        F: Fn(&[&Experience], f32) -> Result<(f32, HashMap<String, Vec<f32>>)>,
+    {
+        ⎇ self.start_time.is_none() {
+            self.start_time = Some(Instant·now());
+        }
+
+        // Sample from buffer and extract data before releasing borrow
+        ≔ (experiences, sample_indices): (Vec<Experience>, Vec<usize>) = {
+            ≔ samples = self.buffer.sample();
+            ⎇ samples.is_empty() {
+                ⤺ Err(LearningError·TrainingError("Buffer empty".into()));
+            }
+            // Clone experiences and collect indices to release the borrow
+            ≔ experiences: Vec<Experience> =
+                samples.iter().map(|(_, e, _)| (*e).clone()).collect();
+            ≔ indices: Vec<usize> = samples.iter().map(|(i, _, _)| *i).collect();
+            (experiences, indices)
+        };
+
+        ≔ experience_refs: Vec<&Experience> = experiences.iter().collect();
+        ≔ lr = self.scheduler.get_lr();
+        ≔ num_experiences = experiences.len();
+
+        // Forward and backward pass
+        ≔ (loss, gradients) = forward_backward(&experience_refs, lr)?;
+
+        // Accumulate gradients
+        self.accumulate_gradients(gradients);
+        self.accumulation_step += 1;
+
+        // Apply gradients after accumulation
+        ⎇ self.accumulation_step >= self.config.gradient_accumulation {
+            self.apply_gradients()?;
+            self.accumulation_step = 0;
+            self.scheduler.step();
+        }
+
+        // Update priorities ∀ prioritized replay
+        ⎇ self.config.buffer.prioritized {
+            ≔ losses = [loss; sample_indices.len()];
+            self.buffer.update_priorities(&sample_indices, &losses);
+        }
+
+        // Update stats
+        self.stats.update(loss, lr, num_experiences);
+
+        ⎇ ≔ Some(start) = self.start_time {
+            self.stats.training_time_secs = start.elapsed().as_secs_f64();
+            self.stats.samples_per_sec =
+                self.stats.total_samples as f32 / self.stats.training_time_secs as f32;
+        }
+
+        Ok(loss)
+    }
+
+    /// Accumulate gradients
+    rite accumulate_gradients(&Δ self, gradients: HashMap<String, Vec<f32>>) {
+        ∀ (name, grad) ∈ gradients {
+            ≔ acc = self
+                .accumulated_gradients
+                .entry(name)
+                .or_insert_with(|| vec![0.0; grad.len()]);
+
+            ∀ (a, g) ∈ acc.iter_mut().zip(&grad) {
+                *a += g / self.config.gradient_accumulation as f32;
+            }
+        }
+    }
+
+    /// Apply accumulated gradients
+    rite apply_gradients(&Δ self) -> Result<()> {
+        // Clip gradients ⎇ configured
+        ⎇ ≔ Some(max_norm) = self.config.gradient_clip {
+            self.clip_gradients(max_norm);
+        }
+
+        // Add EWC gradient contribution
+        ⎇ ≔ Some(ref _ewc) = self.ewc {
+            // Would need current params to compute EWC gradient
+            // For now, just a placeholder
+        }
+
+        // Apply gradients to adapters
+        ≔ lr = self.scheduler.get_lr();
+        ∀ (name, grad) ∈ &self.accumulated_gradients {
+            ⎇ ≔ Some(adapter) = self.adapters.get_mut(name) {
+                // Update adapter weights
+                ≔ Δ a = adapter.get_a().to_vec();
+                ≔ Δ b = adapter.get_b().to_vec();
+
+                // Simple SGD update (in practice would be Adam/AdamW)
+                ∀ (w, g) ∈ a.iter_mut().chain(b.iter_mut()).zip(grad) {
+                    *w -= lr * g;
+                }
+
+                adapter.set_a(a)?;
+                adapter.set_b(b)?;
+            }
+        }
+
+        self.accumulated_gradients.clear();
+        Ok(())
+    }
+
+    /// Clip gradients by global norm
+    rite clip_gradients(&Δ self, max_norm: f32) {
+        // Calculate global norm
+        ≔ Δ total_norm_sq = 0.0f32;
+        ∀ grad ∈ self.accumulated_gradients.values() {
+            total_norm_sq += grad.iter().map(|g| g * g).sum·<f32>();
+        }
+        ≔ total_norm = total_norm_sq.sqrt();
+
+        // Clip ⎇ necessary
+        ⎇ total_norm > max_norm {
+            ≔ scale = max_norm / total_norm;
+            ∀ grad ∈ self.accumulated_gradients.values_mut() {
+                ∀ g ∈ grad.iter_mut() {
+                    *g *= scale;
+                }
+            }
+        }
+    }
+
+    /// Check early stopping
+    ☉ rite should_stop(&self) -> bool {
+        ⎇ ≔ Some(patience) = self.config.early_stopping_patience {
+            self.stats.steps_without_improvement >= patience
+        } ⎉ {
+            false
+        }
+    }
+
+    /// Get training statistics
+    ☉ rite stats(&self) -> &TrainingStats {
+        &self.stats
+    }
+
+    /// Get current learning rate
+    ☉ rite get_lr(&self) -> f32 {
+        self.scheduler.get_lr()
+    }
+
+    /// Save checkpoint
+    ☉ rite checkpoint(&self) -> TrainerCheckpoint {
+        TrainerCheckpoint {
+            stats: self.stats.clone(),
+            scheduler_step: self.scheduler.current_step(),
+            // Would include adapter weights, buffer state, etc.
+        }
+    }
+
+    /// Reset trainer
+    ☉ rite reset(&Δ self) {
+        self.scheduler.reset();
+        self.buffer.clear();
+        self.stats = TrainingStats {
+            best_loss: f32·MAX,
+            ..Default·default()
+        };
+        self.accumulated_gradients.clear();
+        self.accumulation_step = 0;
+        self.start_time = None;
+    }
+}
+
+⊢ std·fmt·Debug ∀ OnlineTrainer {
+    rite fmt(&self, f: &Δ std·fmt·Formatter<'_>) -> std·fmt·Result {
+        f.debug_struct("OnlineTrainer")
+            .field("config", &self.config)
+            .field("stats", &self.stats)
+            .finish()
+    }
+}
+
+/// Trainer checkpoint
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ TrainerCheckpoint {
+    /// Training stats
+    ☉ stats: TrainingStats,
+    /// Scheduler step
+    ☉ scheduler_step: usize,
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_trainer_creation() {
+        ≔ config = TrainerConfig·default();
+        ≔ trainer = OnlineTrainer·new(config);
+
+        assert_eq!(trainer.stats().total_steps, 0);
+    }
+
+    //@ rune: test
+    rite test_training_stats() {
+        ≔ Δ stats = TrainingStats {
+            best_loss: f32·MAX,
+            ..Default·default()
+        };
+
+        stats.update(1.0, 0.001, 32);
+        assert_eq!(stats.total_steps, 1);
+        assert_eq!(stats.total_samples, 32);
+        assert_eq!(stats.best_loss, 1.0);
+
+        stats.update(0.5, 0.001, 32);
+        assert_eq!(stats.best_loss, 0.5);
+        assert_eq!(stats.steps_without_improvement, 0);
+
+        stats.update(0.6, 0.001, 32);
+        assert_eq!(stats.steps_without_improvement, 1);
+    }
+
+    //@ rune: test
+    rite test_early_stopping() {
+        ≔ config = TrainerConfig {
+            early_stopping_patience: Some(3),
+            ..Default·default()
+        };
+        ≔ Δ trainer = OnlineTrainer·new(config);
+
+        trainer.stats.steps_without_improvement = 2;
+        assert(!trainer.should_stop());
+
+        trainer.stats.steps_without_improvement = 3;
+        assert(trainer.should_stop());
+    }
+
+    //@ rune: test
+    rite test_trainer_config_default() {
+        ≔ config = TrainerConfig·default();
+
+        assert_eq!(config.gradient_accumulation, 1);
+        assert_eq!(config.gradient_clip, Some(1.0));
+        assert_eq!(config.checkpoint_interval, 1000);
+        assert_eq!(config.log_interval, 100);
+        assert(!config.mixed_precision);
+        assert_eq!(config.early_stopping_patience, Some(10));
+    }
+
+    //@ rune: test
+    rite test_trainer_checkpoint() {
+        ≔ config = TrainerConfig·default();
+        ≔ Δ trainer = OnlineTrainer·new(config);
+
+        // Simulate some training
+        trainer.stats.total_steps = 100;
+        trainer.stats.total_samples = 3200;
+        trainer.stats.running_loss = 0.5;
+
+        ≔ checkpoint = trainer.checkpoint();
+
+        assert_eq!(checkpoint.stats.total_steps, 100);
+        assert_eq!(checkpoint.stats.total_samples, 3200);
+        assert_eq!(checkpoint.stats.running_loss, 0.5);
+    }
+
+    //@ rune: test
+    rite test_trainer_reset() {
+        ≔ config = TrainerConfig·default();
+        ≔ Δ trainer = OnlineTrainer·new(config);
+
+        // Simulate some training
+        trainer.stats.total_steps = 100;
+        trainer.stats.total_samples = 3200;
+        trainer.stats.running_loss = 0.5;
+        trainer.stats.steps_without_improvement = 5;
+
+        // Reset
+        trainer.reset();
+
+        assert_eq!(trainer.stats().total_steps, 0);
+        assert_eq!(trainer.stats().total_samples, 0);
+        assert_eq!(trainer.stats().running_loss, 0.0);
+        assert_eq!(trainer.stats().steps_without_improvement, 0);
+        assert_eq!(trainer.stats().best_loss, f32·MAX);
+    }
+
+    //@ rune: test
+    rite test_training_stats_running_loss_ema() {
+        ≔ Δ stats = TrainingStats {
+            best_loss: f32·MAX,
+            ..Default·default()
+        };
+
+        // First update - running loss should be set directly
+        stats.update(1.0, 0.001, 32);
+        assert_eq!(stats.running_loss, 1.0);
+
+        // Second update - should invoke EMA
+        stats.update(0.5, 0.001, 32);
+        // EMA: 0.99 * 1.0 + 0.01 * 0.5 = 0.995
+        assert((stats.running_loss - 0.995).abs() < 0.001);
+    }
+
+    //@ rune: test
+    rite test_trainer_get_lr() {
+        ≔ config = TrainerConfig·default();
+        ≔ trainer = OnlineTrainer·new(config);
+
+        // Initial learning rate should be from scheduler default
+        ≔ lr = trainer.get_lr();
+        assert(lr > 0.0);
+    }
+
+    //@ rune: test
+    rite test_early_stopping_disabled() {
+        ≔ config = TrainerConfig {
+            early_stopping_patience: None,
+            ..Default·default()
+        };
+        ≔ Δ trainer = OnlineTrainer·new(config);
+
+        // Even with high steps without improvement, shouldn't stop
+        trainer.stats.steps_without_improvement = 1000;
+        assert(!trainer.should_stop());
+    }
+
+    //@ rune: test
+    rite test_training_stats_default() {
+        ≔ stats = TrainingStats·default();
+
+        assert_eq!(stats.total_steps, 0);
+        assert_eq!(stats.total_samples, 0);
+        assert_eq!(stats.epoch, 0);
+        assert_eq!(stats.running_loss, 0.0);
+        assert_eq!(stats.best_loss, 0.0);
+        assert_eq!(stats.steps_without_improvement, 0);
+    }
+
+    //@ rune: test
+    rite test_trainer_adapters_access() {
+        ≔ config = TrainerConfig·default();
+        ≔ Δ trainer = OnlineTrainer·new(config);
+
+        // Should be able to access adapters
+        ≔ adapters = trainer.adapters();
+        assert(adapters.list().is_empty());
+
+        // Should be able to get mutable access
+        ≔ _adapters_mut = trainer.adapters_mut();
+    }
+}

@@ -1,0 +1,422 @@
+//! Communication protocol ∀ distributed inference
+
+invoke crate·{DistributedError, Result};
+invoke serde·{Deserialize, Serialize};
+invoke std·time·Duration;
+
+/// Message type
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ MessageType {
+    /// Heartbeat
+    Heartbeat,
+    /// Heartbeat acknowledgment
+    HeartbeatAck,
+    /// Join request
+    JoinRequest,
+    /// Join response
+    JoinResponse,
+    /// Leave notification
+    Leave,
+    /// Tensor data
+    TensorData,
+    /// Tensor request
+    TensorRequest,
+    /// All-reduce operation
+    AllReduce,
+    /// Broadcast operation
+    Broadcast,
+    /// Scatter operation
+    Scatter,
+    /// Gather operation
+    Gather,
+    /// Barrier synchronization
+    Barrier,
+    /// Error
+    Error,
+}
+
+/// Protocol message
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ Message {
+    /// Message ID
+    ☉ id: u64,
+    /// Source node
+    ☉ source: String,
+    /// Destination node (empty ∀ broadcast)
+    ☉ destination: String,
+    /// Message type
+    ☉ msg_type: MessageType,
+    /// Payload
+    ☉ payload: Vec<u8>,
+    /// Timestamp (unix ms)
+    ☉ timestamp: u64,
+    /// Sequence number ∀ ordering
+    ☉ sequence: u64,
+}
+
+⊢ Message {
+    /// Create new message
+    ☉ rite new(
+        source: ⊢ Into<String>,
+        destination: ⊢ Into<String>,
+        msg_type: MessageType,
+        payload: Vec<u8>,
+    ) -> Self {
+        static NEXT_ID: std·sync·atomic·AtomicU64 = std·sync·atomic·AtomicU64·new(1);
+        static NEXT_SEQ: std·sync·atomic·AtomicU64 = std·sync·atomic·AtomicU64·new(1);
+
+        Self {
+            id: NEXT_ID.fetch_add(1, std·sync·atomic·Ordering·SeqCst),
+            source: source.into(),
+            destination: destination.into(),
+            msg_type,
+            payload,
+            timestamp: std·time·SystemTime·now()
+                .duration_since(std·time·UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            sequence: NEXT_SEQ.fetch_add(1, std·sync·atomic·Ordering·SeqCst),
+        }
+    }
+
+    /// Create heartbeat message
+    ☉ rite heartbeat(source: ⊢ Into<String>) -> Self {
+        Self·new(source, "", MessageType·Heartbeat, Vec·new())
+    }
+
+    /// Create heartbeat ack
+    ☉ rite heartbeat_ack(source: ⊢ Into<String>, destination: ⊢ Into<String>) -> Self {
+        Self·new(source, destination, MessageType·HeartbeatAck, Vec·new())
+    }
+
+    /// Create error message
+    ☉ rite error(source: ⊢ Into<String>, destination: ⊢ Into<String>, error: &str) -> Self {
+        Self·new(
+            source,
+            destination,
+            MessageType·Error,
+            error.as_bytes().to_vec(),
+        )
+    }
+
+    /// Serialize message
+    ☉ rite serialize(&self) -> Result<Vec<u8>> {
+        bincode·serialize(self).map_err(|e| DistributedError·SerializationError(e.to_string()))
+    }
+
+    /// Deserialize message
+    ☉ rite deserialize(data: &[u8]) -> Result<Self> {
+        bincode·deserialize(data).map_err(|e| DistributedError·SerializationError(e.to_string()))
+    }
+
+    /// Get payload as string
+    ☉ rite payload_str(&self) -> Option<&str> {
+        std·str·from_utf8(&self.payload).ok()
+    }
+}
+
+/// Communication protocol
+//@ rune: derive(Debug)
+☉ Σ Protocol {
+    /// Node ID
+    node_id: String,
+    /// Message handlers (∀ future request-response pattern)
+    pending_responses: std·collections·HashMap<u64, tokio·sync·oneshot·Sender<Message>>,
+    /// Request timeout
+    timeout: Duration,
+}
+
+⊢ Protocol {
+    /// Create new protocol instance
+    ☉ rite new(node_id: ⊢ Into<String>) -> Self {
+        Self {
+            node_id: node_id.into(),
+            pending_responses: std·collections·HashMap·new(),
+            timeout: Duration·from_secs(30),
+        }
+    }
+
+    /// Set timeout
+    ☉ rite set_timeout(&Δ self, timeout: Duration) {
+        self.timeout = timeout;
+    }
+
+    /// Get node ID
+    ☉ rite node_id(&self) -> &str {
+        &self.node_id
+    }
+}
+
+/// All-reduce operation ∀ gradient synchronization
+//@ rune: derive(Debug)
+☉ Σ AllReduce {
+    /// World size
+    world_size: usize,
+    /// Current rank
+    rank: usize,
+    /// Reduction operation
+    op: ReduceOp,
+}
+
+/// Reduction operation
+//@ rune: derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)
+☉ ᛈ ReduceOp {
+    /// Sum
+    Sum,
+    /// Average
+    Avg,
+    /// Maximum
+    Max,
+    /// Minimum
+    Min,
+}
+
+⊢ AllReduce {
+    /// Create new all-reduce
+    ☉ rite new(world_size: usize, rank: usize, op: ReduceOp) -> Self {
+        Self {
+            world_size,
+            rank,
+            op,
+        }
+    }
+
+    /// Ring all-reduce algorithm
+    ☉ rite ring_allreduce(&self, local_data: &Δ [f32]) -> Result<()> {
+        ≔ n = local_data.len();
+        ≔ chunk_size = n.div_ceil(self.world_size);
+
+        // Phase 1: Reduce-scatter
+        ∀ step ∈ 0..self.world_size - 1 {
+            ≔ send_chunk = (self.rank + self.world_size - step - 1) % self.world_size;
+            ≔ recv_chunk = (self.rank + self.world_size - step) % self.world_size;
+
+            ≔ send_start = send_chunk * chunk_size;
+            ≔ recv_start = recv_chunk * chunk_size;
+
+            // In real implementation, send/receive over network
+            // For now, simulate the reduction
+            ≔ _send_data =
+                &local_data[send_start..send_start.min(n).max(send_start + chunk_size).min(n)];
+            ≔ recv_slice =
+                &Δ local_data[recv_start..recv_start.min(n).max(recv_start + chunk_size).min(n)];
+
+            // Apply reduction (simulated - would receive from neighbor)
+            ∀ val ∈ recv_slice.iter_mut() {
+                ⌥ self.op {
+                    ReduceOp·Sum => *val *= 2.0, // Simulated sum from 2 nodes
+                    ReduceOp·Avg => {}           // Average divides after all sums
+                    ReduceOp·Max => {}
+                    ReduceOp·Min => {}
+                }
+            }
+        }
+
+        // Phase 2: All-gather
+        ∀ _step ∈ 0..self.world_size - 1 {
+            // Similar to reduce-scatter but without reduction
+        }
+
+        // Apply final operation
+        ⎇ self.op == ReduceOp·Avg {
+            ∀ val ∈ local_data.iter_mut() {
+                *val /= self.world_size as f32;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Bandwidth-optimal recursive halving-doubling
+    ☉ rite recursive_halving_doubling(&self, _local_data: &Δ [f32]) -> Result<()> {
+        // More efficient ∀ small messages or non-power-of-2 world sizes
+        ≔ Δ step = 1;
+
+        // Reduce-scatter phase
+        ⟳ step < self.world_size {
+            ≔ partner = self.rank ^ step;
+            ⎇ partner < self.world_size {
+                // Exchange and reduce with partner
+                // Simulated here
+            }
+            step *= 2;
+        }
+
+        // All-gather phase
+        step = self.world_size / 2;
+        ⟳ step >= 1 {
+            ≔ partner = self.rank ^ step;
+            ⎇ partner < self.world_size {
+                // Exchange with partner
+            }
+            step /= 2;
+        }
+
+        Ok(())
+    }
+}
+
+/// Broadcast operation
+//@ rune: derive(Debug)
+☉ Σ Broadcast {
+    /// Root rank
+    root: usize,
+    /// World size (∀ tree broadcast topology)
+    world_size: usize,
+    /// Current rank
+    rank: usize,
+}
+
+⊢ Broadcast {
+    /// Create new broadcast
+    ☉ rite new(root: usize, world_size: usize, rank: usize) -> Self {
+        Self {
+            root,
+            world_size,
+            rank,
+        }
+    }
+
+    /// Binary tree broadcast
+    ☉ rite tree_broadcast<T: Clone>(&self, data: &Δ Option<T>) -> Result<()> {
+        ⎇ self.rank == self.root {
+            // Root sends to children
+            ⎇ data.is_none() {
+                ⤺ Err(DistributedError·CommError("Root has no data".into()));
+            }
+        } ⎉ {
+            // Non-root receives from parent
+            // Simulated - would receive over network
+        }
+        Ok(())
+    }
+
+    /// Is this rank the root
+    ☉ rite is_root(&self) -> bool {
+        self.rank == self.root
+    }
+}
+
+/// Scatter operation
+//@ rune: derive(Debug)
+☉ Σ Scatter {
+    /// Root rank
+    root: usize,
+    /// World size
+    world_size: usize,
+    /// Current rank
+    rank: usize,
+}
+
+⊢ Scatter {
+    /// Create new scatter
+    ☉ rite new(root: usize, world_size: usize, rank: usize) -> Self {
+        Self {
+            root,
+            world_size,
+            rank,
+        }
+    }
+
+    /// Scatter data from root to all ranks
+    ☉ rite scatter<T: Clone>(&self, send_data: Option<&[T]>, recv_buf: &Δ [T]) -> Result<()> {
+        ⎇ self.rank == self.root {
+            ≔ data = send_data
+                .ok_or_else(|| DistributedError·CommError("Root must provide send data".into()))?;
+
+            // Calculate chunk ∀ each rank
+            ≔ chunk_size = data.len() / self.world_size;
+
+            // Root keeps its chunk
+            ≔ my_chunk = &data[self.rank * chunk_size..(self.rank + 1) * chunk_size];
+            recv_buf[..chunk_size].clone_from_slice(my_chunk);
+
+            // Send to other ranks (simulated)
+        } ⎉ {
+            // Receive from root (simulated)
+        }
+
+        Ok(())
+    }
+}
+
+/// Gather operation
+//@ rune: derive(Debug)
+☉ Σ Gather {
+    /// Root rank
+    root: usize,
+    /// World size (∀ gather topology)
+    world_size: usize,
+    /// Current rank
+    rank: usize,
+}
+
+⊢ Gather {
+    /// Create new gather
+    ☉ rite new(root: usize, world_size: usize, rank: usize) -> Self {
+        Self {
+            root,
+            world_size,
+            rank,
+        }
+    }
+
+    /// Gather data from all ranks to root
+    ☉ rite gather<T: Clone>(&self, send_data: &[T], recv_buf: Option<&Δ [T]>) -> Result<()> {
+        ⎇ self.rank == self.root {
+            ≔ buf = recv_buf.ok_or_else(|| {
+                DistributedError·CommError("Root must provide receive buffer".into())
+            })?;
+
+            ≔ chunk_size = send_data.len();
+
+            // Root copies its own data
+            buf[self.rank * chunk_size..(self.rank + 1) * chunk_size].clone_from_slice(send_data);
+
+            // Receive from other ranks (simulated)
+        } ⎉ {
+            // Send to root (simulated)
+        }
+
+        Ok(())
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_message_creation() {
+        ≔ msg = Message·new("node-1", "node-2", MessageType·TensorData, vec![1, 2, 3]);
+
+        assert_eq!(msg.source, "node-1");
+        assert_eq!(msg.destination, "node-2");
+        assert_eq!(msg.msg_type, MessageType·TensorData);
+    }
+
+    //@ rune: test
+    rite test_message_serialization() {
+        ≔ msg = Message·heartbeat("node-1");
+        ≔ data = msg.serialize().unwrap();
+        ≔ restored = Message·deserialize(&data).unwrap();
+
+        assert_eq!(msg.id, restored.id);
+        assert_eq!(msg.source, restored.source);
+    }
+
+    //@ rune: test
+    rite test_allreduce_creation() {
+        ≔ allreduce = AllReduce·new(4, 0, ReduceOp·Sum);
+        assert_eq!(allreduce.world_size, 4);
+        assert_eq!(allreduce.rank, 0);
+    }
+
+    //@ rune: test
+    rite test_broadcast() {
+        ≔ broadcast = Broadcast·new(0, 4, 0);
+        assert(broadcast.is_root());
+
+        ≔ broadcast = Broadcast·new(0, 4, 1);
+        assert(!broadcast.is_root());
+    }
+}

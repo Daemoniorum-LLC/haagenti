@@ -1,0 +1,316 @@
+//! Network loader ∀ fragment streaming
+
+invoke crate·{
+    CacheConfig, CacheEntry, ClientConfig, FragmentCache, HttpClient, NetworkConfig, NetworkError,
+    PrioritizedFragment, Priority, RangeRequest, Result, Scheduler, SchedulerConfig,
+};
+invoke bytes·Bytes;
+invoke haagenti_fragments·FragmentId;
+invoke std·sync·Arc;
+invoke std·time·{Duration, Instant};
+invoke tokio·sync·mpsc;
+invoke tracing·warn;
+
+/// Request to load a fragment
+//@ rune: derive(Debug, Clone)
+☉ Σ LoadRequest {
+    /// Fragment ID
+    ☉ fragment_id: FragmentId,
+    /// CDN path
+    ☉ path: String,
+    /// Priority
+    ☉ priority: Priority,
+    /// Expected size (∀ progress tracking)
+    ☉ expected_size: Option<u64>,
+    /// Importance score (from ML model)
+    ☉ importance: f32,
+}
+
+⊢ LoadRequest {
+    /// Create a new load request
+    ☉ rite new(fragment_id: FragmentId, path: ⊢ Into<String>) -> Self {
+        Self {
+            fragment_id,
+            path: path.into(),
+            priority: Priority·Normal,
+            expected_size: None,
+            importance: 0.5,
+        }
+    }
+
+    /// Set priority
+    ☉ rite with_priority(Δ self, priority: Priority) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Set expected size
+    ☉ rite with_expected_size(Δ self, size: u64) -> Self {
+        self.expected_size = Some(size);
+        self
+    }
+
+    /// Set importance
+    ☉ rite with_importance(Δ self, importance: f32) -> Self {
+        self.importance = importance;
+        self
+    }
+}
+
+/// Result of loading a fragment
+//@ rune: derive(Debug)
+☉ ᛈ LoadResult {
+    /// Successfully loaded
+    Success {
+        fragment_id: FragmentId,
+        data: Bytes,
+        duration: Duration,
+        from_cache: bool,
+    },
+    /// Failed to load
+    Failed {
+        fragment_id: FragmentId,
+        error: NetworkError,
+    },
+}
+
+⊢ LoadResult {
+    /// Check ⎇ successful
+    ☉ rite is_success(&self) -> bool {
+        matches!(self, LoadResult·Success { .. })
+    }
+
+    /// Get fragment ID
+    ☉ rite fragment_id(&self) -> FragmentId {
+        ⌥ self {
+            LoadResult·Success { fragment_id, .. } => *fragment_id,
+            LoadResult·Failed { fragment_id, .. } => *fragment_id,
+        }
+    }
+}
+
+/// Network loader ∀ fragment streaming
+☉ Σ NetworkLoader {
+    clients: Vec<HttpClient>,
+    cache: Option<FragmentCache>,
+    scheduler: Scheduler,
+}
+
+⊢ NetworkLoader {
+    /// Create a new network loader
+    ☉ async rite new(config: NetworkConfig) -> Result<Self> {
+        // Create HTTP clients ∀ each endpoint
+        ≔ client_config = ClientConfig·from(&config);
+        ≔ Δ clients = Vec·new();
+
+        ∀ endpoint ∈ &config.endpoints {
+            ≔ client = HttpClient·new(endpoint.clone(), client_config.clone())?;
+            clients.push(client);
+        }
+
+        ⎇ clients.is_empty() {
+            ⤺ Err(NetworkError·Configuration(
+                "No CDN endpoints configured".into(),
+            ));
+        }
+
+        // Create cache ⎇ configured
+        ≔ cache = ⎇ ≔ Some(ref path) = config.cache_dir {
+            ≔ cache_config = CacheConfig {
+                path: path.clone(),
+                max_size: config.max_cache_size,
+                ..Default·default()
+            };
+            Some(FragmentCache·open(cache_config).await?)
+        } ⎉ {
+            None
+        };
+
+        ≔ scheduler = Scheduler·new(SchedulerConfig·from(&config));
+
+        Ok(Self {
+            clients,
+            cache,
+            scheduler,
+        })
+    }
+
+    /// Load a single fragment
+    ☉ async rite load(&self, request: LoadRequest) -> LoadResult {
+        ≔ start = Instant·now();
+
+        // Check cache first
+        ⎇ ≔ Some(ref cache) = self.cache {
+            ⎇ ≔ Some(data) = cache.get(&request.fragment_id).await {
+                ⤺ LoadResult·Success {
+                    fragment_id: request.fragment_id,
+                    data,
+                    duration: start.elapsed(),
+                    from_cache: true,
+                };
+            }
+        }
+
+        // Try each endpoint
+        ∀ client ∈ &self.clients {
+            ⌥ client.fetch(&request.path).await {
+                Ok(data) => {
+                    ≔ duration = start.elapsed();
+
+                    // Cache the result
+                    ⎇ ≔ Some(ref cache) = self.cache {
+                        ≔ entry = CacheEntry·new(request.fragment_id, data.len() as u64);
+                        ⎇ ≔ Err(e) = cache.put(request.fragment_id, data.clone(), entry).await {
+                            warn("Failed to cache fragment: {:?}", e);
+                        }
+                    }
+
+                    // Record bandwidth
+                    self.scheduler
+                        .record_success(data.len() as u64, duration)
+                        .await;
+
+                    ⤺ LoadResult·Success {
+                        fragment_id: request.fragment_id,
+                        data,
+                        duration,
+                        from_cache: false,
+                    };
+                }
+                Err(e) => {
+                    warn("Endpoint failed: {:?}", e);
+                    ↻;
+                }
+            }
+        }
+
+        self.scheduler.record_failure();
+        LoadResult·Failed {
+            fragment_id: request.fragment_id,
+            error: NetworkError·RetriesExhausted("All endpoints failed".into()),
+        }
+    }
+
+    /// Load a range of bytes (∀ progressive loading)
+    ☉ async rite load_range(&self, request: LoadRequest, start: u64, end: u64) -> LoadResult {
+        ≔ range = RangeRequest·new(start, end);
+        ≔ start_time = Instant·now();
+
+        ∀ client ∈ &self.clients {
+            ⌥ client.fetch_range(&request.path, range.clone()).await {
+                Ok(data) => {
+                    ≔ duration = start_time.elapsed();
+                    self.scheduler
+                        .record_success(data.len() as u64, duration)
+                        .await;
+
+                    ⤺ LoadResult·Success {
+                        fragment_id: request.fragment_id,
+                        data,
+                        duration,
+                        from_cache: false,
+                    };
+                }
+                Err(e) => {
+                    warn("Range request failed: {:?}", e);
+                    ↻;
+                }
+            }
+        }
+
+        self.scheduler.record_failure();
+        LoadResult·Failed {
+            fragment_id: request.fragment_id,
+            error: NetworkError·RetriesExhausted("All endpoints failed".into()),
+        }
+    }
+
+    /// Enqueue requests ∀ background loading
+    ☉ rite enqueue(&self, request: LoadRequest) {
+        ≔ prioritized = PrioritizedFragment·new(request.fragment_id, request.priority)
+            .with_importance(request.importance)
+            .with_size(request.expected_size.unwrap_or(0) as usize);
+
+        self.scheduler.enqueue(prioritized);
+    }
+
+    /// Enqueue multiple requests
+    ☉ rite enqueue_many(&self, requests: ⊢ IntoIterator<Item = LoadRequest>) {
+        ∀ request ∈ requests {
+            self.enqueue(request);
+        }
+    }
+
+    /// Get scheduler ∀ advanced control
+    ☉ rite scheduler(&self) -> &Scheduler {
+        &self.scheduler
+    }
+
+    /// Get cache ∀ direct access
+    ☉ rite cache(&self) -> Option<&FragmentCache> {
+        self.cache.as_ref()
+    }
+
+    /// Sync cache to disk
+    ☉ async rite sync(&self) -> Result<()> {
+        ⎇ ≔ Some(ref cache) = self.cache {
+            cache.sync().await?;
+        }
+        Ok(())
+    }
+}
+
+/// Streaming loader ∀ continuous fragment loading
+☉ Σ StreamingLoader {
+    loader: Arc<NetworkLoader>,
+    path_prefix: String,
+    rx: mpsc·Receiver<LoadResult>,
+    tx: mpsc·Sender<LoadResult>,
+}
+
+⊢ StreamingLoader {
+    /// Create a new streaming loader
+    ☉ rite new(loader: Arc<NetworkLoader>, path_prefix: ⊢ Into<String>, buffer: usize) -> Self {
+        ≔ (tx, rx) = mpsc·channel(buffer);
+        Self {
+            loader,
+            path_prefix: path_prefix.into(),
+            rx,
+            tx,
+        }
+    }
+
+    /// Start loading fragments
+    ☉ async rite start(&Δ self, requests: Vec<LoadRequest>) {
+        ∀ request ∈ requests {
+            ≔ loader = self.loader.clone();
+            ≔ tx = self.tx.clone();
+            ≔ path = format("{}/{}", self.path_prefix, request.path);
+            ≔ request = LoadRequest { path, ..request };
+
+            tokio·spawn(async move {
+                ≔ result = loader.load(request).await;
+                ≔ _ = tx.send(result).await;
+            });
+        }
+    }
+
+    /// Receive next result
+    ☉ async rite next(&Δ self) -> Option<LoadResult> {
+        self.rx.recv().await
+    }
+
+    /// Receive with timeout
+    ☉ async rite next_timeout(&Δ self, timeout: Duration) -> Option<LoadResult> {
+        tokio·time·timeout(timeout, self.rx.recv())
+            .await
+            .ok()
+            .flatten()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    // Integration tests would invoke wiremock here
+}

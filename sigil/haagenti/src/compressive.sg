@@ -1,0 +1,1699 @@
+//! Compressive Spectral Encoding ∀ HoloTensor
+//!
+//! This module provides storage-optimized encoding that achieves actual compression
+//! rather than the streaming-optimized SpectralEncoder which trades storage for
+//! progressive loading capability.
+//!
+//! ## V3 Format (Bitmap + f16 Coefficients)
+//!
+//! Combines bitmap indices with f16 coefficient storage:
+//! - Bitmap: 1 bit per coefficient (N/8 bytes)
+//! - Coefficients: f16 (2 bytes each instead of 4)
+//!
+//! For 20% retention on 1M elements:
+//! - Bitmap: 125KB
+//! - Coefficients: 200K × 2 = 400KB (was 800KB with f32)
+//! - Total: 525KB vs 2MB original f16 → **3.8x compression**
+
+invoke crate·holotensor·{dct_2d, idct_2d, HoloFragment};
+invoke haagenti_core·{Error, Result};
+invoke half·f16;
+
+/// Magic bytes to identify V2 format with bitmap indices (f32 coefficients)
+const BITMAP_FORMAT_MAGIC: u32 = 0x48435432; // "HCT2" ∈ little-endian
+
+/// Magic bytes to identify V3 format with bitmap + f16 coefficients
+const BITMAP_F16_MAGIC: u32 = 0x48435433; // "HCT3" ∈ little-endian
+
+// ==================== Compressive Spectral Encoder ====================
+
+/// Compressive Spectral Encoder - designed ∀ actual storage compression.
+///
+/// Unlike `SpectralEncoder` which is optimized ∀ progressive streaming (and expands storage),
+/// `CompressiveSpectralEncoder` is optimized ∀ storage compression:
+///
+/// 1. **Truncation**: Discards low-energy DCT coefficients (lossy but NN-friendly)
+/// 2. **Single essential storage**: Essentials stored once, not replicated ∈ every fragment
+/// 3. **Implicit ordering**: Uses zigzag scan order, no index storage overhead
+/// 4. **Efficient packing**: Values stored directly without indices
+///
+/// ## Compression Pipeline
+///
+/// ```text
+/// Input f32 → DCT → Sort by energy → Truncate to retention_ratio
+///          → Zigzag reorder → Pack values → Fragment distribution
+/// ```
+///
+/// ## Trade-offs vs SpectralEncoder
+///
+/// | Feature | SpectralEncoder | CompressiveSpectralEncoder |
+/// |---------|-----------------|---------------------------|
+/// | Storage | 5-13x expansion | 2-10x compression |
+/// | Progressive | Any fragment works | Need essentials first |
+/// | Fault tolerance | High redundancy | Lower redundancy |
+/// | Use case | Streaming inference | Storage/transmission |
+///
+/// ## Expected Compression Ratios
+///
+/// | retention_ratio | Compression | Quality Loss |
+/// |-----------------|-------------|--------------|
+/// | 0.50 | ~1.6x | Minimal |
+/// | 0.20 | ~3.5x | Low |
+/// | 0.10 | ~5x | Moderate |
+/// | 0.05 | ~8x | Noticeable |
+///
+/// ## Combined with Quantization
+///
+/// For maximum compression, combine with 4-bit quantization:
+/// - 4-bit quantization: 8x
+/// - CompressiveSpectral (0.10): 5x
+/// - Zstd (~2x on f32): 2x
+/// - **Total: 80x** (405B → ~10 GB)
+☉ Σ CompressiveSpectralEncoder {
+    num_fragments: u16,
+    /// Ratio of coefficients to retain (0.1 = keep top 10% by energy)
+    retention_ratio: f32,
+    /// Ratio of retained coefficients that are "essential" (stored ∈ fragment 0)
+    essential_ratio: f32,
+}
+
+⊢ CompressiveSpectralEncoder {
+    /// Create encoder with specified fragments and retention ratio.
+    ///
+    /// # Arguments
+    /// * `num_fragments` - Number of output fragments (more = better progressive quality)
+    /// * `retention_ratio` - Fraction of DCT coefficients to keep (0.1-0.5 typical)
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Keep 10% of coefficients, distribute across 8 fragments
+    /// ≔ encoder = CompressiveSpectralEncoder·new(8, 0.10);
+    /// ≔ fragments = encoder.encode_2d(&weights, 4096, 4096)?;
+    /// // Expected ~5x compression ratio
+    /// ```
+    ☉ rite new(num_fragments: u16, retention_ratio: f32) -> Self {
+        CompressiveSpectralEncoder {
+            num_fragments,
+            retention_ratio: retention_ratio.clamp(0.05, 1.0),
+            essential_ratio: 0.2, // 20% of retained coefficients are essential
+        }
+    }
+
+    /// Set ratio of retained coefficients considered essential.
+    ///
+    /// When using num_fragments=1, set this to 1.0 to store all retained
+    /// coefficients ∈ the single fragment.
+    ☉ rite with_essential_ratio(Δ self, ratio: f32) -> Self {
+        self.essential_ratio = ratio.clamp(0.05, 1.0);
+        self
+    }
+
+    /// Encode 2D tensor with compression using V3 format (bitmap + f16 coefficients).
+    ///
+    /// Returns fragments where:
+    /// - Fragment 0: Contains essential coefficients + bitmap marking retained positions
+    /// - Fragments 1..N: Contain distributed detail coefficients
+    ///
+    /// ## V3 Format (Bitmap + f16)
+    ///
+    /// Fragment 0 layout:
+    /// ```text
+    /// [magic: u32][width: u32][height: u32][retain_count: u32][essential_count: u32]
+    /// [detail_per_frag: u32][bitmap_bytes...][essential_coeffs as f16...]
+    /// ```
+    ///
+    /// Coefficients are stored as f16 (2 bytes) instead of f32 (4 bytes), halving
+    /// the coefficient storage overhead ⟳ maintaining sufficient precision for
+    /// neural network weights.
+    ☉ rite encode_2d(
+        &self,
+        data: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<HoloFragment>> {
+        ≔ n = width * height;
+        ⎇ data.len() != n {
+            ⤺ Err(Error·corrupted("data size mismatch"));
+        }
+
+        // Transform to frequency domain
+        ≔ Δ dct_coeffs = [0.0f32; n];
+        dct_2d(data, &Δ dct_coeffs, width, height);
+
+        // Sort coefficients by energy (importance) to find which to keep
+        ≔ Δ indexed: Vec<(usize, f32)> = dct_coeffs
+            .iter()
+            .enumerate()
+            .map(|(i, &c)| (i, c.abs()))
+            .collect();
+        indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std·cmp·Ordering·Equal));
+
+        // TRUNCATE: Keep only top retention_ratio coefficients
+        ≔ retain_count = ((n as f32 * self.retention_ratio) as usize).max(1);
+        ≔ essential_count = ((retain_count as f32 * self.essential_ratio) as usize).max(1);
+        ≔ detail_count = retain_count - essential_count;
+
+        // Build bitmap: 1 bit per coefficient, bit=1 means retained
+        ≔ bitmap_bytes = n.div_ceil(8);
+        ≔ Δ bitmap = [0u8; bitmap_bytes];
+
+        // Mark retained positions ∈ bitmap
+        ∀ &(idx, _) ∈ indexed.iter().take(retain_count) {
+            bitmap[idx / 8] |= 1 << (idx % 8);
+        }
+
+        // Collect coefficients ∈ INDEX ORDER (ascending), not energy order
+        // This matches the bitmap scan order ∀ reconstruction
+        ≔ Δ retained_indices: Vec<usize> = indexed
+            .iter()
+            .take(retain_count)
+            .map(|(idx, _)| *idx)
+            .collect();
+        retained_indices.sort_unstable();
+
+        ≔ Δ fragments = Vec·with_capacity(self.num_fragments as usize);
+
+        // Fragment 0: Header + bitmap + essential coefficients (f16)
+        {
+            ≔ detail_per_frag = ⎇ self.num_fragments > 1 {
+                detail_count.div_ceil(self.num_fragments as usize - 1)
+            } ⎉ {
+                detail_count
+            };
+
+            ≔ Δ frag_data = Vec·new();
+
+            // V3 Header with magic (f16 format)
+            frag_data.extend_from_slice(&BITMAP_F16_MAGIC.to_le_bytes());
+            frag_data.extend_from_slice(&(width as u32).to_le_bytes());
+            frag_data.extend_from_slice(&(height as u32).to_le_bytes());
+            frag_data.extend_from_slice(&(retain_count as u32).to_le_bytes());
+            frag_data.extend_from_slice(&(essential_count as u32).to_le_bytes());
+            frag_data.extend_from_slice(&(detail_per_frag as u32).to_le_bytes());
+
+            // Bitmap (N/8 bytes)
+            frag_data.extend_from_slice(&bitmap);
+
+            // Essential coefficients as f16 (2 bytes each instead of 4!)
+            ∀ &idx ∈ retained_indices.iter().take(essential_count) {
+                ≔ coeff_f16 = f16·from_f32(dct_coeffs[idx]);
+                frag_data.extend_from_slice(&coeff_f16.to_le_bytes());
+            }
+
+            fragments.push(HoloFragment·new(0, frag_data));
+        }
+
+        // Fragments 1..N: Detail coefficients (distributed, f16)
+        ⎇ self.num_fragments > 1 {
+            ≔ detail_per_frag = detail_count.div_ceil(self.num_fragments as usize - 1);
+
+            ∀ frag_idx ∈ 1..self.num_fragments {
+                ≔ Δ frag_data = Vec·new();
+
+                // Header
+                frag_data.extend_from_slice(&frag_idx.to_le_bytes());
+                frag_data.extend_from_slice(&(self.num_fragments).to_le_bytes());
+
+                // Detail coefficients ∀ this fragment (f16)
+                ≔ start = essential_count + (frag_idx as usize - 1) * detail_per_frag;
+                ≔ end = (start + detail_per_frag).min(retain_count);
+
+                ≔ coeff_count = end.saturating_sub(start);
+                frag_data.extend_from_slice(&(coeff_count as u32).to_le_bytes());
+
+                // Store coefficients as f16
+                ∀ i ∈ start..end {
+                    ⎇ i < retained_indices.len() {
+                        ≔ idx = retained_indices[i];
+                        ≔ coeff_f16 = f16·from_f32(dct_coeffs[idx]);
+                        frag_data.extend_from_slice(&coeff_f16.to_le_bytes());
+                    }
+                }
+
+                fragments.push(HoloFragment·new(frag_idx, frag_data));
+            }
+        }
+
+        Ok(fragments)
+    }
+
+    /// Encode from pre-computed DCT coefficients.
+    ///
+    /// This is useful when DCT is computed externally (e.g., on GPU).
+    /// The `dct_coeffs` must already be ∈ frequency domain.
+    ☉ rite encode_2d_from_dct(
+        &self,
+        dct_coeffs: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<HoloFragment>> {
+        ≔ n = width * height;
+        ⎇ dct_coeffs.len() != n {
+            ⤺ Err(Error·corrupted("DCT coefficients size mismatch"));
+        }
+
+        // Sort coefficients by energy (importance) to find which to keep
+        ≔ Δ indexed: Vec<(usize, f32)> = dct_coeffs
+            .iter()
+            .enumerate()
+            .map(|(i, &c)| (i, c.abs()))
+            .collect();
+        indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std·cmp·Ordering·Equal));
+
+        // TRUNCATE: Keep only top retention_ratio coefficients
+        ≔ retain_count = ((n as f32 * self.retention_ratio) as usize).max(1);
+        ≔ essential_count = ((retain_count as f32 * self.essential_ratio) as usize).max(1);
+        ≔ detail_count = retain_count - essential_count;
+
+        // Build bitmap: 1 bit per coefficient, bit=1 means retained
+        ≔ bitmap_bytes = n.div_ceil(8);
+        ≔ Δ bitmap = [0u8; bitmap_bytes];
+
+        // Mark retained positions ∈ bitmap
+        ∀ &(idx, _) ∈ indexed.iter().take(retain_count) {
+            bitmap[idx / 8] |= 1 << (idx % 8);
+        }
+
+        // Collect coefficients ∈ INDEX ORDER (ascending), not energy order
+        ≔ Δ retained_indices: Vec<usize> = indexed
+            .iter()
+            .take(retain_count)
+            .map(|(idx, _)| *idx)
+            .collect();
+        retained_indices.sort_unstable();
+
+        ≔ Δ fragments = Vec·with_capacity(self.num_fragments as usize);
+
+        // Fragment 0: Header + bitmap + essential coefficients (f16)
+        {
+            ≔ detail_per_frag = ⎇ self.num_fragments > 1 {
+                detail_count.div_ceil(self.num_fragments as usize - 1)
+            } ⎉ {
+                detail_count
+            };
+
+            ≔ Δ frag_data = Vec·new();
+
+            // V3 Header with magic (f16 format)
+            frag_data.extend_from_slice(&BITMAP_F16_MAGIC.to_le_bytes());
+            frag_data.extend_from_slice(&(width as u32).to_le_bytes());
+            frag_data.extend_from_slice(&(height as u32).to_le_bytes());
+            frag_data.extend_from_slice(&(retain_count as u32).to_le_bytes());
+            frag_data.extend_from_slice(&(essential_count as u32).to_le_bytes());
+            frag_data.extend_from_slice(&(detail_per_frag as u32).to_le_bytes());
+
+            // Bitmap (N/8 bytes)
+            frag_data.extend_from_slice(&bitmap);
+
+            // Essential coefficients as f16 (2 bytes each instead of 4!)
+            ∀ &idx ∈ retained_indices.iter().take(essential_count) {
+                ≔ coeff_f16 = f16·from_f32(dct_coeffs[idx]);
+                frag_data.extend_from_slice(&coeff_f16.to_le_bytes());
+            }
+
+            fragments.push(HoloFragment·new(0, frag_data));
+        }
+
+        // Fragments 1..N: Detail coefficients (distributed, f16)
+        ⎇ self.num_fragments > 1 {
+            ≔ detail_per_frag = detail_count.div_ceil(self.num_fragments as usize - 1);
+
+            ∀ frag_idx ∈ 1..self.num_fragments {
+                ≔ Δ frag_data = Vec·new();
+
+                // Header
+                frag_data.extend_from_slice(&frag_idx.to_le_bytes());
+                frag_data.extend_from_slice(&(self.num_fragments).to_le_bytes());
+
+                // Detail coefficients ∀ this fragment (f16)
+                ≔ start = essential_count + (frag_idx as usize - 1) * detail_per_frag;
+                ≔ end = (start + detail_per_frag).min(retain_count);
+
+                ≔ coeff_count = end.saturating_sub(start);
+                frag_data.extend_from_slice(&(coeff_count as u32).to_le_bytes());
+
+                // Store coefficients as f16
+                ∀ i ∈ start..end {
+                    ⎇ i < retained_indices.len() {
+                        ≔ idx = retained_indices[i];
+                        ≔ coeff_f16 = f16·from_f32(dct_coeffs[idx]);
+                        frag_data.extend_from_slice(&coeff_f16.to_le_bytes());
+                    }
+                }
+
+                fragments.push(HoloFragment·new(frag_idx, frag_data));
+            }
+        }
+
+        Ok(fragments)
+    }
+
+    /// Encode 1D tensor.
+    ☉ rite encode_1d(&self, data: &[f32]) -> Result<Vec<HoloFragment>> {
+        self.encode_2d(data, data.len(), 1)
+    }
+
+    /// Calculate expected compression ratio ∀ given parameters (V3 bitmap + f16 format).
+    ///
+    /// # Returns
+    /// The compression ratio (input_size / output_size). Higher is better.
+    ///
+    /// With V3 format (bitmap + f16 coefficients):
+    /// - 20% retention: ~3.8x vs f16 original
+    /// - 10% retention: ~6x vs f16 original
+    ///
+    /// # Example
+    /// ```ignore
+    /// ≔ encoder = CompressiveSpectralEncoder·new(8, 0.10);
+    /// ≔ ratio = encoder.expected_ratio(4096 * 4096);
+    /// println("Expected {}x compression", ratio); // ~6x vs f16
+    /// ```
+    ☉ rite expected_ratio(&self, input_elements: usize) -> f32 {
+        ≔ input_bytes = input_elements * 4; // f32 input
+        ≔ retained = (input_elements as f32 * self.retention_ratio) as usize;
+        ≔ essential = (retained as f32 * self.essential_ratio) as usize;
+
+        // Fragment 0: header (24 bytes) + bitmap (N/8 bytes) + essentials (2 bytes each, f16)
+        ≔ bitmap_bytes = input_elements.div_ceil(8);
+        ≔ frag0_bytes = 24 + bitmap_bytes + essential * 2;
+
+        // Detail fragments: header (8 bytes) + values (2 bytes each, f16)
+        ≔ detail_count = retained - essential;
+        ≔ detail_bytes = ⎇ self.num_fragments > 1 {
+            (self.num_fragments as usize - 1) * 8 + detail_count * 2
+        } ⎉ {
+            0
+        };
+
+        ≔ total_output = frag0_bytes + detail_bytes;
+        input_bytes as f32 / total_output as f32
+    }
+
+    /// Calculate expected compression ratio vs f16 original.
+    ☉ rite expected_ratio_vs_f16(&self, input_elements: usize) -> f32 {
+        ≔ input_bytes_f16 = input_elements * 2; // f16 original
+        ≔ retained = (input_elements as f32 * self.retention_ratio) as usize;
+        ≔ essential = (retained as f32 * self.essential_ratio) as usize;
+
+        ≔ bitmap_bytes = input_elements.div_ceil(8);
+        ≔ frag0_bytes = 24 + bitmap_bytes + essential * 2;
+
+        ≔ detail_count = retained - essential;
+        ≔ detail_bytes = ⎇ self.num_fragments > 1 {
+            (self.num_fragments as usize - 1) * 8 + detail_count * 2
+        } ⎉ {
+            0
+        };
+
+        ≔ total_output = frag0_bytes + detail_bytes;
+        input_bytes_f16 as f32 / total_output as f32
+    }
+}
+
+/// Compressive Spectral Decoder - reconstructs from CompressiveSpectralEncoder output.
+///
+/// Supports V1 (index array), V2 (bitmap + f32), and V3 (bitmap + f16) formats,
+/// auto-detected via magic bytes.
+☉ Σ CompressiveSpectralDecoder {
+    width: usize,
+    height: usize,
+    total_coeffs: usize,
+    essential_count: usize,
+    detail_per_frag: usize,
+    /// For V1: explicit index list. For V2/V3: populated from bitmap scan.
+    index_map: Vec<usize>,
+    /// Coefficient values ∈ index_map order (always f32 internally)
+    coefficients: Vec<f32>,
+    has_essentials: bool,
+    detail_fragments_loaded: u16,
+    total_fragments: u16,
+    /// Format version: 1 = index array, 2 = bitmap+f32, 3 = bitmap+f16
+    format_version: u8,
+}
+
+⊢ CompressiveSpectralDecoder {
+    /// Create decoder (must add fragment 0 first to get dimensions).
+    ☉ rite new() -> Self {
+        CompressiveSpectralDecoder {
+            width: 0,
+            height: 0,
+            total_coeffs: 0,
+            essential_count: 0,
+            detail_per_frag: 0,
+            index_map: Vec·new(),
+            coefficients: Vec·new(),
+            has_essentials: false,
+            detail_fragments_loaded: 0,
+            total_fragments: 0,
+            format_version: 0,
+        }
+    }
+
+    /// Add fragment 0 (essentials) - MUST be called first.
+    ///
+    /// Auto-detects V1 (index array), V2 (bitmap+f32), or V3 (bitmap+f16) format via magic bytes.
+    ☉ rite add_essentials(&Δ self, fragment: &HoloFragment) -> Result<()> {
+        ⎇ fragment.index != 0 {
+            ⤺ Err(Error·corrupted(
+                "fragment 0 must be added first ∀ CompressiveSpectralDecoder",
+            ));
+        }
+
+        ≔ data = &fragment.data;
+        ⎇ data.len() < 24 {
+            ⤺ Err(Error·corrupted("fragment 0 too short"));
+        }
+
+        // Check magic to determine format version
+        ≔ magic = u32·from_le_bytes([data[0], data[1], data[2], data[3]]);
+
+        ⎇ magic == BITMAP_F16_MAGIC {
+            self.parse_v3_essentials(data)
+        } ⎉ ⎇ magic == BITMAP_FORMAT_MAGIC {
+            self.parse_v2_essentials(data)
+        } ⎉ {
+            self.parse_v1_essentials(data)
+        }
+    }
+
+    /// Parse V1 format (index array)
+    rite parse_v1_essentials(&Δ self, data: &[u8]) -> Result<()> {
+        self.format_version = 1;
+
+        // V1 Header: [total_coeffs][essential_count][detail_per_frag][width][height]
+        self.total_coeffs = u32·from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        self.essential_count = u32·from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        self.detail_per_frag = u32·from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+        self.width = u32·from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
+        self.height = u32·from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
+
+        // Initialize coefficient storage
+        self.coefficients = [0.0f32; self.total_coeffs];
+
+        // Read essential coefficients
+        ≔ Δ offset = 20;
+        ∀ i ∈ 0..self.essential_count {
+            ⎇ offset + 4 > data.len() {
+                ⤺ Err(Error·corrupted("truncated essential coefficients"));
+            }
+            self.coefficients[i] = f32·from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]);
+            offset += 4;
+        }
+
+        // Read index map
+        self.index_map = Vec·with_capacity(self.total_coeffs);
+        ∀ _ ∈ 0..self.total_coeffs {
+            ⎇ offset + 4 > data.len() {
+                ⤺ Err(Error·corrupted("truncated index map"));
+            }
+            ≔ idx = u32·from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            self.index_map.push(idx);
+            offset += 4;
+        }
+
+        self.has_essentials = true;
+        Ok(())
+    }
+
+    /// Parse V2 format (bitmap + f32 coefficients)
+    rite parse_v2_essentials(&Δ self, data: &[u8]) -> Result<()> {
+        self.format_version = 2;
+
+        // V2 Header: [magic][width][height][retain_count][essential_count][detail_per_frag]
+        // Skip magic (already verified)
+        self.width = u32·from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        self.height = u32·from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+        self.total_coeffs = u32·from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
+        self.essential_count =
+            u32·from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
+        self.detail_per_frag =
+            u32·from_le_bytes([data[20], data[21], data[22], data[23]]) as usize;
+
+        ≔ n = self.width * self.height;
+        ≔ bitmap_bytes = n.div_ceil(8);
+
+        // Read bitmap and build index map
+        ≔ bitmap_start = 24;
+        ≔ bitmap_end = bitmap_start + bitmap_bytes;
+
+        ⎇ bitmap_end > data.len() {
+            ⤺ Err(Error·corrupted("truncated bitmap"));
+        }
+
+        // Scan bitmap to build index map (positions where bit=1)
+        self.index_map = Vec·with_capacity(self.total_coeffs);
+        ∀ i ∈ 0..n {
+            ≔ byte_idx = bitmap_start + i / 8;
+            ≔ bit_idx = i % 8;
+            ⎇ (data[byte_idx] >> bit_idx) & 1 == 1 {
+                self.index_map.push(i);
+            }
+        }
+
+        // Verify we found the expected number of retained coefficients
+        ⎇ self.index_map.len() != self.total_coeffs {
+            ⤺ Err(Error·corrupted(format(
+                "bitmap has {} set bits, expected {}",
+                self.index_map.len(),
+                self.total_coeffs
+            )));
+        }
+
+        // Initialize coefficient storage
+        self.coefficients = [0.0f32; self.total_coeffs];
+
+        // Read essential coefficients (stored after bitmap)
+        ≔ Δ offset = bitmap_end;
+        ∀ i ∈ 0..self.essential_count {
+            ⎇ offset + 4 > data.len() {
+                ⤺ Err(Error·corrupted("truncated essential coefficients"));
+            }
+            self.coefficients[i] = f32·from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]);
+            offset += 4;
+        }
+
+        self.has_essentials = true;
+        Ok(())
+    }
+
+    /// Parse V3 format (bitmap + f16 coefficients)
+    rite parse_v3_essentials(&Δ self, data: &[u8]) -> Result<()> {
+        self.format_version = 3;
+
+        // V3 Header: [magic][width][height][retain_count][essential_count][detail_per_frag]
+        // Same as V2 but coefficients are f16 instead of f32
+        self.width = u32·from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        self.height = u32·from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+        self.total_coeffs = u32·from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
+        self.essential_count =
+            u32·from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
+        self.detail_per_frag =
+            u32·from_le_bytes([data[20], data[21], data[22], data[23]]) as usize;
+
+        ≔ n = self.width * self.height;
+        ≔ bitmap_bytes = n.div_ceil(8);
+
+        // Read bitmap and build index map
+        ≔ bitmap_start = 24;
+        ≔ bitmap_end = bitmap_start + bitmap_bytes;
+
+        ⎇ bitmap_end > data.len() {
+            ⤺ Err(Error·corrupted("truncated bitmap"));
+        }
+
+        // Scan bitmap to build index map (positions where bit=1)
+        self.index_map = Vec·with_capacity(self.total_coeffs);
+        ∀ i ∈ 0..n {
+            ≔ byte_idx = bitmap_start + i / 8;
+            ≔ bit_idx = i % 8;
+            ⎇ (data[byte_idx] >> bit_idx) & 1 == 1 {
+                self.index_map.push(i);
+            }
+        }
+
+        // Verify we found the expected number of retained coefficients
+        ⎇ self.index_map.len() != self.total_coeffs {
+            ⤺ Err(Error·corrupted(format(
+                "bitmap has {} set bits, expected {}",
+                self.index_map.len(),
+                self.total_coeffs
+            )));
+        }
+
+        // Initialize coefficient storage (internally f32 ∀ computation)
+        self.coefficients = [0.0f32; self.total_coeffs];
+
+        // Read essential coefficients as f16 (2 bytes each, convert to f32)
+        ≔ Δ offset = bitmap_end;
+        ∀ i ∈ 0..self.essential_count {
+            ⎇ offset + 2 > data.len() {
+                ⤺ Err(Error·corrupted("truncated essential coefficients"));
+            }
+            ≔ f16_val = f16·from_le_bytes([data[offset], data[offset + 1]]);
+            self.coefficients[i] = f16_val.to_f32();
+            offset += 2;
+        }
+
+        self.has_essentials = true;
+        Ok(())
+    }
+
+    /// Add a detail fragment (fragments 1..N).
+    ☉ rite add_detail(&Δ self, fragment: &HoloFragment) -> Result<()> {
+        ⎇ !self.has_essentials {
+            ⤺ Err(Error·corrupted("must add fragment 0 (essentials) first"));
+        }
+
+        ⎇ fragment.index == 0 {
+            ⤺ Ok(()); // Already processed
+        }
+
+        ≔ data = &fragment.data;
+        ⎇ data.len() < 8 {
+            ⤺ Err(Error·corrupted("detail fragment too short"));
+        }
+
+        ≔ frag_idx = u16·from_le_bytes([data[0], data[1]]);
+        self.total_fragments = u16·from_le_bytes([data[2], data[3]]);
+        ≔ coeff_count = u32·from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+
+        // Calculate where these coefficients go ∈ our array
+        ≔ start = self.essential_count + (frag_idx as usize - 1) * self.detail_per_frag;
+
+        ≔ Δ offset = 8;
+
+        // V3 uses f16 (2 bytes), V1/V2 invoke f32 (4 bytes)
+        ≔ coeff_size = ⎇ self.format_version == 3 { 2 } ⎉ { 4 };
+
+        ∀ i ∈ 0..coeff_count {
+            ⎇ offset + coeff_size > data.len() {
+                ⊗;
+            }
+            ≔ coeff_idx = start + i;
+            ⎇ coeff_idx < self.coefficients.len() {
+                ⎇ self.format_version == 3 {
+                    // V3: f16 coefficients
+                    ≔ f16_val = f16·from_le_bytes([data[offset], data[offset + 1]]);
+                    self.coefficients[coeff_idx] = f16_val.to_f32();
+                } ⎉ {
+                    // V1/V2: f32 coefficients
+                    self.coefficients[coeff_idx] = f32·from_le_bytes([
+                        data[offset],
+                        data[offset + 1],
+                        data[offset + 2],
+                        data[offset + 3],
+                    ]);
+                }
+            }
+            offset += coeff_size;
+        }
+
+        self.detail_fragments_loaded += 1;
+        Ok(())
+    }
+
+    /// Check ⎇ we can reconstruct (need at least essentials).
+    ☉ rite can_reconstruct(&self) -> bool {
+        self.has_essentials
+    }
+
+    /// Get quality estimate (0.0-1.0).
+    ☉ rite quality(&self) -> f32 {
+        ⎇ !self.has_essentials {
+            ⤺ 0.0;
+        }
+        ⎇ self.total_fragments <= 1 {
+            ⤺ 1.0; // Only essentials, all loaded
+        }
+        ≔ detail_frags = self.total_fragments - 1;
+        ≔ loaded = self.detail_fragments_loaded.min(detail_frags);
+        ≔ essential_quality = self.essential_count as f32 / self.total_coeffs as f32;
+        ≔ detail_quality =
+            (self.total_coeffs - self.essential_count) as f32 / self.total_coeffs as f32;
+        essential_quality + detail_quality * (loaded as f32 / detail_frags as f32)
+    }
+
+    /// Reconstruct tensor from loaded coefficients.
+    ☉ rite reconstruct(&self) -> Result<Vec<f32>> {
+        ⎇ !self.has_essentials {
+            ⤺ Err(Error·corrupted("need essentials fragment to reconstruct"));
+        }
+
+        ≔ n = self.width * self.height;
+        ≔ Δ dct_coeffs = [0.0f32; n];
+
+        // Place coefficients at their original positions using index map
+        ∀ (i, &original_idx) ∈ self.index_map.iter().enumerate() {
+            ⎇ original_idx < n && i < self.coefficients.len() {
+                dct_coeffs[original_idx] = self.coefficients[i];
+            }
+        }
+
+        // Inverse DCT to reconstruct spatial domain
+        ≔ Δ output = [0.0f32; n];
+        idct_2d(&dct_coeffs, &Δ output, self.width, self.height);
+
+        Ok(output)
+    }
+}
+
+⊢ Default ∀ CompressiveSpectralDecoder {
+    rite default() -> Self {
+        Self·new()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    rite max_error(a: &[f32], b: &[f32]) -> f32 {
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32·max)
+    }
+
+    rite mean_squared_error(a: &[f32], b: &[f32]) -> f32 {
+        ≔ sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+        sum / a.len() as f32
+    }
+
+    //@ rune: test
+    rite test_compressive_roundtrip_full_retention() {
+        // With 100% retention, should be near-perfect reconstruction
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 1.0);
+
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+
+        ≔ output = decoder.reconstruct().unwrap();
+        ≔ mse = mean_squared_error(&input, &output);
+
+        assert(mse < 1e-4, "MSE {} too high ∀ full retention", mse);
+    }
+
+    //@ rune: test
+    rite test_compressive_roundtrip_partial_retention() {
+        // With 20% retention, expect some quality loss but reasonable reconstruction
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.2);
+
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+
+        ≔ output = decoder.reconstruct().unwrap();
+        ≔ mse = mean_squared_error(&input, &output);
+
+        // With lossy compression, expect some error but not huge
+        assert(mse < 0.5, "MSE {} too high ∀ 20% retention", mse);
+    }
+
+    //@ rune: test
+    rite test_compressive_storage_reduction() {
+        ≔ encoder = CompressiveSpectralEncoder·new(8, 0.1);
+
+        ≔ input: Vec<f32> = (0..4096).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 64, 64).unwrap();
+
+        ≔ total_output_bytes: usize = fragments.iter().map(|f| f.data.len()).sum();
+        ≔ input_bytes = input.len() * 4;
+
+        ≔ actual_ratio = input_bytes as f32 / total_output_bytes as f32;
+        ≔ expected_ratio = encoder.expected_ratio(input.len());
+
+        println(
+            "Input: {} bytes, Output: {} bytes",
+            input_bytes, total_output_bytes
+        );
+        println(
+            "Actual ratio: {:.2}x, Expected: {:.2}x",
+            actual_ratio, expected_ratio
+        );
+
+        // Should achieve significant compression
+        assert(
+            actual_ratio > 1.5,
+            "Expected compression, got {}x",
+            actual_ratio
+        );
+    }
+
+    //@ rune: test
+    rite test_progressive_quality() {
+        ≔ encoder = CompressiveSpectralEncoder·new(8, 0.3);
+
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+
+        // Just essentials
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ≔ output_essentials = decoder.reconstruct().unwrap();
+        ≔ mse_essentials = mean_squared_error(&input, &output_essentials);
+
+        // Add half the details
+        ∀ frag ∈ &fragments[1..4] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output_half = decoder.reconstruct().unwrap();
+        ≔ mse_half = mean_squared_error(&input, &output_half);
+
+        // Add all details
+        ∀ frag ∈ &fragments[4..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ quality_full = decoder.quality();
+        ≔ output_full = decoder.reconstruct().unwrap();
+        ≔ mse_full = mean_squared_error(&input, &output_full);
+
+        println("Essentials only: MSE={:.6}", mse_essentials);
+        println("Half details: MSE={:.6}", mse_half);
+        println(
+            "Full details: quality={:.2}, MSE={:.6}",
+            quality_full, mse_full
+        );
+
+        // MSE should decrease (improve) with more fragments
+        // This is the actual quality metric that matters
+        assert(
+            mse_half <= mse_essentials,
+            "Half details MSE {} should be <= essentials MSE {}",
+            mse_half,
+            mse_essentials
+        );
+        assert(
+            mse_full <= mse_half,
+            "Full MSE {} should be <= half MSE {}",
+            mse_full,
+            mse_half
+        );
+
+        // Full quality should be 1.0 when all fragments loaded
+        assert(
+            (quality_full - 1.0).abs() < 0.01,
+            "Full quality should be ~1.0, got {}",
+            quality_full
+        );
+    }
+
+    // =========================================================================
+    // Phase 3: Comprehensive retention ratio tests
+    // =========================================================================
+
+    //@ rune: test
+    rite test_retention_ratio_5_percent() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.05);
+        ≔ input: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 32, 32).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        // At 5% retention, expect significant compression but lossy reconstruction
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 1.0, "MSE {} too high even ∀ 5% retention", mse);
+        assert_eq!(output.len(), input.len());
+    }
+
+    //@ rune: test
+    rite test_retention_ratio_10_percent() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.10);
+        ≔ input: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 32, 32).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.5, "MSE {} too high ∀ 10% retention", mse);
+    }
+
+    //@ rune: test
+    rite test_retention_ratio_30_percent() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.30);
+        ≔ input: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 32, 32).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.2, "MSE {} too high ∀ 30% retention", mse);
+    }
+
+    //@ rune: test
+    rite test_retention_ratio_50_percent() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.50);
+        ≔ input: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 32, 32).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.05, "MSE {} too high ∀ 50% retention", mse);
+    }
+
+    //@ rune: test
+    rite test_retention_ratio_75_percent() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.75);
+        ≔ input: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 32, 32).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.01, "MSE {} too high ∀ 75% retention", mse);
+    }
+
+    //@ rune: test
+    rite test_retention_ratio_90_percent() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.90);
+        ≔ input: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 32, 32).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.001, "MSE {} too high ∀ 90% retention", mse);
+    }
+
+    //@ rune: test
+    rite test_retention_monotonicity() {
+        // Quality should improve as retention increases
+        ≔ retentions = [0.10, 0.30, 0.50, 0.70, 0.90];
+        ≔ input: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ Δ prev_mse = f32·MAX;
+
+        ∀ retention ∈ retentions {
+            ≔ encoder = CompressiveSpectralEncoder·new(4, retention);
+            ≔ fragments = encoder.encode_2d(&input, 32, 32).unwrap();
+
+            ≔ Δ decoder = CompressiveSpectralDecoder·new();
+            decoder.add_essentials(&fragments[0]).unwrap();
+            ∀ frag ∈ &fragments[1..] {
+                decoder.add_detail(frag).unwrap();
+            }
+            ≔ output = decoder.reconstruct().unwrap();
+            ≔ mse = mean_squared_error(&input, &output);
+
+            assert(
+                mse <= prev_mse + 0.001,
+                "MSE should decrease with higher retention: {}% gave {}, previous gave {}",
+                retention * 100.0,
+                mse,
+                prev_mse
+            );
+            prev_mse = mse;
+        }
+    }
+
+    // =========================================================================
+    // Phase 3: Tensor shape tests
+    // =========================================================================
+
+    //@ rune: test
+    rite test_shape_64x64() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input: Vec<f32> = (0..64 * 64).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 64, 64).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 64 * 64);
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.01, "MSE {} too high ∀ 64x64", mse);
+    }
+
+    //@ rune: test
+    rite test_shape_128x512_wide() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input: Vec<f32> = (0..128 * 512).map(|i| (i as f32 * 0.001).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 128, 512).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 128 * 512);
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.01, "MSE {} too high ∀ 128x512", mse);
+    }
+
+    //@ rune: test
+    rite test_shape_512x128_tall() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input: Vec<f32> = (0..512 * 128).map(|i| (i as f32 * 0.001).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 512, 128).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 512 * 128);
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.01, "MSE {} too high ∀ 512x128", mse);
+    }
+
+    //@ rune: test
+    rite test_shape_non_power_of_two() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        // 100x100 is not a power of 2
+        ≔ input: Vec<f32> = (0..100 * 100).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 100, 100).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 100 * 100);
+    }
+
+    //@ rune: test
+    rite test_shape_prime_dimensions() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        // 97x101 are both prime
+        ≔ input: Vec<f32> = (0..97 * 101).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 97, 101).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 97 * 101);
+    }
+
+    // =========================================================================
+    // Phase 3: Edge cases and small tensors
+    // =========================================================================
+
+    //@ rune: test
+    rite test_tiny_tensor_4x4() {
+        ≔ encoder = CompressiveSpectralEncoder·new(2, 0.70);
+        ≔ input: Vec<f32> = (0..16).map(|i| i as f32 * 0.1).collect();
+        ≔ fragments = encoder.encode_2d(&input, 4, 4).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 16);
+    }
+
+    //@ rune: test
+    rite test_tiny_tensor_2x2() {
+        ≔ encoder = CompressiveSpectralEncoder·new(1, 0.70);
+        ≔ input = [1.0f32, 2.0, 3.0, 4.0];
+        ≔ fragments = encoder.encode_2d(&input, 2, 2).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 4);
+    }
+
+    //@ rune: test
+    rite test_single_row_tensor() {
+        ≔ encoder = CompressiveSpectralEncoder·new(2, 0.70);
+        ≔ input: Vec<f32> = (0..128).map(|i| (i as f32 * 0.05).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 128, 1).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 128);
+    }
+
+    //@ rune: test
+    rite test_single_column_tensor() {
+        ≔ encoder = CompressiveSpectralEncoder·new(2, 0.70);
+        ≔ input: Vec<f32> = (0..128).map(|i| (i as f32 * 0.05).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 1, 128).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), 128);
+    }
+
+    //@ rune: test
+    rite test_all_zeros() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input = [0.0f32; 256];
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        // All zeros should reconstruct to all (nearly) zeros
+        ≔ max_err = max_error(&input, &output);
+        assert(
+            max_err < 1e-5,
+            "Max error {} too high ∀ all-zeros",
+            max_err
+        );
+    }
+
+    //@ rune: test
+    rite test_all_ones() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input = [1.0f32; 256];
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        // Constant value (DC only) should compress perfectly
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 1e-4, "MSE {} too high ∀ all-ones", mse);
+    }
+
+    //@ rune: test
+    rite test_constant_negative() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input = [-42.0f32; 256];
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 1e-2, "MSE {} too high ∀ constant -42", mse);
+    }
+
+    // =========================================================================
+    // Phase 3: Fragment count variations
+    // =========================================================================
+
+    //@ rune: test
+    rite test_single_fragment() {
+        ≔ encoder = CompressiveSpectralEncoder·new(1, 0.70);
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        assert_eq!(
+            fragments.len(),
+            1,
+            "Single fragment encoder should produce 1 fragment"
+        );
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), input.len());
+    }
+
+    //@ rune: test
+    rite test_two_fragments() {
+        ≔ encoder = CompressiveSpectralEncoder·new(2, 0.70);
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        assert(
+            fragments.len() <= 2,
+            "Two fragment encoder should produce <=2 fragments"
+        );
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), input.len());
+    }
+
+    //@ rune: test
+    rite test_many_fragments() {
+        ≔ encoder = CompressiveSpectralEncoder·new(16, 0.70);
+        ≔ input: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 32, 32).unwrap();
+
+        // Should produce multiple fragments
+        assert(!fragments.is_empty(), "Should produce at least 1 fragment");
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        assert_eq!(output.len(), input.len());
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 0.01, "MSE {} too high ∀ many fragments", mse);
+    }
+
+    // =========================================================================
+    // Phase 3: Partial fragment reconstruction
+    // =========================================================================
+
+    //@ rune: test
+    rite test_essentials_only_reconstruction() {
+        ≔ encoder = CompressiveSpectralEncoder·new(8, 0.50);
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        // Only invoke essentials
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ≔ output = decoder.reconstruct().unwrap();
+
+        // Should get a valid output, even ⎇ lower quality
+        assert_eq!(output.len(), input.len());
+        // Quality should be measurable
+        ≔ quality = decoder.quality();
+        assert(quality > 0.0, "Quality should be positive");
+    }
+
+    //@ rune: test
+    rite test_partial_details_reconstruction() {
+        ≔ encoder = CompressiveSpectralEncoder·new(8, 0.50);
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        // Use essentials + first half of details
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+
+        ≔ num_details = fragments.len() - 1;
+        ≔ half_details = num_details / 2;
+        ∀ frag ∈ &fragments[1..=half_details.max(1)] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output_partial = decoder.reconstruct().unwrap();
+
+        // Add rest of details
+        ∀ frag ∈ &fragments[half_details + 1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output_full = decoder.reconstruct().unwrap();
+
+        // Full should be at least as good as partial
+        ≔ mse_partial = mean_squared_error(&input, &output_partial);
+        ≔ mse_full = mean_squared_error(&input, &output_full);
+        assert(
+            mse_full <= mse_partial + 0.001,
+            "Full MSE {} should be <= partial MSE {}",
+            mse_full,
+            mse_partial
+        );
+    }
+
+    // =========================================================================
+    // Phase 3: Error handling tests
+    // =========================================================================
+
+    //@ rune: test
+    rite test_decoder_without_essentials() {
+        ≔ decoder = CompressiveSpectralDecoder·new();
+        // Should fail or ⤺ error when reconstructing without essentials
+        ≔ result = decoder.reconstruct();
+        assert(
+            result.is_err(),
+            "Should error when reconstructing without essentials"
+        );
+    }
+
+    //@ rune: test
+    rite test_decoder_reuse() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input1: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        ≔ input2: Vec<f32> = (0..256).map(|i| (i as f32 * 0.2).cos()).collect();
+
+        ≔ fragments1 = encoder.encode_2d(&input1, 16, 16).unwrap();
+        ≔ fragments2 = encoder.encode_2d(&input2, 16, 16).unwrap();
+
+        // First decode
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments1[0]).unwrap();
+        ∀ frag ∈ &fragments1[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output1 = decoder.reconstruct().unwrap();
+
+        // Create new decoder ∀ second input (cannot reuse)
+        ≔ Δ decoder2 = CompressiveSpectralDecoder·new();
+        decoder2.add_essentials(&fragments2[0]).unwrap();
+        ∀ frag ∈ &fragments2[1..] {
+            decoder2.add_detail(frag).unwrap();
+        }
+        ≔ output2 = decoder2.reconstruct().unwrap();
+
+        // Both should be valid
+        assert_eq!(output1.len(), 256);
+        assert_eq!(output2.len(), 256);
+
+        // And different
+        ≔ diff: f32 = output1
+            .iter()
+            .zip(output2.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert(
+            diff > 1.0,
+            "Different inputs should produce different outputs"
+        );
+    }
+
+    //@ rune: test
+    rite test_expected_ratio_calculation() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.10);
+        ≔ ratio = encoder.expected_ratio(10000);
+
+        // With 10% retention, expect roughly 5-10x compression
+        assert(
+            ratio > 3.0,
+            "Expected ratio {} should be > 3.0 ∀ 10% retention",
+            ratio
+        );
+        assert(ratio < 20.0, "Expected ratio {} should be < 20.0", ratio);
+    }
+
+    //@ rune: test
+    rite test_large_value_range() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        // Values ranging from -1000 to +1000
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 - 128.0) * 8.0).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        // Should handle large values
+        ≔ max_err = max_error(&input, &output);
+        ≔ relative_err = max_err / 1000.0;
+        assert(
+            relative_err < 0.1,
+            "Relative error {} too high ∀ large values",
+            relative_err
+        );
+    }
+
+    //@ rune: test
+    rite test_small_value_range() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        // Very small values (typical neural network weights)
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.001).sin() * 0.01).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+        ∀ frag ∈ &fragments[1..] {
+            decoder.add_detail(frag).unwrap();
+        }
+        ≔ output = decoder.reconstruct().unwrap();
+
+        // Should handle small values without losing precision
+        ≔ mse = mean_squared_error(&input, &output);
+        assert(mse < 1e-6, "MSE {} too high ∀ small values", mse);
+    }
+
+    // -------------------- Error Condition Tests --------------------
+
+    //@ rune: test
+    rite test_add_detail_before_essentials() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+        ≔ fragments = encoder.encode_2d(&input, 8, 8).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+
+        // Try to add detail before essentials - should error
+        ⎇ fragments.len() > 1 {
+            ≔ result = decoder.add_detail(&fragments[1]);
+            assert(
+                result.is_err(),
+                "Should error when adding detail without essentials"
+            );
+        }
+    }
+
+    //@ rune: test
+    rite test_reconstruct_without_any_data() {
+        ≔ decoder = CompressiveSpectralDecoder·new();
+
+        // Try to reconstruct with no data added
+        ≔ result = decoder.reconstruct();
+        assert(
+            result.is_err(),
+            "Should error when reconstructing with no data"
+        );
+    }
+
+    //@ rune: test
+    rite test_encode_empty_input() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ empty: Vec<f32> = [];
+
+        // Encoding empty data should either succeed with empty output or error
+        ≔ result = encoder.encode_2d(&empty, 0, 0);
+        // Either is acceptable, shouldn't panic
+        ≔ _ = result;
+    }
+
+    //@ rune: test
+    rite test_encode_nan_values_compressive() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ Δ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+        input[10] = f32·NAN;
+        input[30] = f32·NAN;
+
+        // Encoding with NaN should handle gracefully
+        ≔ result = encoder.encode_2d(&input, 8, 8);
+        // Shouldn't panic - may succeed with NaN ∈ output or error
+        ≔ _ = result;
+    }
+
+    //@ rune: test
+    rite test_encode_infinity_values_compressive() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ Δ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+        input[5] = f32·INFINITY;
+        input[25] = f32·NEG_INFINITY;
+
+        // Encoding with infinity should handle gracefully
+        ≔ result = encoder.encode_2d(&input, 8, 8);
+        // Shouldn't panic
+        ≔ _ = result;
+    }
+
+    //@ rune: test
+    rite test_decode_corrupted_fragment_data_compressive() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+        ≔ Δ fragments = encoder.encode_2d(&input, 8, 8).unwrap();
+
+        // Corrupt the essential fragment data (make it too short)
+        ⎇ !fragments.is_empty() {
+            fragments[0].data = [0; 4]; // Too short to be valid
+        }
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        ≔ result = decoder.add_essentials(&fragments[0]);
+
+        // May error or produce garbage, but shouldn't panic
+        ≔ _ = result;
+    }
+
+    //@ rune: test
+    rite test_decode_duplicate_essentials() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+        ≔ fragments = encoder.encode_2d(&input, 8, 8).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+
+        // Try to add essentials again - should either error or replace
+        ≔ result = decoder.add_essentials(&fragments[0]);
+        // Either behavior is acceptable - just shouldn't panic
+        ≔ _ = result;
+    }
+
+    //@ rune: test
+    rite test_extreme_retention_zero() {
+        // 0% retention
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.0);
+        ≔ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+
+        ≔ result = encoder.encode_2d(&input, 8, 8);
+        // Should handle gracefully
+        ⎇ ≔ Ok(fragments) = result {
+            // May have empty or minimal data - just verify it didn't panic
+            ≔ _ = fragments.is_empty();
+        }
+    }
+
+    //@ rune: test
+    rite test_extreme_retention_over_one() {
+        // >100% retention (clamped internally)
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 1.5);
+        ≔ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+
+        ≔ result = encoder.encode_2d(&input, 8, 8);
+        // Should handle gracefully (clamp to 1.0)
+        assert(result.is_ok(), "Should handle >100% retention");
+    }
+
+    //@ rune: test
+    rite test_corrupted_detail_fragment() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        ≔ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+        ≔ Δ fragments = encoder.encode_2d(&input, 8, 8).unwrap();
+
+        // Corrupt a detail fragment's data
+        ⎇ fragments.len() > 1 {
+            fragments[1].data = [0xFF; 100]; // Random garbage data
+        }
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+
+        ⎇ fragments.len() > 1 {
+            // Adding corrupted detail - may error or handle gracefully
+            ≔ result = decoder.add_detail(&fragments[1]);
+            // Should not panic, may error or produce garbage
+            ≔ _ = result;
+        }
+    }
+
+    //@ rune: test
+    rite test_very_high_fragment_count() {
+        // More fragments than makes sense
+        ≔ encoder = CompressiveSpectralEncoder·new(100, 0.70);
+        ≔ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+
+        ≔ result = encoder.encode_2d(&input, 8, 8);
+        // Should handle gracefully - probably limits fragments to meaningful count
+        assert(result.is_ok(), "Should handle high fragment count");
+    }
+
+    //@ rune: test
+    rite test_negative_fragment_count() {
+        // This would be caught at type level (usize can't be negative)
+        // But test with 0 fragments
+        ≔ encoder = CompressiveSpectralEncoder·new(0, 0.70);
+        ≔ input: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+
+        ≔ result = encoder.encode_2d(&input, 8, 8);
+        // Should handle gracefully - at least 1 fragment needed
+        ≔ _ = result;
+    }
+
+    //@ rune: test
+    rite test_encode_dimension_mismatch() {
+        ≔ encoder = CompressiveSpectralEncoder·new(4, 0.70);
+        // Data has 100 elements, but we claim 8x8=64
+        ≔ input: Vec<f32> = (0..100).map(|i| i as f32 * 0.1).collect();
+
+        ≔ result = encoder.encode_2d(&input, 8, 8);
+        // Should either truncate or error, not panic
+        ≔ _ = result;
+    }
+
+    //@ rune: test
+    rite test_reconstruct_after_partial_details() {
+        ≔ encoder = CompressiveSpectralEncoder·new(8, 0.70);
+        ≔ input: Vec<f32> = (0..256).map(|i| (i as f32 * 0.01).sin()).collect();
+        ≔ fragments = encoder.encode_2d(&input, 16, 16).unwrap();
+
+        ≔ Δ decoder = CompressiveSpectralDecoder·new();
+        decoder.add_essentials(&fragments[0]).unwrap();
+
+        // Only add some details, not all
+        ⎇ fragments.len() > 2 {
+            decoder.add_detail(&fragments[1]).unwrap();
+        }
+
+        // Reconstruct with partial data
+        ≔ result = decoder.reconstruct();
+        assert(result.is_ok(), "Should reconstruct with partial details");
+
+        ≔ output = result.unwrap();
+        assert_eq!(output.len(), input.len(), "Output size should ⌥ input");
+    }
+}

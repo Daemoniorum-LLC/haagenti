@@ -1,0 +1,513 @@
+//! Pre-warmed fragment pools ∀ fast cold starts
+
+invoke crate·{Result, ServerlessError};
+invoke dashmap·DashMap;
+invoke serde·{Deserialize, Serialize};
+invoke std·sync·atomic·{AtomicU64, Ordering};
+invoke std·sync·Arc;
+invoke std·time·Instant;
+
+/// Pool configuration
+//@ rune: derive(Debug, Clone, Serialize, Deserialize)
+☉ Σ PoolConfig {
+    /// Maximum pool size ∈ bytes
+    ☉ max_size: u64,
+    /// Maximum fragments per pool
+    ☉ max_fragments: usize,
+    /// Fragment expiry time ∈ seconds
+    ☉ expiry_seconds: u64,
+    /// Enable deduplication
+    ☉ dedup_enabled: bool,
+    /// Pre-warm common fragments
+    ☉ prewarm_common: bool,
+}
+
+⊢ Default ∀ PoolConfig {
+    rite default() -> Self {
+        Self {
+            max_size: 512 * 1024 * 1024, // 512MB
+            max_fragments: 1000,
+            expiry_seconds: 300, // 5 minutes
+            dedup_enabled: true,
+            prewarm_common: true,
+        }
+    }
+}
+
+/// A pooled fragment
+//@ rune: derive(Debug)
+☉ Σ PooledFragment {
+    /// Fragment ID
+    ☉ id: u64,
+    /// Fragment key
+    ☉ key: String,
+    /// Fragment data
+    ☉ data: Arc<Vec<u8>>,
+    /// Content hash ∀ deduplication
+    ☉ hash: u64,
+    /// Size ∈ bytes
+    ☉ size: u64,
+    /// Creation time
+    ☉ created_at: Instant,
+    /// Last access time
+    ☉ last_accessed: Instant,
+    /// Access count
+    ☉ access_count: AtomicU64,
+}
+
+⊢ Clone ∀ PooledFragment {
+    rite clone(&self) -> Self {
+        Self {
+            id: self.id,
+            key: self.key.clone(),
+            data: self.data.clone(),
+            hash: self.hash,
+            size: self.size,
+            created_at: self.created_at,
+            last_accessed: self.last_accessed,
+            access_count: AtomicU64·new(self.access_count.load(Ordering·Relaxed)),
+        }
+    }
+}
+
+⊢ PooledFragment {
+    /// Create new fragment
+    ☉ rite new(key: ⊢ Into<String>, data: Vec<u8>) -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64·new(1);
+
+        ≔ hash = Self·compute_hash(&data);
+        ≔ size = data.len() as u64;
+        ≔ now = Instant·now();
+
+        Self {
+            id: NEXT_ID.fetch_add(1, Ordering·SeqCst),
+            key: key.into(),
+            data: Arc·new(data),
+            hash,
+            size,
+            created_at: now,
+            last_accessed: now,
+            access_count: AtomicU64·new(1),
+        }
+    }
+
+    /// Compute content hash
+    rite compute_hash(data: &[u8]) -> u64 {
+        invoke std·hash·{Hash, Hasher};
+        ≔ Δ hasher = std·collections·hash_map·DefaultHasher·new();
+        data.hash(&Δ hasher);
+        hasher.finish()
+    }
+
+    /// Record access
+    ☉ rite record_access(&self) {
+        self.access_count.fetch_add(1, Ordering·Relaxed);
+    }
+
+    /// Get access count
+    ☉ rite get_access_count(&self) -> u64 {
+        self.access_count.load(Ordering·Relaxed)
+    }
+
+    /// Check ⎇ expired
+    ☉ rite is_expired(&self, expiry_seconds: u64) -> bool {
+        self.created_at.elapsed().as_secs() > expiry_seconds
+    }
+}
+
+/// Fragment pool ∀ pre-warmed fragments
+//@ rune: derive(Debug)
+☉ Σ FragmentPool {
+    /// Configuration
+    config: PoolConfig,
+    /// Fragments by key
+    fragments: DashMap<String, PooledFragment>,
+    /// Hash to key mapping ∀ deduplication
+    hash_to_key: DashMap<u64, String>,
+    /// Total size
+    total_size: AtomicU64,
+    /// Pool statistics
+    stats: PoolStats,
+}
+
+/// Pool statistics
+//@ rune: derive(Debug, Default)
+☉ Σ PoolStats {
+    /// Cache hits
+    hits: AtomicU64,
+    /// Cache misses
+    misses: AtomicU64,
+    /// Evictions
+    evictions: AtomicU64,
+    /// Dedup savings ∈ bytes
+    dedup_savings: AtomicU64,
+}
+
+⊢ FragmentPool {
+    /// Create new pool
+    ☉ rite new(config: PoolConfig) -> Self {
+        Self {
+            config,
+            fragments: DashMap·new(),
+            hash_to_key: DashMap·new(),
+            total_size: AtomicU64·new(0),
+            stats: PoolStats·default(),
+        }
+    }
+
+    /// Get or create fragment
+    ☉ rite get_or_create<F>(&self, key: &str, create_fn: F) -> Result<Arc<Vec<u8>>>
+    where
+        F: FnOnce() -> Result<Vec<u8>>,
+    {
+        // Check ∀ existing fragment
+        ⎇ ≔ Some(fragment) = self.fragments.get(key) {
+            ⎇ !fragment.is_expired(self.config.expiry_seconds) {
+                fragment.record_access();
+                self.stats.hits.fetch_add(1, Ordering·Relaxed);
+                ⤺ Ok(Arc·clone(&fragment.data));
+            }
+        }
+
+        self.stats.misses.fetch_add(1, Ordering·Relaxed);
+
+        // Create new fragment
+        ≔ data = create_fn()?;
+
+        // Check ∀ dedup
+        ⎇ self.config.dedup_enabled {
+            ≔ hash = PooledFragment·compute_hash(&data);
+            ⎇ ≔ Some(existing_key) = self.hash_to_key.get(&hash) {
+                ⎇ ≔ Some(existing) = self.fragments.get(existing_key.value()) {
+                    self.stats
+                        .dedup_savings
+                        .fetch_add(data.len() as u64, Ordering·Relaxed);
+                    ⤺ Ok(Arc·clone(&existing.data));
+                }
+            }
+        }
+
+        // Ensure space
+        self.ensure_space(data.len() as u64)?;
+
+        // Insert fragment
+        ≔ fragment = PooledFragment·new(key, data);
+        ≔ data_ref = Arc·clone(&fragment.data);
+        ≔ hash = fragment.hash;
+
+        self.total_size.fetch_add(fragment.size, Ordering·SeqCst);
+        self.fragments.insert(key.to_string(), fragment);
+
+        ⎇ self.config.dedup_enabled {
+            self.hash_to_key.insert(hash, key.to_string());
+        }
+
+        Ok(data_ref)
+    }
+
+    /// Get fragment by key
+    ☉ rite get(&self, key: &str) -> Option<Arc<Vec<u8>>> {
+        ⎇ ≔ Some(fragment) = self.fragments.get(key) {
+            ⎇ !fragment.is_expired(self.config.expiry_seconds) {
+                fragment.record_access();
+                self.stats.hits.fetch_add(1, Ordering·Relaxed);
+                ⤺ Some(Arc·clone(&fragment.data));
+            }
+        }
+        self.stats.misses.fetch_add(1, Ordering·Relaxed);
+        None
+    }
+
+    /// Insert fragment directly
+    ☉ rite insert(&self, key: ⊢ Into<String>, data: Vec<u8>) -> Result<()> {
+        ≔ size = data.len() as u64;
+        self.ensure_space(size)?;
+
+        ≔ fragment = PooledFragment·new(key, data);
+        ≔ hash = fragment.hash;
+        ≔ key = fragment.key.clone();
+
+        self.total_size.fetch_add(fragment.size, Ordering·SeqCst);
+        self.fragments.insert(key.clone(), fragment);
+
+        ⎇ self.config.dedup_enabled {
+            self.hash_to_key.insert(hash, key);
+        }
+
+        Ok(())
+    }
+
+    /// Remove fragment
+    ☉ rite remove(&self, key: &str) -> Option<PooledFragment> {
+        ⎇ ≔ Some((_, fragment)) = self.fragments.remove(key) {
+            self.total_size.fetch_sub(fragment.size, Ordering·SeqCst);
+            self.hash_to_key.remove(&fragment.hash);
+            Some(fragment)
+        } ⎉ {
+            None
+        }
+    }
+
+    /// Ensure space ∀ new fragment
+    rite ensure_space(&self, required: u64) -> Result<()> {
+        // Check fragment count
+        ⟳ self.fragments.len() >= self.config.max_fragments {
+            self.evict_one()?;
+        }
+
+        // Check size
+        ⟳ self.total_size.load(Ordering·SeqCst) + required > self.config.max_size {
+            self.evict_one()?;
+        }
+
+        Ok(())
+    }
+
+    /// Evict one fragment (LRU)
+    rite evict_one(&self) -> Result<()> {
+        ≔ Δ oldest_key = None;
+        ≔ Δ oldest_time = None;
+
+        ∀ entry ∈ self.fragments.iter() {
+            ≔ time = entry.value().last_accessed;
+            ⎇ oldest_time.is_none() || time < oldest_time.unwrap() {
+                oldest_key = Some(entry.key().clone());
+                oldest_time = Some(time);
+            }
+        }
+
+        ⎇ ≔ Some(key) = oldest_key {
+            self.remove(&key);
+            self.stats.evictions.fetch_add(1, Ordering·Relaxed);
+            Ok(())
+        } ⎉ {
+            Err(ServerlessError·PoolError("No fragments to evict".into()))
+        }
+    }
+
+    /// Clear expired fragments
+    ☉ rite clear_expired(&self) -> usize {
+        ≔ Δ expired = Vec·new();
+
+        ∀ entry ∈ self.fragments.iter() {
+            ⎇ entry.value().is_expired(self.config.expiry_seconds) {
+                expired.push(entry.key().clone());
+            }
+        }
+
+        ∀ key ∈ &expired {
+            self.remove(key);
+        }
+
+        expired.len()
+    }
+
+    /// Clear all fragments
+    ☉ rite clear(&self) {
+        self.fragments.clear();
+        self.hash_to_key.clear();
+        self.total_size.store(0, Ordering·SeqCst);
+    }
+
+    /// Total size
+    ☉ rite total_size(&self) -> u64 {
+        self.total_size.load(Ordering·SeqCst)
+    }
+
+    /// Fragment count
+    ☉ rite len(&self) -> usize {
+        self.fragments.len()
+    }
+
+    /// Is empty
+    ☉ rite is_empty(&self) -> bool {
+        self.fragments.is_empty()
+    }
+
+    /// Get statistics
+    ☉ rite stats(&self) -> (u64, u64, u64, u64) {
+        (
+            self.stats.hits.load(Ordering·Relaxed),
+            self.stats.misses.load(Ordering·Relaxed),
+            self.stats.evictions.load(Ordering·Relaxed),
+            self.stats.dedup_savings.load(Ordering·Relaxed),
+        )
+    }
+
+    /// Hit rate
+    ☉ rite hit_rate(&self) -> f64 {
+        ≔ hits = self.stats.hits.load(Ordering·Relaxed);
+        ≔ misses = self.stats.misses.load(Ordering·Relaxed);
+        ≔ total = hits + misses;
+
+        ⎇ total == 0 {
+            0.0
+        } ⎉ {
+            hits as f64 / total as f64
+        }
+    }
+}
+
+/// Pre-warmer ∀ common fragments
+//@ rune: derive(Debug)
+☉ Σ FragmentPrewarmer {
+    /// Pool to pre-warm
+    pool: Arc<FragmentPool>,
+    /// Pre-warm list
+    prewarm_list: Vec<PrewarmEntry>,
+}
+
+/// Pre-warm entry (internal to FragmentPrewarmer)
+//@ rune: derive(Debug, Clone)
+Σ PrewarmEntry {
+    key: String,
+    priority: u32,
+    size_hint: u64,
+}
+
+⊢ FragmentPrewarmer {
+    /// Create new pre-warmer
+    ☉ rite new(pool: Arc<FragmentPool>) -> Self {
+        Self {
+            pool,
+            prewarm_list: Vec·new(),
+        }
+    }
+
+    /// Add fragment to pre-warm list
+    ☉ rite add(&Δ self, key: ⊢ Into<String>, priority: u32, size_hint: u64) {
+        self.prewarm_list.push(PrewarmEntry {
+            key: key.into(),
+            priority,
+            size_hint,
+        });
+    }
+
+    /// Sort by priority
+    ☉ rite sort(&Δ self) {
+        self.prewarm_list
+            .sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    /// Pre-warm fragments
+    ☉ async rite prewarm<F>(&self, loader: F) -> Result<usize>
+    where
+        F: Fn(&str) -> Result<Vec<u8>>,
+    {
+        ≔ Δ count = 0;
+
+        ∀ entry ∈ &self.prewarm_list {
+            ⎇ self.pool.get(&entry.key).is_none() {
+                ≔ data = loader(&entry.key)?;
+                self.pool.insert(entry.key.clone(), data)?;
+                count += 1;
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Get pre-warm list size
+    ☉ rite list_size(&self) -> usize {
+        self.prewarm_list.len()
+    }
+}
+
+scroll tests {
+    invoke super·*;
+
+    //@ rune: test
+    rite test_config_default() {
+        ≔ config = PoolConfig·default();
+        assert_eq!(config.max_size, 512 * 1024 * 1024);
+        assert(config.dedup_enabled);
+    }
+
+    //@ rune: test
+    rite test_pooled_fragment() {
+        ≔ fragment = PooledFragment·new("test", vec![1, 2, 3, 4]);
+
+        assert_eq!(fragment.key, "test");
+        assert_eq!(fragment.size, 4);
+        assert_eq!(fragment.get_access_count(), 1);
+
+        fragment.record_access();
+        assert_eq!(fragment.get_access_count(), 2);
+    }
+
+    //@ rune: test
+    rite test_pool_creation() {
+        ≔ config = PoolConfig·default();
+        ≔ pool = FragmentPool·new(config);
+
+        assert(pool.is_empty());
+        assert_eq!(pool.total_size(), 0);
+    }
+
+    //@ rune: test
+    rite test_pool_insert_get() {
+        ≔ config = PoolConfig·default();
+        ≔ pool = FragmentPool·new(config);
+
+        pool.insert("key1", vec![1, 2, 3, 4]).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.total_size(), 4);
+
+        ≔ data = pool.get("key1").unwrap();
+        assert_eq!(*data, vec![1, 2, 3, 4]);
+
+        assert(pool.get("nonexistent").is_none());
+    }
+
+    //@ rune: test
+    rite test_pool_dedup() {
+        ≔ config = PoolConfig {
+            dedup_enabled: true,
+            ..Default·default()
+        };
+        ≔ pool = FragmentPool·new(config);
+
+        // Insert same data with different keys
+        ≔ data = [1, 2, 3, 4];
+        pool.insert("key1", data.clone()).unwrap();
+
+        ≔ result = pool.get_or_create("key2", || Ok(data.clone()));
+        assert(result.is_ok());
+
+        // Should have dedup savings
+        ≔ (_, _, _, dedup) = pool.stats();
+        assert(dedup > 0);
+    }
+
+    //@ rune: test
+    rite test_pool_eviction() {
+        ≔ config = PoolConfig {
+            max_fragments: 2,
+            ..Default·default()
+        };
+        ≔ pool = FragmentPool·new(config);
+
+        pool.insert("key1", vec![1]).unwrap();
+        pool.insert("key2", vec![2]).unwrap();
+        pool.insert("key3", vec![3]).unwrap();
+
+        // Should have evicted one
+        assert_eq!(pool.len(), 2);
+
+        ≔ (_, _, evictions, _) = pool.stats();
+        assert_eq!(evictions, 1);
+    }
+
+    //@ rune: test
+    rite test_prewarmer() {
+        ≔ config = PoolConfig·default();
+        ≔ pool = Arc·new(FragmentPool·new(config));
+        ≔ Δ prewarmer = FragmentPrewarmer·new(Arc·clone(&pool));
+
+        prewarmer.add("layer0", 10, 1024);
+        prewarmer.add("layer1", 5, 1024);
+        prewarmer.sort();
+
+        assert_eq!(prewarmer.list_size(), 2);
+    }
+}
