@@ -39,7 +39,7 @@ serde = { version = "1", features = ["derive"] }
 
 # Metrics
 metrics = "0.24"
-metrics-exporter-prometheus = "0.15"
+metrics-exporter-prometheus = "0.18"
 
 # Error handling
 thiserror = "2.0"
