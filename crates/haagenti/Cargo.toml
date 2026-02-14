@@ -156,7 +156,7 @@ criterion = { workspace = true }
 half = "2.4"
 proptest = "1.4"
 rand = { workspace = true }
-rand_distr = "0.4"
+rand_distr = "0.5"
 tempfile = "3.10"
 
 [[example]]
