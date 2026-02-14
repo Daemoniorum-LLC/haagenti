@@ -1522,7 +1522,7 @@ dependencies = [
  "memmap2",
  "proptest",
  "rand 0.8.5",
- "rand_distr 0.4.3",
+ "rand_distr 0.5.1",
  "rayon",
  "rustfft",
  "serde",
