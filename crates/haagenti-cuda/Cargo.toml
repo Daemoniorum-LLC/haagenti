@@ -26,7 +26,7 @@ cpu-fallback = []  # CPU DCT fallback using haagenti-core
 haagenti-core = { workspace = true, features = ["dct"] }
 
 # CUDA bindings
-cudarc = { version = "0.12", features = ["cuda-12050"] }
+cudarc = { version = "0.19", features = ["cuda-12050"] }
 
 # Core utilities
 thiserror = { workspace = true }
