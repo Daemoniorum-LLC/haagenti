@@ -10,11 +10,11 @@ categories = ["compression", "network-programming"]
 
 [dependencies]
 # Haagenti compression crates
-haagenti-core = { path = "../haagenti-core" }
-haagenti-zstd = { path = "../haagenti-zstd" }
-haagenti-lz4 = { path = "../haagenti-lz4", optional = true }
-haagenti-brotli = { path = "../haagenti-brotli", optional = true }
-haagenti-deflate = { path = "../haagenti-deflate", optional = true }
+haagenti-core = { version = "0.1.0", path = "../haagenti-core" }
+haagenti-zstd = { version = "0.1.0", path = "../haagenti-zstd" }
+haagenti-lz4 = { version = "0.1.0", path = "../haagenti-lz4", optional = true }
+haagenti-brotli = { version = "0.1.0", path = "../haagenti-brotli", optional = true }
+haagenti-deflate = { version = "0.1.0", path = "../haagenti-deflate", optional = true }
 
 # gRPC
 tonic = { version = "0.12", features = ["tls"] }
@@ -38,8 +38,8 @@ config = "0.14"
 serde = { version = "1", features = ["derive"] }
 
 # Metrics
-metrics = "0.23"
-metrics-exporter-prometheus = "0.15"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
 
 # Error handling
 thiserror = "2.0"

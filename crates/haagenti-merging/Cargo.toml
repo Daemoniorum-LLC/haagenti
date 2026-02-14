@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors = ["Daemoniorum LLC"]
 keywords = ["model-merging", "ties", "dare", "evolutionary", "weights"]
-categories = ["machine-learning", "algorithms"]
+categories = ["algorithms", "science"]
 
 [dependencies]
 haagenti-core = { workspace = true }

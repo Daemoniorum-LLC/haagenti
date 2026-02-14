@@ -1,15 +1,17 @@
 # haagenti-zstd
 
-Native Rust implementation of Zstandard compression (RFC 8878) for the Haagenti compression framework.
+Zstandard-inspired compression for the Haagenti compression framework.
 
 ## Overview
 
-`haagenti-zstd` provides a pure Rust implementation of the Zstandard compression format, offering:
+`haagenti-zstd` provides a pure Rust implementation inspired by Zstandard, optimized for Haagenti's tensor compression pipeline:
 
 - **Pure Rust**: No C dependencies, fully native implementation
-- **Complete roundtrip**: Both compression and decompression
-- **RFC 8878 compliant**: Follows the Zstandard specification
+- **Internal roundtrip**: Compression and decompression within Haagenti
+- **Optimized for tensors**: Modified format tuned for neural network weight patterns
 - **Competitive ratios**: Achieves compression ratios close to the reference C implementation
+
+> **Note**: This implementation is **not compatible** with the reference Zstd format. Data compressed with haagenti-zstd can only be decompressed with haagenti-zstd. The format diverges from RFC 8878 to enable optimizations specific to Haagenti's use cases.
 
 ## Features
 
@@ -287,13 +289,15 @@ The encoder automatically selects the best block type:
 
 ## Known Limitations
 
-1. **FSE Custom Tables**: Only predefined tables are supported. Custom table serialization is not yet implemented.
+1. **Not Zstd-compatible**: This is an internal format. Data compressed with haagenti-zstd cannot be decompressed with standard Zstd tools, and vice versa. The format was modified to optimize for tensor compression patterns.
 
-2. **Dictionary Support**: Dictionary compression is not implemented.
+2. **FSE Custom Tables**: Only predefined tables are supported. Custom table serialization is not yet implemented.
 
-3. **Symbol Limit**: Huffman encoder uses direct format, limited to 127 unique symbols. FSE-compressed weight format would support more.
+3. **Dictionary Support**: Dictionary compression is not implemented.
 
-4. **RLE-like Patterns**: Data with varying run lengths (e.g., "aaabbbccc...") may not achieve optimal compression due to predefined table limitations.
+4. **Symbol Limit**: Huffman encoder uses direct format, limited to 127 unique symbols. FSE-compressed weight format would support more.
+
+5. **RLE-like Patterns**: Data with varying run lengths (e.g., "aaabbbccc...") may not achieve optimal compression due to predefined table limitations.
 
 ## Testing
 
@@ -329,8 +333,10 @@ cargo bench -p haagenti-zstd --bench zstd_benchmark
 
 ## References
 
-- [RFC 8878 - Zstandard Compression](https://datatracker.ietf.org/doc/html/rfc8878)
-- [Zstd Format Specification](https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md)
+The following resources informed this implementation, though haagenti-zstd diverges from standard Zstd for optimization purposes:
+
+- [RFC 8878 - Zstandard Compression](https://datatracker.ietf.org/doc/html/rfc8878) (reference only)
+- [Zstd Format Specification](https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md) (reference only)
 - [FSE Educational Decoder](https://github.com/facebook/zstd/blob/dev/doc/educational_decoder.md)
 - [Canonical Huffman Codes](https://en.wikipedia.org/wiki/Canonical_Huffman_code)
 - [Asymmetric Numeral Systems](https://arxiv.org/abs/0902.0271)
