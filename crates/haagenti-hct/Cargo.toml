@@ -36,7 +36,7 @@ haagenti-zstd = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand = { workspace = true }
-tempfile = "3.10"
+tempfile = "3.25"
 # Always include compression for tests
 haagenti-lz4 = { workspace = true }
 haagenti-zstd = { workspace = true }
