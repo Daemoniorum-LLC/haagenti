@@ -48,7 +48,7 @@ thiserror = "2.0"
 tempfile = "3"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-build = "0.14"
 protobuf-src = "1.1"
 
 [features]
