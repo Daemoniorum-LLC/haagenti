@@ -49,7 +49,7 @@ tempfile = "3"
 
 [build-dependencies]
 tonic-build = "0.12"
-protobuf-src = "1.1"
+protobuf-src = "2.1"
 
 [features]
 default = ["zstd", "lz4"]
