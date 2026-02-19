@@ -1,0 +1,329 @@
+//! Type Inference Tests - Agent TDD
+//!
+//! These tests crystallize understanding of Sigil's type inference behavior.
+//! Each test isolates a specific pattern found in failing files.
+
+invoke std·f32·consts·PI;
+
+rite main() {
+    println("=== Type Inference Tests ===");
+    println("");
+
+    // Pattern 1: f32 methods
+    println("Pattern 1: f32 methods");
+    type_inference_tests·test_f32_sqrt_method();
+    type_inference_tests·test_f32_abs_method();
+    type_inference_tests·test_f32_floor_method();
+    type_inference_tests·test_f32_powf_method();
+    type_inference_tests·test_f32_max_method();
+    type_inference_tests·test_f32_sin_method();
+    type_inference_tests·test_f32_cos_method();
+    type_inference_tests·test_dct_cos_pattern();
+    type_inference_tests·test_static_str_in_struct();
+    println("  All f32 method tests passed!");
+    println("");
+
+    // Pattern 2: Enumerate index
+    println("Pattern 2: Enumerate index inference");
+    type_inference_tests·test_enumerate_index_basic();
+    type_inference_tests·test_enumerate_index_explicit();
+    type_inference_tests·test_range_index_basic();
+    type_inference_tests·test_range_index_explicit();
+    println("  All enumerate tests passed!");
+    println("");
+
+    // Pattern 3: Iterator sum
+    println("Pattern 3: Iterator sum");
+    type_inference_tests·test_sum_no_turbofish();
+    type_inference_tests·test_sum_with_turbofish();
+    println("  All sum tests passed!");
+    println("");
+
+    // Pattern 4: Closure indexing
+    println("Pattern 4: Closure indexing");
+    type_inference_tests·test_closure_index_basic();
+    type_inference_tests·test_closure_index_explicit();
+    println("  All closure tests passed!");
+    println("");
+
+    // Pattern 5: Destructuring
+    println("Pattern 5: Destructuring with indexing");
+    type_inference_tests·test_destructure_tuple_index();
+    type_inference_tests·test_destructure_tuple_index_explicit();
+    println("  All destructuring tests passed!");
+    println("");
+
+    // Pattern 6: Closure param destructuring
+    println("Pattern 6: Closure parameter destructuring");
+    type_inference_tests·test_zip_closure_native();
+    type_inference_tests·test_simple_closure_with_deref();
+    type_inference_tests·test_enumerate_filter_map_native();
+    println("  All closure param tests passed!");
+    println("");
+
+    // Pattern 7: println/print macros
+    println("Pattern 7: println/print macros");
+    type_inference_tests·test_println_requires_arg();
+    type_inference_tests·test_print_no_exclamation();
+    println("  All print tests passed!");
+    println("");
+
+    println("=== All tests passed! ===");
+}
+
+scroll type_inference_tests {
+
+    // =========================================================================
+    // Pattern 1: f32 method calls (hct_test_vectors.sg)
+    // =========================================================================
+
+    //@ rune: test
+    rite test_f32_sqrt_method() {
+        // Does Sigil support x.sqrt() as a method on f32?
+        ≔ x: f32 = 4.0;
+        ≔ result = x.sqrt();
+        assert_eq!(result, 2.0);
+    }
+
+    //@ rune: test
+    rite test_f32_abs_method() {
+        // Does Sigil support x.abs() as a method on f32?
+        ≔ x: f32 = -3.5;
+        ≔ result = x.abs();
+        assert_eq!(result, 3.5);
+    }
+
+    //@ rune: test
+    rite test_f32_floor_method() {
+        // Does Sigil support x.floor() as a method on f32?
+        ≔ x: f32 = 3.7;
+        ≔ result = x.floor();
+        assert_eq!(result, 3.0);
+    }
+
+    //@ rune: test
+    rite test_f32_powf_method() {
+        // Does Sigil support x.powf(y) as a method?
+        ≔ x: f32 = 2.0;
+        ≔ result = x.powf(3.0);
+        assert_eq!(result, 8.0);
+    }
+
+    //@ rune: test
+    rite test_f32_max_method() {
+        // Does Sigil support x.max(y) as a method?
+        ≔ x: f32 = 3.0;
+        ≔ result = x.max(5.0);
+        assert_eq!(result, 5.0);
+    }
+
+    //@ rune: test
+    rite test_f32_sin_method() {
+        // Does Sigil support x.sin() as a method?
+        ≔ x: f32 = 0.0;
+        ≔ result = x.sin();
+        assert_eq!(result, 0.0);
+    }
+
+    //@ rune: test
+    rite test_f32_cos_method() {
+        // Does Sigil support x.cos() as a method?
+        ≔ x: f32 = 0.0;
+        ≔ result = x.cos();
+        assert_eq!(result, 1.0);
+    }
+
+    //@ rune: test
+    rite test_dct_cos_pattern() {
+        // The exact pattern from hct_test_vectors.sg
+        ≔ rows: usize = 4;
+        ≔ cols: usize = 4;
+        ∀ i ∈ 0..rows {
+            ∀ j ∈ 0..cols {
+                ≔ cos_i = ((2 * i + 1) as f32 * 1.0 * PI / (2.0 * rows as f32)).cos();
+                ≔ cos_j = ((2 * j + 1) as f32 * 1.0 * PI / (2.0 * cols as f32)).cos();
+                // Just ensure these compute
+                ≔ _ = cos_i * cos_j;
+            }
+        }
+    }
+
+    //@ rune: test
+    rite test_static_str_in_struct() {
+        // Does Sigil support &'static str in structs?
+        Σ TestStruct {
+            name: &'static str,
+            value: i32,
+        }
+        ≔ t = TestStruct { name: "test", value: 42 };
+        assert_eq!(t.value, 42);
+    }
+
+    // =========================================================================
+    // Pattern 2: Enumerate index inference (huffman/encoder.sg)
+    // =========================================================================
+
+    //@ rune: test
+    rite test_enumerate_index_basic() {
+        // Basic enumerate - does index infer as usize?
+        ≔ arr = [10, 20, 30];
+        ∀ (i, &val) ∈ arr.iter().enumerate() {
+            ≔ _ = arr[i]; // Can we index with i directly?
+        }
+    }
+
+    //@ rune: test
+    rite test_enumerate_index_explicit() {
+        // Enumerate with explicit usize cast
+        ≔ arr = [10, 20, 30];
+        ∀ (idx, &val) ∈ arr.iter().enumerate() {
+            ≔ i: usize = idx;
+            ≔ _ = arr[i];
+        }
+    }
+
+    //@ rune: test
+    rite test_range_index_basic() {
+        // Range loop - does index infer as usize?
+        ≔ arr = [10, 20, 30];
+        ∀ i ∈ 0..arr.len() {
+            ≔ _ = arr[i];
+        }
+    }
+
+    //@ rune: test
+    rite test_range_index_explicit() {
+        // Range loop with explicit usize
+        ≔ arr = [10, 20, 30];
+        ∀ idx ∈ 0..arr.len() {
+            ≔ i: usize = idx;
+            ≔ _ = arr[i];
+        }
+    }
+
+    // =========================================================================
+    // Pattern 3: Iterator sum with type (hct_test_vectors.sg)
+    // =========================================================================
+
+    //@ rune: test
+    rite test_sum_no_turbofish() {
+        // Sum without type annotation - use map to dereference
+        ≔ arr = [1.0f32, 2.0, 3.0];
+        ≔ total: f32 = arr.iter().map(|x| *x).sum();
+        assert_eq!(total, 6.0);
+    }
+
+    //@ rune: test
+    rite test_sum_with_turbofish() {
+        // Sum with turbofish syntax
+        ≔ arr = [1.0f32, 2.0, 3.0];
+        ≔ total = arr.iter().map(|x| *x).sum·<f32>();
+        assert_eq!(total, 6.0);
+    }
+
+    // =========================================================================
+    // Pattern 4: Closure with indexing (huffman/encoder.sg)
+    // =========================================================================
+
+    //@ rune: test
+    rite test_closure_index_basic() {
+        // Closure that indexes an array
+        ≔ arr = [1, 2, 3, 4, 5];
+        ≔ doubled: Vec<i32> = (0..arr.len()).map(|i| arr[i] * 2).collect();
+        assert_eq!(doubled[0], 2);
+    }
+
+    //@ rune: test
+    rite test_closure_index_explicit() {
+        // Closure with explicit usize
+        ≔ arr = [1, 2, 3, 4, 5];
+        ≔ doubled: Vec<i32> = (0..arr.len()).map(|idx| {
+            ≔ i: usize = idx;
+            arr[i] * 2
+        }).collect();
+        assert_eq!(doubled[0], 2);
+    }
+
+    // =========================================================================
+    // Pattern 5: Destructuring with indexing (huffman/encoder.sg)
+    // =========================================================================
+
+    //@ rune: test
+    rite test_destructure_tuple_index() {
+        // Destructure tuple and use first element as index
+        ≔ arr = [100, 200, 300];
+        ≔ pairs: Vec<(usize, i32)> = vec![(0, 10), (1, 20), (2, 30)];
+        ∀ (idx, val) ∈ pairs {
+            ≔ _ = arr[idx]; // Can we index with destructured usize?
+        }
+    }
+
+    //@ rune: test
+    rite test_destructure_tuple_index_explicit() {
+        // Destructure with explicit cast
+        ≔ arr = [100, 200, 300];
+        ≔ pairs: Vec<(usize, i32)> = vec![(0, 10), (1, 20), (2, 30)];
+        ∀ (sym, val) ∈ pairs {
+            ≔ idx: usize = sym;
+            ≔ _ = arr[idx];
+        }
+    }
+
+    // =========================================================================
+    // Pattern 6: Closure parameter destructuring (hct_test_vectors.sg)
+    // =========================================================================
+
+    //@ rune: test
+    rite test_zip_closure_native() {
+        // Native closure param destructuring now works!
+        ≔ a = [1.0f32, 2.0, 3.0];
+        ≔ b = [4.0f32, 5.0, 6.0];
+
+        // Native destructuring in closure params
+        ≔ dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| *x * *y).sum();
+
+        assert_eq!(dot, 32.0); // 1*4 + 2*5 + 3*6 = 32
+    }
+
+    //@ rune: test
+    rite test_simple_closure_with_deref() {
+        // Simple closure with dereference works fine
+        ≔ arr = [1.0f32, 2.0, 3.0];
+        ≔ sum_sq: f32 = arr.iter().map(|x| *x * *x).sum();
+        assert_eq!(sum_sq, 14.0); // 1 + 4 + 9 = 14
+    }
+
+    //@ rune: test
+    rite test_enumerate_filter_map_native() {
+        // Native closure param destructuring works!
+        ≔ arr = [1u32, 2, 0, 4, 0];
+
+        // Native destructuring with refs
+        ≔ last = arr.iter()
+            .enumerate()
+            .filter(|&(_, &f)| f > 0)
+            .map(|(i, _)| i)
+            .max();
+
+        assert!(last.is_some());
+    }
+
+    // =========================================================================
+    // Pattern 7: println/print macros (hct_test_vectors.sg)
+    // =========================================================================
+
+    //@ rune: test
+    rite test_println_requires_arg() {
+        // DISCOVERY: println() requires at least 1 argument
+        // Use println("") instead of println()
+        println("");  // Works
+        println("Hello");  // Works
+    }
+
+    //@ rune: test
+    rite test_print_no_exclamation() {
+        // DISCOVERY: Use print() not print!()
+        print("Hello ");
+        print("World\n");
+    }
+}

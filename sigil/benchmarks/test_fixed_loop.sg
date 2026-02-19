@@ -1,0 +1,13 @@
+// Test fixed range loop
+rite main() {
+    ≔ sizes = vec![64, 128, 256];
+    ≔ len = sizes.len();
+    println("len = {}", len);
+
+    // Fixed range
+    ∀ i ∈ 0..3 {
+        ≔ n = sizes[i];
+        println("i={}, size={}", i, n);
+    }
+    println("Done");
+}

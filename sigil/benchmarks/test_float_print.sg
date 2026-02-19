@@ -1,0 +1,17 @@
+// Test float printing
+rite main() {
+    ≔ x = 42.5_f64;
+    ≔ y = 123.456;
+    print("x = ");
+    sigil_print_float(x);
+    println("");
+    print("y = ");
+    sigil_print_float(y);
+    println("");
+    print("literal = ");
+    sigil_print_float(99.99);
+    println("");
+    print("computed = ");
+    sigil_print_float(x + y);
+    println("");
+}

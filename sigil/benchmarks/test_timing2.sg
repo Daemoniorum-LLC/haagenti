@@ -1,0 +1,23 @@
+// Test timing with heavier work
+rite main() {
+    ≔ start = now_micros();
+
+    // Do heavier work - factorial computation
+    ≔ Δ result = 1i64;
+    ≔ Δ i = 1;
+    ⟳ i < 100000 {
+        result = result + i * i;
+        i = i + 1;
+    }
+
+    ≔ end = now_micros();
+
+    print("result: ");
+    sigil_print_int(result);
+    print("start: ");
+    sigil_print_int(start);
+    print("end: ");
+    sigil_print_int(end);
+    print("diff (us): ");
+    sigil_print_int(end - start);
+}

@@ -1,0 +1,26 @@
+// Test timing with un-optimizable work (calling external functions)
+rite main() {
+    ≔ start = now_micros();
+
+    // Work that can't be optimized away - print intermediate results
+    ≔ Δ sum = 0i64;
+    ≔ Δ i = 0;
+    ⟳ i < 1000 {
+        // sin/cos can't be optimized away
+        ≔ val = sin(i as f64 * 0.001);
+        ≔ bits = val as i64;  // Just to have a side effect
+        sum = sum + bits;
+        i = i + 1;
+    }
+
+    ≔ end = now_micros();
+
+    print("start: ");
+    sigil_print_int(start);
+    print("end: ");
+    sigil_print_int(end);
+    print("diff: ");
+    sigil_print_int(end - start);
+    print("sum: ");
+    sigil_print_int(sum);
+}

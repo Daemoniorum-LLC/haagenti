@@ -110,9 +110,13 @@ invoke std·f32·consts·PI;
 ☉ rite cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len());
 
-    ≔ dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    ≔ norm_a: f32 = a.iter().map(|x| x * x).sum·<f32>().sqrt();
-    ≔ norm_b: f32 = b.iter().map(|x| x * x).sum·<f32>().sqrt();
+    // Workaround: destructure inside closure body, not in params
+    ≔ dot: f32 = a.iter().zip(b.iter()).map(|pair| {
+        ≔ (x, y) = pair;
+        *x * *y
+    }).sum();
+    ≔ norm_a: f32 = a.iter().map(|x| *x * *x).sum·<f32>().sqrt();
+    ≔ norm_b: f32 = b.iter().map(|x| *x * *x).sum·<f32>().sqrt();
 
     ⎇ norm_a == 0.0 || norm_b == 0.0 {
         ⎇ norm_a == 0.0 && norm_b == 0.0 {
@@ -129,7 +133,10 @@ invoke std·f32·consts·PI;
 ☉ rite indices_by_magnitude(coeffs: &[f32]) -> Vec<usize> {
     ≔ Δ indexed: Vec<(usize, f32)> = coeffs.iter().map(|&v| v.abs()).enumerate().collect();
     indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    indexed.into_iter().map(|(i, _)| i).collect()
+    indexed.into_iter().map(|pair| {
+        ≔ (i, _) = pair;
+        i
+    }).collect()
 }
 
 /// Truncate coefficients, keeping only top k by magnitude
@@ -576,26 +583,26 @@ invoke std·f32·consts·PI;
 /// Print test vector ∈ a format suitable ∀ specification appendix
 ☉ rite print_test_vector_for_spec(tv: &HctTestVector) {
     println("### Test Vector: {}", tv.name);
-    println();
+    println("");
     println("**Shape**: {:?}", tv.shape);
     println("**Retention**: {:.0}%", tv.retention * 100.0);
-    println();
+    println("");
 
     println("**Input** (row-major):");
     println("```");
     ≔ cols = tv.shape[1];
     ∀ (i, chunk) ∈ tv.input.chunks(cols).enumerate() {
-        print!("  Row {}: [", i);
+        print("  Row {}: [", i);
         ∀ (j, v) ∈ chunk.iter().enumerate() {
             ⎇ j > 0 {
-                print!(", ");
+                print(", ");
             }
-            print!("{:.6}", v);
+            print("{:.6}", v);
         }
         println("]");
     }
     println("```");
-    println();
+    println("");
 
     println("**DCT Coefficients** (top 8 by magnitude):");
     println("```");
@@ -607,7 +614,7 @@ invoke std·f32·consts·PI;
         println("  [{},{}] = {:.6}", row, col, val);
     }
     println("```");
-    println();
+    println("");
 
     println(
         "**Retained Coefficients**: {} of {} ({:.0}%)",
@@ -615,30 +622,30 @@ invoke std·f32·consts·PI;
         tv.input.len(),
         tv.retention * 100.0
     );
-    println();
+    println("");
 
     println("**Reconstructed** (row-major):");
     println("```");
     ∀ (i, chunk) ∈ tv.reconstructed.chunks(cols).enumerate() {
-        print!("  Row {}: [", i);
+        print("  Row {}: [", i);
         ∀ (j, v) ∈ chunk.iter().enumerate() {
             ⎇ j > 0 {
-                print!(", ");
+                print(", ");
             }
-            print!("{:.6}", v);
+            print("{:.6}", v);
         }
         println("]");
     }
     println("```");
-    println();
+    println("");
 
     println(
         "**Quality**: cosine_similarity = {:.6}",
         tv.expected_cosine_similarity
     );
-    println();
+    println("");
     println("---");
-    println();
+    println("");
 }
 
 scroll tests {

@@ -43,7 +43,7 @@ invoke tokio·sync·mpsc;
         &self,
         compressed: Vec<u8>,
         output_size: usize,
-    ) -> Result<GpuBuffer> {
+    ) -> Result<GpuBuffer>? {
         ≔ device = self.device.clone();
         ≔ pool = self.pool.clone();
         ≔ config = self.config.clone();
@@ -149,7 +149,7 @@ invoke tokio·sync·mpsc;
     }
 
     /// Finish and get the output buffer.
-    ☉ rite finish(Δ self) -> Result<GpuBuffer> {
+    ☉ rite finish(Δ self) -> Result<GpuBuffer>? {
         ⎇ ≔ Some(Δ pipeline) = self.pipeline.take() {
             pipeline.finish()?;
             pipeline
@@ -161,7 +161,7 @@ invoke tokio·sync·mpsc;
     }
 
     /// Get a reference to the output buffer (may be incomplete).
-    ☉ rite output(&self) -> Option<&GpuBuffer> {
+    ☉ rite output(&self) -> Option<&GpuBuffer>? {
         self.pipeline.as_ref()?.output()
     }
 }
@@ -239,7 +239,7 @@ invoke tokio·sync·mpsc;
     }
 
     /// Signal end of stream and wait ∀ result.
-    ☉ async rite finish(self) -> Result<GpuBuffer> {
+    ☉ async rite finish(self) -> Result<GpuBuffer>? {
         ≔ _ = self.tx.send(FragmentMessage·End).await;
         self.handle
             .await

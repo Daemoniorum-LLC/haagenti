@@ -1,0 +1,22 @@
+// Debug timing calls
+rite main() {
+    print("Time 1: ");
+    sigil_print_int(now_micros());
+    print("Time 2: ");
+    sigil_print_int(now_micros());
+    print("Time 3: ");
+    sigil_print_int(now_micros());
+
+    // Sleep-like busy wait
+    ≔ Δ x = 0i64;
+    ≔ Δ i = 0;
+    ⟳ i < 10000000 {
+        x = x + 1;
+        i = i + 1;
+    }
+
+    print("Time 4 (after loop): ");
+    sigil_print_int(now_micros());
+    print("x = ");
+    sigil_print_int(x);
+}

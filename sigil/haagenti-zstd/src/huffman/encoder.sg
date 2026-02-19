@@ -271,8 +271,10 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         // Special case: exactly 2 symbols get weight 1 each (1-bit codes)
         ⎇ n == 2 {
             ≔ Δ weights = [0u8; MAX_SYMBOLS];
-            weights[symbols[0].0] = 1;
-            weights[symbols[1].0] = 1;
+            ≔ (sym0, _) = symbols[0usize];
+            ≔ (sym1, _) = symbols[1usize];
+            weights[sym0] = 1;
+            weights[sym1] = 1;
             ⤺ Some((weights, 1));
         }
 
@@ -292,7 +294,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
 
         // Phase 1: Assign initial weights based on frequency ratio - O(n)
         // Use log2(max_freq / freq) to estimate relative code lengths
-        ≔ max_freq = symbols[0].1 as u64;
+        ≔ (_, max_freq_u32) = symbols[0usize];
+        ≔ max_freq = max_freq_u32 as u64;
 
         ∀ (loop_idx, &(symbol, freq)) ∈ symbols.iter().enumerate() {
             ≔ idx: usize = loop_idx;
@@ -982,8 +985,8 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         ≔ Δ bits_sequence: Vec<(u32, u8)> = Vec·with_capacity(num_symbols);
 
         // First state: pick any state ∀ the first weight
-        ≔ first_weight = weights_to_encode[0] as usize;
-        ≔ first_state = states_for_symbol[first_weight][0];
+        ≔ first_weight = weights_to_encode[0usize] as usize;
+        ≔ first_state = states_for_symbol[first_weight][0usize];
         state_sequence.push(first_state);
 
         // For each subsequent weight, find a state and compute transition bits
@@ -1052,7 +1055,7 @@ const MIN_HUFFMAN_SIZE: usize = 32;
         }
 
         // Write initial state (will be read first by decoder)
-        bit_writer.write_bits(state_sequence[0] as u32, WEIGHT_ACCURACY_LOG);
+        bit_writer.write_bits(state_sequence[0usize] as u32, WEIGHT_ACCURACY_LOG);
 
         // Finish bitstream (adds sentinel)
         ≔ Δ compressed_stream = bit_writer.finish();
@@ -1291,10 +1294,10 @@ scroll tests {
         ≔ data = [0u8, 1, 2, 0, 1, 0, 0, 0, 1, 2, 3];
         ≔ freq = HuffmanEncoder·count_frequencies(&data);
 
-        assert_eq!(freq[0], 5);
-        assert_eq!(freq[1], 3);
-        assert_eq!(freq[2], 2);
-        assert_eq!(freq[3], 1);
+        assert_eq!(freq[0usize], 5);
+        assert_eq!(freq[1usize], 3);
+        assert_eq!(freq[2usize], 2);
+        assert_eq!(freq[3usize], 1);
     }
 
     //@ rune: test

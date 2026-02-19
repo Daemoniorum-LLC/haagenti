@@ -87,7 +87,7 @@ rite project(vec: &[f64], matrix: &[Vec<f64>]) → Vec<f64> {
     ∀ j ∈ 0..k {
         ≔ Δ sum = 0.0;
         ∀ i ∈ 0..d {
-            sum = sum + vec![i] * matrix[i][j];
+            sum = sum + vec[i] * matrix[i][j];
         }
         result[j] = sum;
     }
@@ -293,7 +293,7 @@ rite test_scaling() → bool {
 
     ≔ Δ scaled_vec = Vec·with_capacity(d);
     ∀ i ∈ 0..d {
-        scaled_vec.push(vec![i] * scale);
+        scaled_vec.push(vec[i] * scale);
     }
 
     ≔ proj = project(&vec, &matrix);

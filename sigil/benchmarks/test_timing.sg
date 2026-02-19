@@ -1,0 +1,33 @@
+// Test timing and float arithmetic
+rite main() {
+    ≔ start = now_micros();
+
+    // Do some work
+    ≔ Δ sum = 0.0_f64;
+    ≔ Δ i = 0;
+    ⟳ i < 10000 {
+        sum = sum + 1.0;
+        i = i + 1;
+    }
+
+    ≔ end = now_micros();
+
+    print("start: ");
+    sigil_print_int(start);
+    print("end: ");
+    sigil_print_int(end);
+    print("diff: ");
+    sigil_print_int(end - start);
+
+    ≔ diff_f64 = (end - start) as f64;
+    print("diff as f64: ");
+    sigil_print_float(diff_f64);
+
+    ≔ iters = 100.0_f64;
+    ≔ avg = diff_f64 / iters;
+    print("avg = diff_f64 / 100: ");
+    sigil_print_float(avg);
+
+    print("sum: ");
+    sigil_print_float(sum);
+}

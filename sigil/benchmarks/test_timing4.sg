@@ -1,0 +1,38 @@
+// Debug variable storage of timing
+rite main() {
+    // Test 1: Direct print
+    print("Direct print: ");
+    sigil_print_int(now_micros());
+
+    // Test 2: Store and print
+    ≔ t1 = now_micros();
+    print("Stored t1: ");
+    sigil_print_int(t1);
+
+    // Test 3: Mutable store
+    ≔ Δ t2 = now_micros();
+    print("Mutable t2: ");
+    sigil_print_int(t2);
+
+    // Test 4: Store, work, store, diff
+    ≔ start = now_micros();
+
+    // Heavy work
+    ≔ Δ sum = 0i64;
+    ≔ Δ i = 0;
+    ⟳ i < 1000000 {
+        sum = sum + i;
+        i = i + 1;
+    }
+
+    ≔ end = now_micros();
+
+    print("start: ");
+    sigil_print_int(start);
+    print("end: ");
+    sigil_print_int(end);
+    print("diff: ");
+    sigil_print_int(end - start);
+    print("sum: ");
+    sigil_print_int(sum);
+}

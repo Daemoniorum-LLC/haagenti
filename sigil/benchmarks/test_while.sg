@@ -1,0 +1,9 @@
+// Test while loop
+rite main() {
+    ≔ Δ i = 0;
+    ⟳ i < 3 {
+        println("i = {}", i);
+        i = i + 1;
+    }
+    println("Done");
+}

@@ -1,0 +1,56 @@
+// Verify DCT actually runs
+rite dct_1d(input: &[f64], n: usize) → Vec<f64> {
+    ≔ pi = PI();
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ≔ Δ init_i = 0;
+    ⟳ init_i < n {
+        output.push(0.0);
+        init_i = init_i + 1;
+    }
+
+    ≔ Δ k = 0;
+    ⟳ k < n {
+        ≔ Δ sum = 0.0_f64;
+        ≔ Δ i = 0;
+        ⟳ i < n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+            i = i + 1;
+        }
+        output[k] = sum * scale;
+        k = k + 1;
+    }
+
+    output[0] = output[0] / sqrt2;
+    output
+}
+
+rite main() {
+    // Create simple input
+    ≔ Δ input = Vec·with_capacity(8);
+    ≔ Δ i = 0;
+    ⟳ i < 8 {
+        input.push(i as f64);
+        i = i + 1;
+    }
+
+    println("Input length: ");
+    sigil_print_int(input.len() as i64);
+
+    ≔ start = now_micros();
+    ≔ output = dct_1d(&input, 8);
+    ≔ end = now_micros();
+
+    println("Output length: ");
+    sigil_print_int(output.len() as i64);
+
+    println("Time (us): ");
+    sigil_print_int(end - start);
+
+    // Print first output value
+    print("output[0] = ");
+    sigil_print_float(output[0]);
+}

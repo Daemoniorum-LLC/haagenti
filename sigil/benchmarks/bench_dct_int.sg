@@ -1,0 +1,84 @@
+// DCT Benchmark - Integer timing version (avoids float division bug)
+// Uses integer microseconds directly
+
+rite dct_1d(input: &[f64], n: usize) → Vec<f64> {
+    ≔ pi = PI();
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ≔ Δ init_i = 0;
+    ⟳ init_i < n {
+        output.push(0.0);
+        init_i = init_i + 1;
+    }
+
+    ≔ Δ k = 0;
+    ⟳ k < n {
+        ≔ Δ sum = 0.0_f64;
+        ≔ Δ i = 0;
+        ⟳ i < n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+            i = i + 1;
+        }
+        output[k] = sum * scale;
+        k = k + 1;
+    }
+
+    output[0] = output[0] / sqrt2;
+    output
+}
+
+rite generate_test_data(n: usize) → Vec<f64> {
+    ≔ Δ data = Vec·with_capacity(n);
+    ≔ Δ i = 0;
+    ⟳ i < n {
+        ≔ v = sin(i as f64 * 0.1) + cos(i as f64 * 0.03) * 0.5;
+        data.push(v);
+        i = i + 1;
+    }
+    data
+}
+
+rite run_benchmark(n: usize, iterations: usize) {
+    ≔ data = generate_test_data(n);
+
+    // Warmup
+    ≔ _ = dct_1d(&data, n);
+
+    // DCT benchmark
+    ≔ dct_start = now_micros();
+    ≔ Δ iter = 0;
+    ⟳ iter < iterations {
+        ≔ _ = dct_1d(&data, n);
+        iter = iter + 1;
+    }
+    ≔ dct_end = now_micros();
+    ≔ dct_total = dct_end - dct_start;
+
+    // Print as integers
+    print("      ");
+    sigil_print_int(n as i64);
+    print("     total_us: ");
+    sigil_print_int(dct_total);
+    print("     iterations: ");
+    sigil_print_int(iterations as i64);
+    println("");
+}
+
+rite main() {
+    println("DCT Benchmark - Sigil (LLVM backend)");
+    println("══════════════════════════════════════════════════");
+    println("");
+    println("    Size     Total (μs)    Iterations");
+    println("──────────────────────────────────────────────────");
+
+    // Test different sizes - more iterations to get measurable time
+    run_benchmark(64, 100);
+    run_benchmark(128, 50);
+    run_benchmark(256, 20);
+
+    println("");
+    println("Algorithm: Naive O(n²) DCT-II");
+}

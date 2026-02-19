@@ -1,0 +1,10 @@
+// Test vec loop iteration
+rite main() {
+    ≔ sizes = vec![64, 128, 256];
+    println("sizes.len() = {}", sizes.len());
+    ∀ i ∈ 0..sizes.len() {
+        ≔ n = sizes[i];
+        println("i={}, size={}", i, n);
+    }
+    println("Done");
+}

@@ -187,7 +187,7 @@ invoke serde·{Deserialize, Serialize};
 
     /// Quantize tensor to INT4
     ☉ rite quantize(&self, tensor: &[f32]) -> Result<QuantizedTensor> {
-        ≔ shape = [tensor.len()];
+        ≔ shape = vec![tensor.len()];
         ≔ Δ result = QuantizedTensor·new(shape, self.config.group_size);
 
         // Compute scales per group

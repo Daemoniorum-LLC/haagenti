@@ -1,0 +1,139 @@
+// DCT Benchmark using while loops (workaround for for-in bug in LLVM)
+// Compares Sigil LLVM backend performance
+
+rite dct_1d(input: &[f64], n: usize) → Vec<f64> {
+    ≔ pi = PI();
+    ≔ scale = (2.0 / n as f64).sqrt();
+    ≔ sqrt2 = 2.0_f64.sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ≔ Δ init_i = 0;
+    ⟳ init_i < n {
+        output.push(0.0);
+        init_i = init_i + 1;
+    }
+
+    ≔ Δ k = 0;
+    ⟳ k < n {
+        ≔ Δ sum = 0.0_f64;
+        ≔ Δ i = 0;
+        ⟳ i < n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[i] * cos(angle);
+            i = i + 1;
+        }
+        output[k] = sum * scale;
+        k = k + 1;
+    }
+
+    output[0] = output[0] / sqrt2;
+    output
+}
+
+rite idct_1d(input: &[f64], n: usize) → Vec<f64> {
+    ≔ pi = PI();
+    ≔ scale_dc = (1.0 / n as f64).sqrt();
+    ≔ scale_ac = (2.0 / n as f64).sqrt();
+
+    ≔ Δ output = Vec·with_capacity(n);
+    ≔ Δ init_i = 0;
+    ⟳ init_i < n {
+        output.push(0.0);
+        init_i = init_i + 1;
+    }
+
+    ≔ Δ i = 0;
+    ⟳ i < n {
+        ≔ Δ sum = input[0] * scale_dc;
+        ≔ Δ k = 1;
+        ⟳ k < n {
+            ≔ angle = pi * (k as f64) * ((i as f64) + 0.5) / (n as f64);
+            sum = sum + input[k] * scale_ac * cos(angle);
+            k = k + 1;
+        }
+        output[i] = sum;
+        i = i + 1;
+    }
+
+    output
+}
+
+rite generate_test_data(n: usize) → Vec<f64> {
+    ≔ Δ data = Vec·with_capacity(n);
+    ≔ Δ i = 0;
+    ⟳ i < n {
+        ≔ v = sin(i as f64 * 0.1) + cos(i as f64 * 0.03) * 0.5;
+        data.push(v);
+        i = i + 1;
+    }
+    data
+}
+
+rite run_benchmark(n: usize, iterations: usize) {
+    ≔ data = generate_test_data(n);
+
+    // Warmup
+    ≔ _ = dct_1d(&data, n);
+
+    // DCT benchmark
+    ≔ dct_start = now_micros();
+    ≔ Δ iter = 0;
+    ⟳ iter < iterations {
+        ≔ _ = dct_1d(&data, n);
+        iter = iter + 1;
+    }
+    ≔ dct_end = now_micros();
+    ≔ dct_avg = (dct_end - dct_start) as f64 / iterations as f64;
+
+    // IDCT benchmark
+    ≔ coeffs = dct_1d(&data, n);
+    ≔ idct_start = now_micros();
+    iter = 0;
+    ⟳ iter < iterations {
+        ≔ _ = idct_1d(&coeffs, n);
+        iter = iter + 1;
+    }
+    ≔ idct_end = now_micros();
+    ≔ idct_avg = (idct_end - idct_start) as f64 / iterations as f64;
+
+    // Roundtrip
+    ≔ rt_start = now_micros();
+    iter = 0;
+    ⟳ iter < iterations {
+        ≔ c = dct_1d(&data, n);
+        ≔ _ = idct_1d(&c, n);
+        iter = iter + 1;
+    }
+    ≔ rt_end = now_micros();
+    ≔ rt_avg = (rt_end - rt_start) as f64 / iterations as f64;
+
+    // Print results without format strings (workaround)
+    print("      ");
+    sigil_print_int(n as i64);
+    print("     ");
+    sigil_print_float(dct_avg);
+    print("     ");
+    sigil_print_float(idct_avg);
+    print("     ");
+    sigil_print_float(rt_avg);
+    println("");
+}
+
+rite main() {
+    println("DCT/IDCT Benchmark - Sigil (LLVM backend)");
+    println("══════════════════════════════════════════════════");
+    println("");
+    println("    Size     DCT (μs)    IDCT (μs)  Roundtrip (μs)");
+    println("──────────────────────────────────────────────────");
+
+    // Test different sizes
+    run_benchmark(16, 10000);
+    run_benchmark(32, 5000);
+    run_benchmark(64, 1000);
+    run_benchmark(128, 500);
+    run_benchmark(256, 100);
+    run_benchmark(512, 20);
+
+    println("");
+    println("Algorithm: Naive O(n²) DCT-II");
+}

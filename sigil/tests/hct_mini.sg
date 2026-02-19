@@ -1,0 +1,83 @@
+//! Minimal reproduction of hct_test_vectors patterns
+
+invoke std·f32·consts·PI;
+
+/// Simplified test vector struct
+//@ rune: derive(Debug, Clone)
+☉ Σ HctTestVector {
+    ☉ name: &'static str,
+    ☉ shape: Vec<usize>,
+    ☉ input: Vec<f32>,
+    ☉ retention: f32,
+}
+
+/// Reference DCT-II implementation
+☉ rite reference_dct_2d(input: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+    ≔ Δ output = vec![0.0f32; rows * cols];
+
+    ∀ u ∈ 0..rows {
+        ∀ v ∈ 0..cols {
+            ≔ Δ sum = 0.0f32;
+            ∀ i ∈ 0..rows {
+                ∀ j ∈ 0..cols {
+                    ≔ idx = i * cols + j;
+                    ≔ cos_i = ((2 * i + 1) as f32 * u as f32 * PI / (2.0 * rows as f32)).cos();
+                    ≔ cos_j = ((2 * j + 1) as f32 * v as f32 * PI / (2.0 * cols as f32)).cos();
+                    sum += input[idx] * cos_i * cos_j;
+                }
+            }
+
+            // Normalization factors
+            ≔ alpha_u = ⎇ u == 0 {
+                (1.0 / rows as f32).sqrt()
+            } ⎉ {
+                (2.0 / rows as f32).sqrt()
+            };
+            ≔ alpha_v = ⎇ v == 0 {
+                (1.0 / cols as f32).sqrt()
+            } ⎉ {
+                (2.0 / cols as f32).sqrt()
+            };
+
+            output[u * cols + v] = alpha_u * alpha_v * sum;
+        }
+    }
+
+    output
+}
+
+/// Compute cosine similarity between two vectors
+☉ rite cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len());
+
+    // Workaround: destructure inside closure body, not in params
+    ≔ dot: f32 = a.iter().zip(b.iter()).map(|pair| {
+        ≔ (x, y) = pair;
+        *x * *y
+    }).sum();
+    ≔ norm_a: f32 = a.iter().map(|x| *x * *x).sum·<f32>().sqrt();
+    ≔ norm_b: f32 = b.iter().map(|x| *x * *x).sum·<f32>().sqrt();
+
+    ⎇ norm_a == 0.0 || norm_b == 0.0 {
+        ⎇ norm_a == 0.0 && norm_b == 0.0 {
+            1.0
+        } ⎉ {
+            0.0
+        }
+    } ⎉ {
+        dot / (norm_a * norm_b)
+    }
+}
+
+rite main() {
+    println("Testing HCT mini...");
+
+    ≔ input = vec![1.0f32, 2.0, 3.0, 4.0];
+    ≔ dct = reference_dct_2d(&input, 2, 2);
+    println("DCT computed successfully");
+
+    ≔ sim = cosine_similarity(&input, &dct);
+    println("Cosine similarity: {}", sim);
+
+    println("All tests passed!");
+}

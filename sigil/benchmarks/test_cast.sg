@@ -1,0 +1,20 @@
+// Test i64 to f64 cast
+rite main() {
+    ≔ x = 42i64;
+    ≔ y = 1000i64;
+
+    print("x = ");
+    sigil_print_int(x);
+
+    ≔ x_f64 = x as f64;
+    print("x as f64 = ");
+    sigil_print_float(x_f64);
+
+    ≔ y_f64 = y as f64;
+    print("y as f64 = ");
+    sigil_print_float(y_f64);
+
+    ≔ ratio = x_f64 / y_f64;
+    print("x_f64 / y_f64 = ");
+    sigil_print_float(ratio);
+}

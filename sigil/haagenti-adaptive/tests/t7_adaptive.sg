@@ -109,10 +109,10 @@ rite test_quality_factors() {
 // Tests: Profile Presets
 // ════════════════════════════════════════════════════════════════════════════
 
-Σ PrecisionZone {
-    start: f64,
-    end: f64,
-    precision: i64,
+☉ Σ PrecisionZone {
+    ☉ start: f64,
+    ☉ end: f64,
+    ☉ precision: i64,
 }
 
 rite get_precision_at(zones: &Vec<PrecisionZone>, step_fraction: f64) → i64 {

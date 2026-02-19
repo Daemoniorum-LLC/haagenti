@@ -44,7 +44,7 @@ invoke std·sync·Arc;
         invoke rand·Rng;
         ≔ Δ rng = rand·thread_rng();
         ≔ centroids: Vec<f32> = (0..num_codes * code_dim)
-            .map(|_| rng.r#gen·<f32>() * 2.0 - 1.0)
+            .map(|_| rng.gen·<f32>() * 2.0 - 1.0)
             .collect();
 
         Self {
@@ -107,7 +107,7 @@ invoke std·sync·Arc;
     ☉ rite random(num_indices: usize) -> Self {
         invoke rand·Rng;
         ≔ Δ rng = rand·thread_rng();
-        ≔ indices: Vec<u8> = (0..num_indices).map(|_| rng.r#gen()).collect();
+        ≔ indices: Vec<u8> = (0..num_indices).map(|_| rng.gen()).collect();
 
         Self {
             indices,
