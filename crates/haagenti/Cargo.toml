@@ -154,10 +154,10 @@ zstd = "0.13"  # Reference zstd for turbo pipeline (haagenti-zstd has compatibil
 [dev-dependencies]
 criterion = { workspace = true }
 half = "2.4"
-proptest = "1.4"
+proptest = "1.10"
 rand = { workspace = true }
 rand_distr = "0.4"
-tempfile = "3.10"
+tempfile = "3.25"
 
 [[example]]
 name = "weight_compression_analysis"

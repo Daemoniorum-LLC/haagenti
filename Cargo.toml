@@ -111,7 +111,7 @@ lz4_flex = "0.11"
 zstd = "0.13"
 zstd-safe = "7.2"
 brotli = "6.0"
-flate2 = "1.0"
+flate2 = "1.1"
 miniz_oxide = "0.8"
 libdeflater = "1.21"
 
@@ -145,7 +145,7 @@ rustfft = "6.2"
 # ═══════════════════════════════════════════════════════════════════════════════
 thiserror = "2.0"
 half = "2.4"
-bytes = "1.8"
+bytes = "1.11"
 smallvec = "1.13"
 arrayvec = "0.7"
 tinyvec = { version = "1.8", features = ["alloc"] }
@@ -189,7 +189,7 @@ tracing = "0.1"
 # TESTING & BENCHMARKING
 # ═══════════════════════════════════════════════════════════════════════════════
 criterion = { version = "0.5", features = ["html_reports"] }
-proptest = "1.5"
+proptest = "1.10"
 quickcheck = "1.0"
 rand = "0.8"
 
