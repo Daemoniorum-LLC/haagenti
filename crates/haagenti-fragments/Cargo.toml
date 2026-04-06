@@ -20,7 +20,7 @@ half = "2.4"
 
 # Data structures
 dashmap = "6.1"
-indexmap = { version = "2.7", features = ["serde"] }
+indexmap = { version = "2.13", features = ["serde"] }
 smallvec = { version = "1.13", features = ["serde"] }
 
 # Serialization
