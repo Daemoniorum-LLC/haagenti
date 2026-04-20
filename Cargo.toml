@@ -111,7 +111,7 @@ lz4_flex = "0.11"
 zstd = "0.13"
 zstd-safe = "7.2"
 brotli = "6.0"
-flate2 = "1.0"
+flate2 = "1.1"
 miniz_oxide = "0.8"
 libdeflater = "1.21"
 
