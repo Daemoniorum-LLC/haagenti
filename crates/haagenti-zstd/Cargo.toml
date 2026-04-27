@@ -20,7 +20,7 @@ parallel = ["std", "rayon"]  # Parallel compression (4-stream Huffman, etc.)
 [dependencies]
 haagenti-core = { workspace = true }
 haagenti-simd = { workspace = true, optional = true }
-rayon = { version = "1.10", optional = true }
+rayon = { version = "1.12", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

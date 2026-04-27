@@ -24,4 +24,4 @@ pin-project-lite = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-tokio = { version = "1.41", features = ["rt", "macros", "io-util"] }
+tokio = { version = "1.52", features = ["rt", "macros", "io-util"] }
