@@ -34,7 +34,7 @@ futures = "0.3"
 
 # Configuration
 clap = { version = "4", features = ["derive"] }
-config = "0.14"
+config = "0.15"
 serde = { version = "1", features = ["derive"] }
 
 # Metrics
