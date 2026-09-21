@@ -1909,7 +1909,7 @@ dependencies = [
  "half",
  "numpy",
  "pyo3",
- "pyo3-build-config 0.28.3",
+ "pyo3-build-config 0.29.2",
  "thiserror 2.0.18",
 ]
 
@@ -3441,9 +3441,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-build-config"
-version = "0.28.3"
+version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e368e7ddfdeb98c9bca7f8383be1648fd84ab466bf2bc015e94008db6d35611e"
+checksum = "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"
 dependencies = [
  "target-lexicon 0.13.4",
 ]
