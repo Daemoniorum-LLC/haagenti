@@ -20,15 +20,3 @@ updates:
         update-types:
           - "minor"
           - "patch"
-
-  # GitHub Actions
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    commit-message:
-      prefix: "ci"
-    labels:
-      - "dependencies"
-      - "ci"
