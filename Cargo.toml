@@ -107,7 +107,7 @@ haagenti-grpc = { version = "0.1.0", path = "crates/haagenti-grpc" }
 # ═══════════════════════════════════════════════════════════════════════════════
 # These are used as references/fallbacks, not direct dependencies
 # Haagenti implements its own optimized versions
-lz4_flex = "0.11"
+lz4_flex = "0.14"
 zstd = "0.13"
 zstd-safe = "7.2"
 brotli = "8.0"

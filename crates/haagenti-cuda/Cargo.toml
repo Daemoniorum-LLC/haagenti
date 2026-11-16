@@ -34,7 +34,7 @@ bytes = { workspace = true }
 half = { version = "2.4", features = ["std"] }
 
 # Compression algorithms (CPU fallback when GPU kernels unavailable)
-lz4_flex = "0.11"
+lz4_flex = "0.14"
 zstd = "0.13"
 
 # Async support (optional)
