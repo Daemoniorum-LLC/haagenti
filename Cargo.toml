@@ -136,7 +136,7 @@ xxhash-rust = { version = "0.8", features = ["xxh32", "xxh64", "xxh3"] }
 # Portable SIMD abstractions
 wide = "0.7"
 pulp = "0.21"
-safe_arch = "0.7"
+safe_arch = "1.2"
 # FFT for fast DCT implementation
 rustfft = "6.2"
 
