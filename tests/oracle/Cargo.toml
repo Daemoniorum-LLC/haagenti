@@ -1,0 +1,15 @@
+# The LARES-932 oracle: writes tests/expected/ and tests/consumer/src/gen_*.sg from Rust haagenti-deflate
+# (this workspace's, by path) and flate2 (pinned). Offline: `cargo run --release --offline` from here.
+[package]
+name = "haagenti-sigil-oracle"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+haagenti-core = { path = "../../crates/haagenti-core" }
+haagenti-deflate = { path = "../../crates/haagenti-deflate" }
+flate2 = "=1.1.11"
+
+# Not a member of the root workspace: the Rust workspace is untouched (LARES-932 §1).
+[workspace]
