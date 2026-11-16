@@ -1,10 +1,11 @@
 # haagenti in Sigil, slice 1: the Codec surface, DEFLATE, zlib, gzip (LARES-932)
 
-Status: the spec for slice 1, written before the code. The Rust crates `haagenti-core` and
-`haagenti-deflate` at develop `28eb2cbd9dfe59d9b4ca273b4f1312ebb426420a` are the oracle; RFCs 1950,
-1951 and 1952 are the formats. Where the two disagree, §6 says which one the port follows and why.
-Every name is the port's; behaviour (the bytes produced, the errors refused) is Rust's unless §6 says
-otherwise.
+Status: the spec for slice 1, revised to contract 0.1.1 §6 (the planner's rulings R1–R5 and B1–B8,
+PR #65 comment 6922707269). The Rust crates `haagenti-core` and `haagenti-deflate` at develop
+`28eb2cbd9dfe59d9b4ca273b4f1312ebb426420a` are the oracle; RFCs 1950, 1951 and 1952 are the formats.
+Where the two disagree, §6 (in `SLICE-1-DEPARTURES.md`) says which one the port follows and why.
+Every name is the port's. Behaviour (the bytes produced, the errors refused) is Rust's unless §6 says
+otherwise. Refusals are compared by kind and reason tag, never by message (R4).
 
 ## 1. Layout
 
@@ -25,31 +26,32 @@ Only what `haagenti-deflate` uses is ported.
 
 ### 2.1 `Error`
 
-`Result<T, Error>` is written out everywhere; there is no alias. `☉ ᛈ Error` has Rust's eleven
-variants, each with named fields:
+`Result<T, Error>` is written out everywhere; there is no alias. `☉ ᛈ Error` keeps ten of Rust's
+eleven variants, each with named fields. `Io` and `CorruptedData`'s boxed `source` are dropped (R5).
 
-| Variant | Fields | `category()` | `message()` (Rust's `Display`) |
+| Variant | Fields | `category()` | `reason()` |
 |---|---|---|---|
-| `CorruptedData` | `message: String` | `corrupted_data` | `corrupted data: {message}` |
-| `BufferTooSmall` | `required: usize, provided: usize` | `buffer_too_small` | `buffer too small: need {required} bytes, got {provided}` |
-| `InvalidLevel` | `level: i32, min: i32, max: i32` | `invalid_level` | `invalid compression level {level}: must be in range [{min}, {max}]` |
-| `InvalidDictionary` | `message: String` | `invalid_dictionary` | `invalid dictionary: {message}` |
-| `ChecksumMismatch` | `expected: u32, actual: u32` | `checksum_mismatch` | `checksum mismatch: expected 0x{expected:08x}, got 0x{actual:08x}` |
-| `UnexpectedEof` | `bytes_read: usize` | `unexpected_eof` | `unexpected EOF after {bytes_read} bytes` |
-| `Io` | `message: String` | `io_error` | `I/O error: {message}` |
-| `AllocationFailed` | `requested_bytes: usize` | `allocation_failed` | `allocation failed: could not allocate {requested_bytes} bytes` |
-| `Algorithm` | `algorithm: String, message: String` | `algorithm_error` | `{algorithm} error: {message}` |
-| `InvalidState` | `expected: String, actual: String` | `invalid_state` | `invalid state: expected {expected}, got {actual}` |
-| `Unsupported` | `message: String` | `unsupported` | `unsupported: {message}` |
+| `CorruptedData` | `message: String, reason: String` | `corrupted_data` | its `reason` (§3.3) |
+| `BufferTooSmall` | `required: usize, provided: usize` | `buffer_too_small` | `output_limit` |
+| `InvalidLevel` | `level: i32, min: i32, max: i32` | `invalid_level` | `level` |
+| `InvalidDictionary` | `message: String` | `invalid_dictionary` | `dictionary` |
+| `ChecksumMismatch` | `expected: u32, actual: u32` | `checksum_mismatch` | `checksum` |
+| `UnexpectedEof` | `bytes_read: usize` | `unexpected_eof` | `truncated` |
+| `AllocationFailed` | `requested_bytes: usize` | `allocation_failed` | `allocation` |
+| `Algorithm` | `algorithm: String, message: String` | `algorithm_error` | `algorithm` |
+| `InvalidState` | `expected: String, actual: String` | `invalid_state` | `state` |
+| `Unsupported` | `message: String` | `unsupported` | `unsupported` |
 
-The makers are `Error·corrupted(m)`, `Error·corrupted_at(m, offset)` (message `"{m} at offset
-{offset}"`), `Error·buffer_too_small(required, provided)`, `Error·checksum_mismatch(expected,
-actual)`, `Error·unexpected_eof(bytes_read)`, `Error·io(m)` and `Error·algorithm(a, m)`.
-`is_recoverable()` is `yea` for `UnexpectedEof` and `BufferTooSmall` only.
-
-Two departures from Rust's type, neither of them a behaviour: `Io` holds the message, not a
-`std::io::Error`, and `CorruptedData` has no boxed `source`. Rust's `&'static str` fields become
-`String`.
+- **Makers.**
+  - `Error·refused(reason, message)` is the tagged `CorruptedData` that every refusal in §3.3 uses.
+  - `Error·corrupted(m)` keeps Rust's maker, with the reason `corrupted`.
+  - `Error·corrupted_at(m, offset)` makes the message `"{m} at offset {offset}"`.
+  - The others are `Error·buffer_too_small(required, provided)`,
+    `Error·checksum_mismatch(expected, actual)`, `Error·unexpected_eof(bytes_read)` and
+    `Error·algorithm(a, m)`.
+- **`message()`** is Rust's `Display` text, kept for people. It is never what a test compares.
+- **`is_recoverable()`** is `yea` for `UnexpectedEof` and `BufferTooSmall` only.
+- **Fields.** Rust's `&'static str` fields become `String`.
 
 ### 2.2 `CompressionLevel` and `Algorithm`
 
@@ -70,14 +72,11 @@ Two departures from Rust's type, neither of them a behaviour: `Io` holds the mes
     rite algorithm(&this) → Algorithm;
     rite level(&this) → CompressionLevel;
     rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error>;
-    rite compress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error>;
     rite max_compressed_size(&this, input_len: usize) → usize;
 }
 ☉ aspect Decompressor {
     rite algorithm(&this) → Algorithm;
     rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error>;
-    rite decompress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error>;
-    rite decompress_with_size(&this, input: &Vec<u8>, output_size: usize) → Result<Vec<u8>, Error>;
 }
 ☉ aspect Codec: Compressor + Decompressor {
     rite new() → This;
@@ -86,22 +85,21 @@ Two departures from Rust's type, neither of them a behaviour: `Io` holds the mes
 }
 ```
 
-- `compress_to` and `decompress_to` treat `output` as Rust treats `&mut [u8]`: its length is the
-  buffer's size. They never grow or shrink it. They write the result into `output[0..n]` and give
-  `n`. When the result is longer than `output.len()` they refuse with
-  `BufferTooSmall { required: n, provided: output.len() }` and leave `output` unchanged.
-- `decompress_with_size(input, s)`: Rust makes a zeroed buffer of `s`, calls `decompress_to` and
-  truncates. The port gives the same answer: the decompressed bytes when there are at most `s`, and
-  `BufferTooSmall { required, provided: s }` otherwise.
-- `verify_roundtrip(data)` compresses, decompresses and gives `Ok(decompressed == data)`, passing
-  either step's error through.
-- Rust gives `decompress_with_size` and `verify_roundtrip` default bodies. The port declares them in
-  the aspect with the same bodies, and every type of §3.4 also implements them itself. The reason is a
-  compiler defect (§7 K1): AOT and wasm do not lower a dependency tome's default rite that returns a
-  `Result`.
-- `stats()`, `measure_ratio`, `CompressionStats` and `CompressionRatio` are not ported. Deflate fills
-  no stats: every `stats()` in the crate gives `None`.
-- The streaming, dictionary, parallel and SIMD aspects and `dct.rs` are out of this slice, since
+- **Out of slice 1.** `compress_to`, `decompress_to` and `decompress_with_size` (B1), and `stats()`,
+  `measure_ratio`, `CompressionStats` and `CompressionRatio` (B3). Every Rust `stats()` gives `None`.
+- **`decompress`** refuses past the default output bound (§3.3, B4).
+- **`verify_roundtrip(data)`** compresses, decompresses and gives `Ok(decompressed == data)`, passing
+  either step's error through. Rust gives it a default body. The port declares that body in the
+  aspect, and each codec also implements it itself, because AOT and wasm do not lower a dependency
+  tome's default rite that returns a `Result` (§7 K1).
+- **`new` and `with_level` have no subject (B2).**
+  - Probed: `DeflateCodec·with_level(l)` and `GzipCodec·new()` check, run, compile and run on wasm
+    (`tests/consumer`'s A rows).
+  - Called through a generic, `C·with_level(l)` checks and runs, but AOT and wasm do not lower it
+    (§7 K9).
+  - So `haagenti·deflate` also gives the free makers `deflate_codec(level)`, `zlib_codec(level)` and
+    `gzip_codec(level)`, and GAPS.md has the row.
+- **Out of this slice too:** the streaming, dictionary, parallel and SIMD aspects and `dct.rs`, since
   deflate implements none of them.
 
 ## 3. `haagenti·deflate`
@@ -111,11 +109,17 @@ Two departures from Rust's type, neither of them a behaviour: `Io` holds the mes
 | Rite | Gives |
 |---|---|
 | `deflate(input: &Vec<u8>, level: CompressionLevel)` | `Result<Vec<u8>, Error>`: raw RFC 1951 |
-| `inflate(input: &Vec<u8>, output: &Δ Vec<u8>)` | `Result<(), Error>`: appends to `output` |
-| `inflate_to(input: &Vec<u8>, output: &Δ Vec<u8>)` | `Result<usize, Error>`, with `compress_to`'s buffer rule |
-| `zlib_compress(input, level)`, `zlib_decompress(input)`, `zlib_decompress_to(input, output)` | RFC 1950 |
-| `gzip_compress(input, level)`, `gzip_decompress(input)`, `gzip_decompress_to(input, output)` | RFC 1952 |
+| `inflate(input: &Vec<u8>, output: &Δ Vec<u8>)`, `inflate_limited(input, output, limit)` | `Result<(), Error>`: appends to `output` |
+| `zlib_compress(input, level)`, `zlib_decompress(input)`, `zlib_decompress_limited(input, limit)` | RFC 1950 |
+| `gzip_compress(input, level)`, `gzip_decompress(input)`, `gzip_decompress_limited(input, limit)` | RFC 1952 |
+| `deflate_codec(level)`, `zlib_codec(level)`, `gzip_codec(level)` | the codecs (B2) |
 | `crc32(data: &Vec<u8>) → u32`, `crc32_range(data, start, end)`, `adler32(data) → u32` | the checksums |
+
+- **The output bound (B4).** `inflate`, `zlib_decompress` and `gzip_decompress` stop at
+  `DEFAULT_OUTPUT_LIMIT` (16 MiB, 16,777,216 bytes). The `*_limited` rites take the bound, which
+  counts the bytes this call produces.
+- **No `*_to` rites (B1).** `inflate_to`, `zlib_decompress_to` and `gzip_decompress_to` are out of
+  slice 1.
 
 `crc32` and `adler32` are private in Rust. They are public here because a gzip or zlib framer, such as
 http's `Encoder`, needs them, and because the tests check them against known vectors.
@@ -123,10 +127,9 @@ http's `Encoder`, needs them, and because the tests check them against known vec
 The pieces are public as in Rust (`huffman`): `BitWriter`, `HuffmanEncoder` (`code(s)`, `len(s)`),
 `HuffmanDecoder` (`from_lengths`, `table_bits`, `decode`), `reverse_bits`, and the tables in
 `haagenti·deflate·tables`. `BitReader` is a cursor, not an owner: a `sigil` cannot hold a borrow, so
-each read is given the bytes (`BitReader·over(data)`, `r.read_bits(data, n)`). Beside the
-`Result`-giving reads, the hot path has `take`, `byte` and `HuffmanDecoder·next`. These give a number
-and mark an early end on the reader, which the caller tests at once (`is_short()`); `next` gives
-`HUFFMAN_INVALID` for an empty slot. They exist for wasm (§4, §7 K8).
+each read is given the bytes (`BitReader·over(data)`, `r.read_bits(data, n)`, `r.read_byte(data)`).
+Every public rite gives a `Result` where Rust's does. The decoder's inner loops use tome-private
+`hz_` rites instead, which give a number and mark an early end on the reader (§4, SIGIL-2153).
 
 ### 3.2 Compression: the bytes
 
@@ -165,58 +168,60 @@ Rust's, byte for byte.
 
 ### 3.3 Decompression: what is accepted, what is refused
 
-`inflate` reads blocks until one has `BFINAL` set. Bytes after that block are ignored. The refusals,
-with their exact messages:
+`inflate` reads blocks until one has `BFINAL` set. Every refusal is
+`CorruptedData { message: Rust's message, reason: tag }` unless the table says otherwise. Tests
+compare `category()` and `reason()` (R4).
 
-| Condition | Error |
-|---|---|
-| input ends inside a header, a length or extra bits, a stored block, or a Huffman code (§6 D1) | `UnexpectedEof { bytes_read }`, where `bytes_read` is the inflate input's length |
-| `BTYPE = 3` | `corrupted("invalid block type 3")` |
-| stored `LEN ≠ !NLEN` | `corrupted("stored block length mismatch")` |
-| `HLIT > 286` or `HDIST > 30` | `corrupted("invalid code count")` |
-| code-length symbol 16 first | `corrupted("repeat at start")` |
-| a 16, 17 or 18 run past `HLIT + HDIST` | `corrupted("repeat overflow")`, `("zero repeat overflow")`, `("long zero repeat overflow")` |
-| a lookup that hits an empty table slot | `corrupted("invalid huffman code")` |
-| literal/length symbol 286 or 287 | `corrupted("invalid literal/length code")` |
-| distance symbol 30 or 31 | `corrupted("invalid distance code")` |
-| distance greater than the output so far | `corrupted("distance beyond output")` |
+| Condition | Rust's message | `reason()` |
+|---|---|---|
+| input ends inside a header, length, extra bits, stored block or Huffman code (§6 D1) | `UnexpectedEof { bytes_read }`: the inflate range read, all of it | `truncated` |
+| `BTYPE = 3` | `invalid block type 3` | `block_type` |
+| stored `LEN ≠ !NLEN` | `stored block length mismatch` | `block_type` |
+| `HLIT > 286` or `HDIST > 30` | `invalid code count` | `huffman` |
+| code-length symbol 16 first; a 16, 17 or 18 run past `HLIT + HDIST` | `repeat at start`; `repeat overflow`, `zero repeat overflow`, `long zero repeat overflow` | `huffman` |
+| an empty table slot; an empty length list | `invalid huffman code`; `empty code lengths` | `huffman` |
+| literal/length symbol 286 or 287 | `invalid literal/length code` | `huffman` |
+| distance symbol 30 or 31; distance beyond the output | `invalid distance code`; `distance beyond output` | `distance` |
+| bytes after the final block's last byte (R3) | `trailing data after the deflate stream` | `trailing` |
+| output past the bound (B4) | `BufferTooSmall { required: limit + 1, provided: limit }` | `output_limit` |
 
-`HuffmanDecoder·from_lengths` refuses only an empty length list (`"empty code lengths"`). All zero
-lengths build a two-slot table of empty slots, and any lookup in it is `"invalid huffman code"`.
-Over-subscribed and incomplete code sets are built as Rust builds them (§6 D3).
+- **Tables.** All-zero lengths build two empty slots. Over-subscribed and incomplete sets are built as
+  Rust builds them (§6 D3).
+- **Where the stream ends.** The stream ends at the byte holding its last bit; the bits after it in
+  that byte are padding.
 
 **zlib** (`zlib_decompress`), in order:
-1. Fewer than 6 bytes is `"zlib data too short"`.
-2. `CM ≠ 8` is `"unsupported compression method"`.
-3. `CINFO > 7` is `"invalid window size"`.
-4. `(CMF·256 + FLG) mod 31 ≠ 0` is `"zlib header checksum failed"`.
-5. `FDICT` set is `"preset dictionary not supported"`.
-6. The bytes `2 .. len-4` are inflated; an error there is passed through.
-7. The last four bytes, big endian, must equal the Adler-32 of the output, or it is
-   `"zlib checksum mismatch"`.
+1. Under 6 bytes: `zlib data too short`, reason `truncated`.
+2. `CM ≠ 8`: `unsupported compression method`, reason `header`.
+3. `CINFO > 7`: `invalid window size`, reason `header`.
+4. `(CMF·256 + FLG) mod 31 ≠ 0`: `zlib header checksum failed`, reason `header`.
+5. `FDICT` set: `preset dictionary not supported`, reason `header`.
+6. Bytes `2 .. len-4` are inflated. If the stream ends before `len-4`, the bytes between it and the
+   Adler-32 are refused, reason `trailing` (R3).
+7. The Adler-32 (big endian) must match, or `zlib checksum mismatch`, reason `adler`.
 
 **gzip** (`gzip_decompress`), in order:
-1. Fewer than 18 bytes is `"gzip data too short"`.
-2. A first two bytes other than `1f 8b` is `"invalid gzip magic"`.
-3. `CM ≠ 8` is `"unsupported compression method"`.
+1. Under 18 bytes: `gzip data too short`, reason `truncated`.
+2. Not `1f 8b`: `invalid gzip magic`, reason `magic`.
+3. `CM ≠ 8`: `unsupported compression method`, reason `header`.
 4. The optional header fields are skipped:
-   - `FEXTRA`: `UnexpectedEof { bytes_read: 10 }` if its length runs off the end; otherwise
-     `2 + XLEN` bytes;
+   - `FEXTRA`: `2 + XLEN` bytes, or `UnexpectedEof { bytes_read: 10 }`;
    - `FNAME` and `FCOMMENT`: to the NUL, inclusive;
    - `FHCRC`: 2 bytes.
-5. If fewer than 8 bytes remain, it is `"gzip data truncated"`.
-6. The bytes from there to `len-8` are inflated.
-7. CRC-32, then ISIZE, are checked against the **last 8 bytes of the input**:
-   `"gzip CRC mismatch"`, then `"gzip size mismatch"`.
+5. Under 8 bytes left: `gzip data truncated`, reason `truncated`.
+6. The bytes up to `len-8` are inflated. The trailer must follow the stream at once (R3):
+   - more after a trailer that starts `1f 8b` is another member: `multi_member`;
+   - any other bytes there are `trailing`.
+7. CRC-32 is checked, then ISIZE (little endian): `gzip CRC mismatch`, reason `crc`; then
+   `gzip size mismatch`, reason `isize`.
 
-Every refusal is a `CorruptedData` unless the table says `UnexpectedEof`. Nothing panics. Every index
-is checked before it is read, and §5's must-fails cover each row.
+Nothing panics. Every index is checked before it is read, and §5's must-fail rows cover each line.
 
 ### 3.4 The codec types
 
 `DeflateCodec`, `DeflateCompressor` and `DeflateDecompressor`; the same three for `Zlib` and for `Gzip`.
 
-- The codecs implement all three aspects.
+- The codecs implement all three aspects; `deflate_codec(level)` and its siblings make them too.
 - The compressors implement `Compressor`, with `new()` (level `Default`) and `with_level(l)`.
 - The decompressors implement `Decompressor`, with `new()`.
 - `algorithm()` is `Algorithm·Deflate`, `Algorithm·Zlib` or `Algorithm·Gzip`.
@@ -232,64 +237,20 @@ is checked before it is read, and §5's must-fails cover each row.
   the decoder takes the input with a start and an end.
 - There is no generic `≔ r: R` binding (SIGIL-1231 B2).
 - No `Result` or `Option` is made per byte or per symbol. On wasm each one is an allocation that is
-  never freed (§7 K8): `inflate` makes one per block, not per symbol. No String is built a char at a
+  never freed (§7 K8, **SIGIL-2153**): `inflate` makes one per block, not per symbol. Only the
+  private inner loops avoid them; the public API keeps `Result`. GAPS.md G3 names the rites to
+  revert once SIGIL-2153 is fixed. No String is built a char at a
   time either. The test consumer's hex is built as bytes and made a String once (http's GAPS D8).
 - The volume rows (§5) measure the wasm heap at 1 MiB and 8 MiB. The README gives node's peak
   resident size per program.
 
 ## 5. The oracle and the rows
 
-- **The generator.** `tests/oracle/` is a pinned, offline Rust program (its own `Cargo.lock`, flate2
-  `=1.1.11`, the workspace's `haagenti-deflate` by path). It writes `tests/expected/`, which is
-  committed, so no Rust runs at test time. The corpus is generated by the same seeded rules in Rust
-  and in Sigil (`tests/consumer/src/corpus.sg`):
-  - `empty`, `one` (`41`), and `all256`;
-  - `run65535` and `run65536` (byte `61`), the stored-block boundary;
-  - `text` (16 KiB of seeded words) and `random` (8 KiB of xorshift32);
-  - `packed`, flate2's gzip at level 9 of `text`, committed as hex;
-  - `mib1` and `mib8`, the word generator at 1 MiB and 8 MiB.
-- **C rows.** For each corpus input, each format (deflate, zlib, gzip) and each level (`None`, `Fast`,
-  `Default`, `Best`, `Ultra`, `Custom(0)`, `Custom(5)`), Rust haagenti's bytes. The row is the full
-  hex up to 2 KiB, and `len crc32 adler32` above that. The oracle also checks that flate2 decodes
-  every one of them to the input. The port's output must equal the row, so flate2 decodes the port's
-  output too.
-- **F rows.** flate2's output at levels 0, 1, 6 and 9 (deflate), and at 6 (zlib and gzip), committed
-  as hex. The port must decode each to the input. The `mib*` inputs are left out because their flate2
-  bytes are too large to commit.
-- **E rows.** Two inputs on which Rust's `deflate` panics at every chained level (§6 D8). The port's
-  bytes come from `tests/oracle/src/port_deflate.rs`, Rust's encoder with that one guard. flate2
-  decodes them, and the round trip is checked too. The oracle checks the copy against Rust's
-  `deflate` on every C and V row.
-- **V and W rows.** `mib1` and `mib8` at deflate `None`, `Fast` and `Default` and at gzip `Default`:
-  Rust's bytes (V) and the port's round trip (W).
-- **A rows.** The Codec surface, taken from Rust's codec types:
-  - `algorithm`, `level` and `max_compressed_size`;
-  - `verify_roundtrip`;
-  - `compress_to`, `decompress_to` and `decompress_with_size` on buffers too small, exact and large;
-  - `from_level`;
-  - each `Error`'s category, recoverability and text.
-- **M rows: must-fail.**
-  - The named cases of §3.3: truncation, `BTYPE 3`, bad Huffman tables, distance too far back, bad
-    stored length, bad zlib CM, CINFO, FCHECK, FDICT and Adler, bad gzip magic, CM, CRC, ISIZE,
-    FEXTRA and truncation, and gzip with two members.
-  - Every prefix of three small streams (one per format).
-  - 192 seeded single-bit flips.
-  - The expected answer is the category and message, or `ok len crc32`.
-- **T rows.** Rust's 31 `#[test]`s in `haagenti-deflate`, the 3 ignored ones included, with the same
-  inputs and checks. `haagenti-core` has no `#[test]` outside `dct.rs`.
-- **The patched reference.** The expected answers to decoding come from
-  `tests/oracle/src/port_inflate.rs`. That file is Rust's `inflate`, `zlib_decompress` and
-  `gzip_decompress` with the one change of §6 D1. The oracle checks it against Rust's `inflate` on
-  every M and F row whose Rust answer is not `UnexpectedEof`, and against flate2 on every valid
-  stream.
-- **Counts.** T 31, A 82, M 311, F 48, C 168, R 72, E 12, V and W 16, all in `tests/expected/`.
-  `tests/expected/d1.txt` lists the 12 R rows where Rust's own `inflate` refuses Rust's own bytes
-  (§6 D1).
-- `tests/run.sh` runs the rows on `sigil run`, AOT and wasm (qliphoth's runtime at
-  `tests/wasm-runtime.pin`). It exits 0 for PASS, 1 for FAIL and 2 for COULD-NOT-LOOK. It also runs
-  the wasm negative controls. `cargo run --release --offline -- --check` in `tests/oracle/` exits 1
-  when a committed file is not what the oracle writes.
+In `SLICE-1-ROWS.md`: the oracle (`tests/oracle/`, its two named patches), the corpus, every row kind
+with its count, and `tests/run.sh`.
 
 ## 6–7. Departures and compiler limits
 
-In `SLICE-1-DEPARTURES.md`: §6 says where Rust and the RFCs disagree and which the port follows; §7 lists the compiler limits met.
+In `SLICE-1-DEPARTURES.md`. §6 says where Rust and the RFCs disagree, and which the port follows (the
+planner's rulings R1–R5 among them). §7 lists the compiler limits met. GAPS.md, at the repo root,
+keeps one row for each open defect, with the key of the repo whose owner must fix it.

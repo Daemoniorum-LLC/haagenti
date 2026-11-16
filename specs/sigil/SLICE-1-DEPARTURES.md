@@ -1,6 +1,7 @@
 # haagenti in Sigil, slice 1: departures and compiler limits (LARES-932)
 
-The continuation of `SLICE-1-CODEC-DEFLATE.md` (§1–§5), split off to keep each file under 300 lines.
+The continuation of `SLICE-1-CODEC-DEFLATE.md` (§1–§4) and `SLICE-1-ROWS.md` (§5), split off to keep
+each file under 300 lines. Contract 0.1.1 §6's rulings are named where they apply (R1–R5, B1–B8).
 
 ## 6. Where Rust and the RFCs disagree, and what the port does
 
@@ -27,32 +28,45 @@ The continuation of `SLICE-1-CODEC-DEFLATE.md` (§1–§5), split off to keep ea
     empty slot is refused only when it is looked up.
   - A missing end-of-block code is not refused when the tables are built.
   - The port builds the same tables, so it accepts and refuses exactly the streams Rust does.
-- **D4 (follows Rust): multi-member gzip.**
+- **D4 = R3 (departs from Rust): multi-member gzip is refused, every time.**
   - RFC 1952 §2.2 says a gzip file is a series of members.
-  - Rust inflates only the first member's DEFLATE stream and checks the CRC and ISIZE in the last 8
-    bytes of the whole input. Two members with different contents are therefore refused with
-    `"gzip CRC mismatch"`, and two identical members decode to the first member alone.
-  - The port does the same. Concatenating members is a later slice's question.
+  - Rust inflates the first member's DEFLATE stream and checks the CRC and ISIZE in the last 8 bytes
+    of the whole input. So two different members are refused as a CRC mismatch, and two identical
+    members decode to the first member alone.
+  - The port refuses both as `multi_member`. A tail that follows the first member's trailer and
+    starts `1f 8b` is another member. Supporting members is a later slice.
 - **D5 (follows Rust): gzip header checks.**
   - `FHCRC` is skipped, not verified. The reserved `FLG` bits are not refused (RFC 1952 says a
     decoder must refuse them). `XFL`, `OS` and `MTIME` are ignored.
-  - An unterminated `FNAME` or `FCOMMENT` runs to the end and is then refused as `"gzip data
-    truncated"`.
-- **D6 (follows Rust): trailers are read from the end of the input.** zlib takes Adler-32 from the
-  last 4 bytes and gzip takes CRC-32 and ISIZE from the last 8, not from just after the DEFLATE
-  stream. The bytes between the end of the stream and the trailer are ignored.
+  - An unterminated `FNAME` or `FCOMMENT` runs to the end and is refused as truncated.
+- **D6 = R3 (departs from Rust): trailing bytes are refused, with the reason `trailing`.**
+  - Rust ignores the bytes after a raw stream's final block. It also ignores the bytes between a zlib
+    or gzip stream's end and the trailer it reads from the input's last 4 or 8 bytes.
+  - The port refuses each, "never a silent truncation". The trailer must follow the stream at once,
+    which is where Rust reads it for every stream it does not depart on.
 - **D7 (follows Rust): the zlib `FLEVEL` bits** are written as §3.2 says and ignored when read.
-
-- **D8 (departs from Rust: Rust panics): the lazy step at the end of the input.**
-  - Rust's `deflate_default` guards its lazy step with `pos + 1 < len` and then hashes the three
-    bytes at `pos + 1`. When a match of at least 3 ends exactly at the input's end (`pos + 3 == len`),
-    it reads `input[len]` and panics ("index out of bounds"). This happens at every chained level
-    (`Default`, `Best`, `Ultra`, `Custom(n)`) on inputs of 100 bytes or more.
-  - The repro is the E row `d8_short`: `ff`, the bytes 0–96, then `00 01 02`.
-  - A port must not panic (contract §3), and Rust gives no bytes to match. So the port skips the lazy
-    step when fewer than three bytes follow `pos + 1`. On every input where Rust does not panic, that
-    is Rust's step exactly, and the oracle checks it on every C and V row.
-  - The E rows give the port's bytes from the patched copy. flate2 decodes them.
+- **D8 = R1 (departs from Rust: Rust panics): the lazy step at the end of the input.**
+  - Rust's `deflate_default` guards its lazy step with `pos + 1 < len`, then hashes the three bytes at
+    `pos + 1` (`deflate.rs:341`). When a match of 3 or more ends exactly at the input's end
+    (`pos + 3 == len`), it reads `input[len]` and panics ("index out of bounds"). This happens at every
+    chained level on inputs of 100 bytes or more.
+  - The repros are the E rows `r1_127`, `d8_short` and `d8_random`.
+  - The port guards the read: it skips the lazy step when fewer than three bytes follow `pos + 1`.
+    Wherever Rust does not panic, that is Rust's step exactly. The oracle checks it on every C, V
+    and E row, `r1_128` included.
+  - The expected bytes come from `tests/oracle/patches/R1-lazy-guard.patch`. flate2 decodes them.
+    GAPS.md records the defect for Rust haagenti's owner; the Rust crate is not edited here.
+- **D9 = R4 (a test rule): refusals compare by kind and tag.** Rust tells a bad CRC, ISIZE, Adler,
+  magic and header apart only by message text. The port keeps Rust's messages and adds the stable
+  `reason()` tag of §3.3, which the tests compare.
+- **D10 = R5, B1, B3, B4 (the surface):**
+  - `Io` and `source` are dropped.
+  - The `*_to` rites, `decompress_with_size`, `stats()` and `measure_ratio` are out of slice 1.
+  - Decoding takes an output bound (16 MiB by default) that Rust lacks, refused as `output_limit`.
+- **B7, measured.** Rust's `#[ignore]`d `test_inflate_repetitive` decodes flate2's dynamic block
+  for 20 `A`s. At 28eb2cb it fails in Rust with `UnexpectedEof` (D1). `test_deflate_fast_repetitive`
+  and `test_roundtrip_random` fail the same way, on Rust's own output. All three pass in the port
+  (T rows).
 
 ## 7. Compiler limits met (reported, not worked around in the compiler)
 
@@ -72,9 +86,8 @@ port's or the consumer's way around each is named, and none hides a row.
   `Vec·new()` and single pushes (§4).
 - **K3.** `sigil run` interprets about 2×10^5 loop iterations a second. Unless `HAAGENTI_FULL=1`, the
   run leg leaves out:
-  - `random` above level none;
-  - the 64 KiB inputs, `text` and `packed` above `default`;
-  - the volume rows.
+  - `random` above level none (its chained levels take over half an hour);
+  - the volume rows (1 MiB at `Default` takes 26 minutes to compress on run).
 
   `tests/run.sh` reports them as COULD-NOT-LOOK on run, with their count, never as passing. AOT and
   wasm run every row.
@@ -97,3 +110,10 @@ port's or the consumer's way around each is named, and none hides a row.
   - A `String` grown a char at a time keeps every old buffer the same way (http's GAPS D8).
   - The port's hot path gives numbers and marks an early end on the reader (§3.1, §4), so `inflate`
     makes a `Result` per block, not per symbol.
+  - Filed as **SIGIL-2153** (P1; linked to SIGIL-2089). The planner reproduced it at sigil
+    `bdec61de3`, with a trap at 1–2 million calls. GAPS.md G3 lists the rites to revert when it is
+    fixed.
+- **K9.** A subject-less aspect rite called through a generic (`C·with_level(l)` in a rite generic
+  over `C: Codec`) checks and runs, but is not lowered on AOT ("cannot lower call through
+  expression") or wasm (unresolved). By type path (`GzipCodec·with_level(l)`) it is lowered
+  everywhere. The free makers `deflate_codec(level)` and its siblings are the generic-free way (B2).
