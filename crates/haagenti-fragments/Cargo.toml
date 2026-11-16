@@ -41,7 +41,7 @@ tracing = { workspace = true }
 criterion = "0.5"
 tempfile = "3"
 tokio-test = "0.4"
-rand = "0.8"
+rand = "0.10"
 
 [[bench]]
 name = "fragment_matching"
