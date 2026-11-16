@@ -1,8 +1,9 @@
-//! haagenti-deflate's `zlib_decompress` and `gzip_decompress` at 28eb2cb, copied unchanged except that
-//! they call the patched `port_inflate::inflate` (spec §6 D1). Their checksums are copied too: Rust's
-//! are private.
+//! haagenti-deflate's `zlib_decompress` and `gzip_decompress` at 28eb2cb, copied, calling the patched
+//! `port_inflate` (spec §6 D1), with the contract's rulings: the trailer must follow the stream at
+//! once, and another gzip member or other bytes after it are refused (R3); output stops at `limit`
+//! (B4). Their checksums are copied too: Rust's are private.
 
-use crate::port_inflate::inflate;
+use crate::port_inflate::{inflate_range, trailing};
 use haagenti_core::{Error, Result};
 
 pub fn adler32(data: &[u8]) -> u32 {
@@ -25,7 +26,7 @@ pub fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-pub fn zlib_decompress(input: &[u8]) -> Result<Vec<u8>> {
+pub fn zlib_decompress(input: &[u8], limit: usize) -> Result<Vec<u8>> {
     if input.len() < 6 {
         return Err(Error::corrupted("zlib data too short"));
     }
@@ -44,7 +45,9 @@ pub fn zlib_decompress(input: &[u8]) -> Result<Vec<u8>> {
     }
     let end = input.len() - 4;
     let mut out = Vec::new();
-    inflate(&input[2..end], &mut out)?;
+    if 2 + inflate_range(&input[2..end], &mut out, limit)? < end {
+        return Err(trailing());
+    }
     let stored = u32::from_be_bytes([input[end], input[end + 1], input[end + 2], input[end + 3]]);
     if stored != adler32(&out) {
         return Err(Error::corrupted("zlib checksum mismatch"));
@@ -52,7 +55,7 @@ pub fn zlib_decompress(input: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-pub fn gzip_decompress(input: &[u8]) -> Result<Vec<u8>> {
+pub fn gzip_decompress(input: &[u8], limit: usize) -> Result<Vec<u8>> {
     if input.len() < 18 {
         return Err(Error::corrupted("gzip data too short"));
     }
@@ -84,9 +87,14 @@ pub fn gzip_decompress(input: &[u8]) -> Result<Vec<u8>> {
     if pos + 8 > input.len() {
         return Err(Error::corrupted("gzip data truncated"));
     }
-    let end = input.len() - 8;
     let mut out = Vec::new();
-    inflate(&input[pos..end], &mut out)?;
+    let end = pos + inflate_range(&input[pos..input.len() - 8], &mut out, limit)?;
+    if end + 8 < input.len() {
+        if end + 10 <= input.len() && input[end + 8] == 0x1f && input[end + 9] == 0x8b {
+            return Err(Error::corrupted("a second gzip member: members are not supported"));
+        }
+        return Err(trailing());
+    }
     let t = &input[end..];
     if u32::from_le_bytes([t[0], t[1], t[2], t[3]]) != crc32(&out) {
         return Err(Error::corrupted("gzip CRC mismatch"));

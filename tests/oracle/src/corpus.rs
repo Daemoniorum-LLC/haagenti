@@ -49,6 +49,7 @@ pub fn named(packed: &[u8]) -> Vec<(&'static str, Vec<u8>)> {
         ("empty", vec![]),
         ("one", vec![0x41]),
         ("all256", (0..=255u8).collect()),
+        ("digits", b"123456789".to_vec()), // CRC-32 cbf43926: its top bit set (B5)
         ("run65535", vec![0x61; 65535]),
         ("run65536", vec![0x61; 65536]),
         ("text", text(16384)),

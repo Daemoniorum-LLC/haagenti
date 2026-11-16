@@ -58,9 +58,9 @@ rite nibble(c: u8) → u8 {
     format!("len={} crc={:08x} adler={:08x}", x.len(), crc32(x), adler32(x))
 }
 
-/// "err <category> <message>".
+/// "err <category> <reason>": kind and tag, never the message (R4).
 ☉ rite failed(e: &Error) → String {
-    format!("err {} {}", e.category(), e.message())
+    format!("err {} {}", e.category(), e.reason())
 }
 
 /// "ok len crc" or "err category message".

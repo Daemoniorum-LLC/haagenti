@@ -1,7 +1,9 @@
 //! The patched reference: what the Sigil port must answer when decoding (spec §5, §6 D1).
 //!
 //! A copy of haagenti-deflate's `inflate`, `zlib_decompress` and `gzip_decompress` at develop
-//! 28eb2cb, with ONE change: `Decoder::decode`. Rust's decoder peeks the table's full width and
+//! 28eb2cb, with ONE change to decoding (tests/oracle/patches/D1-huffman-peek.patch): `Decoder::decode`.
+//! The contract's rulings are added on top: the output bound (B4) and the stream's end, which
+//! port_wrap.rs and `inflate` use to refuse trailing bytes (R3). Rust's decoder peeks the table's full width and
 //! refuses with UnexpectedEof when fewer bits remain, even when the code there is complete. This
 //! one decodes a complete code from what remains and otherwise refuses exactly as Rust does. main.rs
 //! checks this copy against Rust's `inflate` on every input whose Rust answer is not UnexpectedEof,
@@ -152,28 +154,53 @@ impl Decoder {
     }
 }
 
-/// Inflate `input`, appending to `output`.
-pub fn inflate(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
+pub const DEFAULT_LIMIT: usize = 16 << 20;
+
+/// The refusal of bytes after a stream (R3).
+pub fn trailing() -> Error {
+    Error::corrupted("trailing data after the deflate stream")
+}
+
+/// Inflate `input`, appending at most `limit` bytes; trailing bytes are refused (R3).
+pub fn inflate(input: &[u8], output: &mut Vec<u8>, limit: usize) -> Result<()> {
+    let end = inflate_range(input, output, limit)?;
+    if end < input.len() {
+        return Err(trailing());
+    }
+    Ok(())
+}
+
+/// Inflate all of `input`, appending at most `limit` bytes; where the stream ends. Past the bound:
+/// BufferTooSmall { required: limit + 1, provided: limit } (B4).
+pub fn inflate_range(input: &[u8], output: &mut Vec<u8>, limit: usize) -> Result<usize> {
+    let cap = output.len() + limit;
+    match blocks(input, output, cap) {
+        Err(Error::BufferTooSmall { .. }) => Err(Error::buffer_too_small(limit + 1, limit)),
+        r => r,
+    }
+}
+
+fn blocks(input: &[u8], output: &mut Vec<u8>, cap: usize) -> Result<usize> {
     let mut r = Reader { data: input, pos: 0, buf: 0, count: 0 };
     loop {
         let fin = r.read_bits(1)? == 1;
         match r.read_bits(2)? {
-            0 => stored(&mut r, output)?,
+            0 => stored(&mut r, output, cap)?,
             1 => {
                 let l = Decoder::from_lengths(&FIXED_LIT_LENGTHS)?;
                 let d = Decoder::from_lengths(&FIXED_DIST_LENGTHS)?;
-                block(&mut r, output, &l, &d)?
+                block(&mut r, output, &l, &d, cap)?
             }
-            2 => dynamic(&mut r, output)?,
+            2 => dynamic(&mut r, output, cap)?,
             _ => return Err(Error::corrupted("invalid block type 3")),
         }
         if fin {
-            return Ok(());
+            return Ok(r.pos - (r.count / 8) as usize);
         }
     }
 }
 
-fn stored(r: &mut Reader, out: &mut Vec<u8>) -> Result<()> {
+fn stored(r: &mut Reader, out: &mut Vec<u8>, cap: usize) -> Result<()> {
     r.align();
     let len = r.read_u16()?;
     let nlen = r.read_u16()?;
@@ -181,12 +208,16 @@ fn stored(r: &mut Reader, out: &mut Vec<u8>) -> Result<()> {
         return Err(Error::corrupted("stored block length mismatch"));
     }
     for _ in 0..len {
-        out.push(r.read_byte()?);
+        let b = r.read_byte()?;
+        if out.len() >= cap {
+            return Err(Error::buffer_too_small(0, 0));
+        }
+        out.push(b);
     }
     Ok(())
 }
 
-fn dynamic(r: &mut Reader, out: &mut Vec<u8>) -> Result<()> {
+fn dynamic(r: &mut Reader, out: &mut Vec<u8>, cap: usize) -> Result<()> {
     let hlit = r.read_bits(5)? as usize + 257;
     let hdist = r.read_bits(5)? as usize + 1;
     let hclen = r.read_bits(4)? as usize + 4;
@@ -228,13 +259,16 @@ fn dynamic(r: &mut Reader, out: &mut Vec<u8>) -> Result<()> {
     }
     let l = Decoder::from_lengths(&lengths[..hlit])?;
     let d = Decoder::from_lengths(&lengths[hlit..])?;
-    block(r, out, &l, &d)
+    block(r, out, &l, &d, cap)
 }
 
-fn block(r: &mut Reader, out: &mut Vec<u8>, l: &Decoder, d: &Decoder) -> Result<()> {
+fn block(r: &mut Reader, out: &mut Vec<u8>, l: &Decoder, d: &Decoder, cap: usize) -> Result<()> {
     loop {
         let sym = l.decode(r)?;
         if sym < 256 {
+            if out.len() >= cap {
+                return Err(Error::buffer_too_small(0, 0));
+            }
             out.push(sym as u8);
         } else if sym == 256 {
             return Ok(());
@@ -253,6 +287,9 @@ fn block(r: &mut Reader, out: &mut Vec<u8>, l: &Decoder, d: &Decoder) -> Result<
             }
             if dist > out.len() {
                 return Err(Error::corrupted("distance beyond output"));
+            }
+            if out.len() + length > cap {
+                return Err(Error::buffer_too_small(0, 0));
             }
             let start = out.len() - dist;
             for k in 0..length {

@@ -6,10 +6,15 @@ use haagenti_core::CompressionLevel;
 use haagenti_deflate::huffman::{BitWriter, HuffmanEncoder, FIXED_LIT_LENGTHS};
 use haagenti_deflate::{deflate, gzip_compress, zlib_compress};
 
-pub type Case = (String, &'static str, Vec<u8>);
+/// (name, format, bytes, output bound: `None` for the default).
+pub type Case = (String, &'static str, Vec<u8>, Option<usize>);
 
 fn case(name: &str, fmt: &'static str, bytes: Vec<u8>) -> Case {
-    (name.to_string(), fmt, bytes)
+    (name.to_string(), fmt, bytes, None)
+}
+
+fn bounded(name: &str, fmt: &'static str, bytes: Vec<u8>, limit: usize) -> Case {
+    (name.to_string(), fmt, bytes, Some(limit))
 }
 
 /// A fixed-Huffman block: BFINAL=1, BTYPE=01, then `f` writes the symbols.
@@ -109,7 +114,33 @@ pub fn named() -> Vec<Case> {
     ];
     v.extend(zlib_cases());
     v.extend(gzip_cases());
+    v.extend(ruled_cases());
     v
+}
+
+/// R3: trailing bytes in each place, and B4: a bound one byte short and exact, in each format.
+fn ruled_cases() -> Vec<Case> {
+    let t = text(1000);
+    let d = deflate(&t, CompressionLevel::Default).unwrap();
+    let z = zlib_compress(&t, CompressionLevel::Default).unwrap();
+    let g = gzip_compress(&t, CompressionLevel::Default).unwrap();
+    let (zn, gn) = (z.len(), g.len());
+    vec![
+        case("r3_deflate_trailing", "deflate", [d.clone(), vec![0x00]].concat()),
+        case("r3_zlib_before_adler", "zlib", [z[..zn - 4].to_vec(), vec![0x00], z[zn - 4..].to_vec()].concat()),
+        case("r3_zlib_after_adler", "zlib", [z.clone(), vec![0x00]].concat()),
+        case("r3_gzip_before_trailer", "gzip", [g[..gn - 8].to_vec(), vec![0x00], g[gn - 8..].to_vec()].concat()),
+        case("r3_gzip_after_trailer", "gzip", [g.clone(), b"xy".to_vec()].concat()),
+        case("r3_gzip_after_trailer_1f", "gzip", [g.clone(), vec![0x1f]].concat()),
+        bounded("b4_deflate_short", "deflate", d.clone(), 999),
+        bounded("b4_deflate_exact", "deflate", d, 1000),
+        bounded("b4_zlib_short", "zlib", z.clone(), 999),
+        bounded("b4_zlib_exact", "zlib", z, 1000),
+        bounded("b4_gzip_short", "gzip", g.clone(), 999),
+        bounded("b4_gzip_exact", "gzip", g, 1000),
+        bounded("b4_stored_short", "deflate", deflate(&t, CompressionLevel::None).unwrap(), 999),
+        bounded("b4_stored_exact", "deflate", deflate(&t, CompressionLevel::None).unwrap(), 1000),
+    ]
 }
 
 fn fcheck(cmf: u8, flg: u8) -> u8 {

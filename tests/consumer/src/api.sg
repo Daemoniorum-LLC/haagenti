@@ -2,26 +2,13 @@
 
 invoke haagenti·core·{Error, CompressionLevel, Compressor, Decompressor, Codec};
 invoke haagenti·deflate·{DeflateCodec, ZlibCodec, GzipCodec, DeflateCompressor, ZlibCompressor,
-    GzipCompressor, DeflateDecompressor, ZlibDecompressor, GzipDecompressor};
-invoke tome·support·{bytes, sum, outcome, flag};
+    GzipCompressor, DeflateDecompressor, ZlibDecompressor, GzipDecompressor, deflate_codec, zlib_codec,
+    gzip_codec};
+invoke tome·support·{bytes, sum, flag};
 
-/// "<category> <recoverable> <message>".
+/// "<category> <reason> <recoverable>" (R4: never the message).
 rite err(e: &Error) → String {
-    format!("{} {} {}", e.category(), flag(e.is_recoverable()), e.message())
-}
-
-/// A buffer of `n` bytes of 0xEE.
-rite buffer(n: usize) → Vec<u8> {
-    ≔ vary b: Vec<u8> = Vec·new();
-    ⟳ b.len() < n { b.push(238u8); }
-    b
-}
-
-rite into_text(r: Result<usize, Error>, buf: &Vec<u8>) → String {
-    ⌥ r {
-        Ok(n) => format!("ok {} {}", n, sum(buf)),
-        Err(e) => format!("err {}", err(&e)),
-    }
+    format!("{} {} {}", e.category(), e.reason(), flag(e.is_recoverable()))
 }
 
 /// One of the three codecs. The rows call each codec's own rites through this, not through a rite
@@ -48,22 +35,12 @@ rite into_text(r: Result<usize, Error>, buf: &Vec<u8>) → String {
     rite compress(&this, x: &Vec<u8>) → Result<Vec<u8>, Error> {
         ⌥ this { AnyCodec·D(c) => c.compress(x), AnyCodec·Z(c) => c.compress(x), AnyCodec·G(c) => c.compress(x) }
     }
-    rite compress_to(&this, x: &Vec<u8>, out: &Δ Vec<u8>) → Result<usize, Error> {
-        ⌥ this { AnyCodec·D(c) => c.compress_to(x, out), AnyCodec·Z(c) => c.compress_to(x, out), AnyCodec·G(c) => c.compress_to(x, out) }
-    }
-    rite decompress_to(&this, x: &Vec<u8>, out: &Δ Vec<u8>) → Result<usize, Error> {
-        ⌥ this { AnyCodec·D(c) => c.decompress_to(x, out), AnyCodec·Z(c) => c.decompress_to(x, out), AnyCodec·G(c) => c.decompress_to(x, out) }
-    }
-    rite with_size(&this, x: &Vec<u8>, n: usize) → Result<Vec<u8>, Error> {
-        ⌥ this {
-            AnyCodec·D(c) => c.decompress_with_size(x, n),
-            AnyCodec·Z(c) => c.decompress_with_size(x, n),
-            AnyCodec·G(c) => c.decompress_with_size(x, n),
-        }
+    rite decompress(&this, x: &Vec<u8>) → Result<Vec<u8>, Error> {
+        ⌥ this { AnyCodec·D(c) => c.decompress(x), AnyCodec·Z(c) => c.decompress(x), AnyCodec·G(c) => c.decompress(x) }
     }
 }
 
-/// One codec's rows: algorithm, levels, sizes, round trip, and the buffer rites.
+/// One codec's rows: algorithm, levels, sizes, round trip.
 rite surface(tag: &str, c: &AnyCodec, best: &AnyCodec) {
     ≔ input = bytes("Verify roundtrip functionality.");
     println!("A {} algorithm {}", tag, c.algorithm());
@@ -75,16 +52,20 @@ rite surface(tag: &str, c: &AnyCodec, best: &AnyCodec) {
     ≔ ok = ⌥ c.verify(&input) { Ok(b) => flag(b), Err(e) => err(&e) };
     println!("A {} verify_roundtrip {}", tag, ok);
     ≔ z = c.compress(&input).unwrap();
-    ∀ size ∈ vec![4usize, z.len(), z.len() + 7] {
-        ≔ vary buf = buffer(*size);
-        ≔ r = c.compress_to(&input, &Δ buf);
-        println!("A {} compress_to {} {}", tag, *size, into_text(r, &buf));
-    }
-    ∀ size ∈ vec![5usize, input.len(), input.len() + 3] {
-        ≔ vary buf = buffer(*size);
-        ≔ r = c.decompress_to(&z, &Δ buf);
-        println!("A {} decompress_to {} {}", tag, *size, into_text(r, &buf));
-        println!("A {} decompress_with_size {} {}", tag, *size, outcome(&c.with_size(&z, *size)));
+    ≔ back = ⌥ c.decompress(&z) { Ok(d) => sum(&d), Err(e) => err(&e) };
+    println!("A {} decompress {}", tag, back);
+}
+
+/// B2: the free makers give what `with_level` gives.
+rite maker_rows() {
+    ∀ name ∈ vec!["fast", "best", "c5"] {
+        ≔ l = tome·rows·level(name);
+        ≔ d = deflate_codec(l);
+        println!("A maker deflate_codec {} {} {}", name, d.algorithm().name(), d.level().to_level());
+        ≔ z = zlib_codec(tome·rows·level(name));
+        println!("A maker zlib_codec {} {} {}", name, z.algorithm().name(), z.level().to_level());
+        ≔ g = gzip_codec(tome·rows·level(name));
+        println!("A maker gzip_codec {} {} {}", name, g.algorithm().name(), g.level().to_level());
     }
 }
 
@@ -101,6 +82,7 @@ rite surface(tag: &str, c: &AnyCodec, best: &AnyCodec) {
     println!("A DeflateDecompressor algorithm {}", DeflateDecompressor·new().algorithm().name());
     println!("A ZlibDecompressor algorithm {}", ZlibDecompressor·new().algorithm().name());
     println!("A GzipDecompressor algorithm {}", GzipDecompressor·new().algorithm().name());
+    maker_rows();
     ∀ n ∈ vec![-5, 0, 1, 3, 4, 6, 7, 9, 10, 99] {
         println!("A level from_level {} to_level {}", *n, CompressionLevel·from_level(*n).to_level());
     }
@@ -110,8 +92,7 @@ rite surface(tag: &str, c: &AnyCodec, best: &AnyCodec) {
 rite error_rows() {
     ≔ errors = vec![
         Error·corrupted("x y"), Error·corrupted_at("bad byte", 17), Error·buffer_too_small(9, 4),
-        Error·checksum_mismatch(3735928559, 1), Error·unexpected_eof(12), Error·io("disk"),
-        Error·algorithm("deflate", "no"),
+        Error·checksum_mismatch(3735928559, 1), Error·unexpected_eof(12), Error·algorithm("deflate", "no"),
         Error·InvalidLevel { level: 12, min: 0, max: 9 },
         Error·InvalidDictionary { message: "d".to_string() },
         Error·AllocationFailed { requested_bytes: 64 },

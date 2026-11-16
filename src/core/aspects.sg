@@ -1,8 +1,5 @@
-//! haagenti·core·aspects: the one-shot Codec surface (spec §2.3).
-//!
-//! `compress_to` and `decompress_to` take `output` as a buffer of fixed size: its length is the space
-//! there is. They write the result into `output[0..n]` and give `n`, and refuse with BufferTooSmall,
-//! leaving `output` unchanged, when it does not fit. They never grow it.
+//! haagenti·core·aspects: the one-shot Codec surface (spec §2.3). `compress_to`, `decompress_to` and
+//! `decompress_with_size` are out of slice 1 (B1).
 
 invoke tome·core·error·Error;
 invoke tome·core·level·{CompressionLevel, Algorithm};
@@ -18,9 +15,6 @@ invoke tome·core·level·{CompressionLevel, Algorithm};
     /// `input`, compressed.
     rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error>;
 
-    /// `input`, compressed into the front of `output`; the number of bytes written.
-    rite compress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error>;
-
     /// The most bytes `compress` can give for `input_len` bytes.
     rite max_compressed_size(&this, input_len: usize) → usize;
 }
@@ -32,17 +26,6 @@ invoke tome·core·level·{CompressionLevel, Algorithm};
 
     /// `input`, decompressed.
     rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error>;
-
-    /// `input`, decompressed into the front of `output`; the number of bytes written.
-    rite decompress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error>;
-
-    /// `input`, decompressed, when it is at most `output_size` bytes; BufferTooSmall otherwise.
-    /// Every haagenti type implements this itself (spec §2.3, §7 K1): this body is for others.
-    rite decompress_with_size(&this, input: &Vec<u8>, output_size: usize) → Result<Vec<u8>, Error> {
-        ≔ out = this.decompress(input)?;
-        ⎇ out.len() > output_size { ⤺ Err(Error·buffer_too_small(out.len(), output_size)); }
-        Ok(out)
-    }
 }
 
 /// Compression and decompression together.

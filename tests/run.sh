@@ -16,8 +16,8 @@
 # manifest naming the tome: the repo keeps one manifest (spec §1).
 #
 # `sigil run` interprets about 2×10^5 loop steps a second (spec §7 K3). Unless HAAGENTI_FULL=1 it does
-# not run the C rows of `random` above level none, the chained levels' C rows of the 64 KiB and
-# 16 KiB inputs, or any volume row: each is reported COULD-NOT-LOOK, with its count.
+# not run the C rows of `random` above level none, or any volume row: each is reported COULD-NOT-LOOK,
+# with its count.
 #
 #   SIGIL=/path/to/sigil (default: sigil on PATH)    SIGIL_HOME: where runtime/libsigil_runtime.a is
 #   SIGIL_WASM_RUNTIME: qliphoth's runtime/sigil_runtime.js; unset, fetched at the pin

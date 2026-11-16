@@ -3,10 +3,10 @@
 //! A `BitReader` is a cursor over bytes it does not own: every read is given the bytes, and reads
 //! `data[start..end]`. So zlib and gzip read their DEFLATE stream in place, never copied (spec §4).
 //!
-//! The decoder's hot path (`take`, `byte`) gives plain numbers and marks an early end in `short`,
-//! which the caller tests: on wasm every `Result` a call gives is a heap allocation that is never
-//! freed, and a megabyte of input would make millions (spec §7 K8). `read_bits` and `read_byte`
-//! give the same answers as `Result`s.
+//! The decoder's inner loops use the tome-private `hz_take`, `hz_byte` and `hz_need`: they give plain
+//! numbers and mark an early end in `short`, which the caller tests at once. On wasm every `Result` a
+//! call gives is an allocation that is never freed (SIGIL-2153; spec §7 K8, GAPS G3). The public
+//! `read_bits`, `read_byte` and `read_u16` give the same answers as `Result`s.
 
 invoke tome·core·Error;
 
@@ -46,13 +46,19 @@ invoke tome·core·Error;
     }
 
     /// Record a read past the end of the range.
-    ☉ rite mark_short(&Δ this) {
+    ☉ rite hz_mark_short(&Δ this) {
         this.short = yea;
     }
 
     /// Whether a read ran past the end of the range.
-    ☉ rite is_short(&this) → bool {
+    ☉ rite hz_is_short(&this) → bool {
         this.short
+    }
+
+    /// Where the stream read so far ends: the byte after the one holding its last bit, its padding
+    /// bits included. Whole bytes fetched ahead and not used are not counted.
+    ☉ rite stream_end(&this) → usize {
+        this.pos - (this.count / 8) as usize
     }
 
     /// The early end: the bytes of the range read so far, which is all of them.
@@ -61,7 +67,7 @@ invoke tome·core·Error;
     }
 
     /// Hold at least `n` bits; at the end of the range, mark `short` and give `nay`.
-    ☉ rite need(&Δ this, data: &Vec<u8>, n: u32) → bool {
+    ☉ rite hz_need(&Δ this, data: &Vec<u8>, n: u32) → bool {
         ⟳ this.count < n {
             ⎇ this.pos ≥ this.end {
                 this.short = yea;
@@ -96,8 +102,8 @@ invoke tome·core·Error;
     }
 
     /// The next `n` bits (n ≤ 32), as a number; 0, with `short` marked, past the end.
-    ☉ rite take(&Δ this, data: &Vec<u8>, n: u32) → u32 {
-        ⎇ !this.need(data, n) { ⤺ 0; }
+    ☉ rite hz_take(&Δ this, data: &Vec<u8>, n: u32) → u32 {
+        ⎇ !this.hz_need(data, n) { ⤺ 0; }
         ≔ v = this.low(n);
         this.consume(n);
         v
@@ -105,7 +111,7 @@ invoke tome·core·Error;
 
     /// The next `n` bits (n ≤ 32), as a number.
     ☉ rite read_bits(&Δ this, data: &Vec<u8>, n: u32) → Result<u32, Error> {
-        ≔ v = this.take(data, n);
+        ≔ v = this.hz_take(data, n);
         ⎇ this.short { ⤺ Err(this.eof()); }
         Ok(v)
     }
@@ -117,7 +123,7 @@ invoke tome·core·Error;
     }
 
     /// The next byte, after aligning; 0, with `short` marked, past the end.
-    ☉ rite byte(&Δ this, data: &Vec<u8>) → u32 {
+    ☉ rite hz_byte(&Δ this, data: &Vec<u8>) → u32 {
         this.align();
         ⎇ this.count ≥ 8 {
             ≔ b = (this.buf & 255) as u32;
@@ -135,15 +141,15 @@ invoke tome·core·Error;
 
     /// The next byte, after aligning.
     ☉ rite read_byte(&Δ this, data: &Vec<u8>) → Result<u8, Error> {
-        ≔ b = this.byte(data);
+        ≔ b = this.hz_byte(data);
         ⎇ this.short { ⤺ Err(this.eof()); }
         Ok(b as u8)
     }
 
     /// The next two bytes, little endian, after aligning.
     ☉ rite read_u16(&Δ this, data: &Vec<u8>) → Result<u32, Error> {
-        ≔ lo = this.byte(data);
-        ≔ hi = this.byte(data);
+        ≔ lo = this.hz_byte(data);
+        ≔ hi = this.hz_byte(data);
         ⎇ this.short { ⤺ Err(this.eof()); }
         Ok(lo | (hi << 8))
     }

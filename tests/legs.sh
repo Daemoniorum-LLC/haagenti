@@ -1,7 +1,7 @@
 # The legs of tests/run.sh (sourced by it; its helpers in scope). LARES-932, spec §5.
 
 ALL_TAGS="T A M F C R E"
-SMALL="empty one all256"
+SMALL="empty one all256 digits"
 MID="run65535 run65536 text packed"
 
 # ---- check: sizes and `sigil check`, warnings read (W0257 exits 0) ----
@@ -27,11 +27,10 @@ if on run; then
         program run mib8 72000 V "" all mib8 "V W"
     else
         program run small 3600 C "$SMALL" all "" "C R"
-        program run mid 3600 C "$MID" "none fast default" "" "C R"
+        program run mid 7200 C "$MID" all "" "C R"
         program run random 3600 C random none "" "C R"
-        n="$(grep -c '^C ' "$exp/c.txt")"; k="$(want C "" all "" | awk -v s=" $SMALL " -v m=" $MID " '
-            index(s, " " $2 " ") || (index(m, " " $2 " ") && index(" none fast default ", " " $4 " ")) || ($2 == "random" && $4 == "none")' | wc -l)"
-        blind "run: $((n - k)) of $n C rows (random above none; $MID above default) and the 16 V/W rows not run: the interpreter's speed (spec §7 K3); HAAGENTI_FULL=1 runs them"
+        n="$(grep -c '^C ' "$exp/c.txt")"; k="$(want C "" all "" | awk '$2 != "random" || $4 == "none"' | wc -l)"
+        blind "run: $((n - k)) of $n C rows (random above level none) and the 16 V/W rows not run: the interpreter's speed (spec §7 K3); HAAGENTI_FULL=1 runs them"
     fi
     [ "${HAAGENTI_TIMING:-0}" = 1 ] && timing run
 fi

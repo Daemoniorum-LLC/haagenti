@@ -6,6 +6,7 @@ scroll gen_f_1;
 scroll gen_m_0;
 scroll gen_m_1;
 scroll gen_m_2;
+scroll gen_m_3;
 scroll gen_t_0;
 
 ☉ rite gen_packed_files() → i64 { 1 }
@@ -34,12 +35,13 @@ scroll gen_t_0;
     0
 }
 
-☉ rite gen_m_files() → i64 { 3 }
+☉ rite gen_m_files() → i64 { 4 }
 
 ☉ rite gen_m(file: i64, part: i64) → Vec<&str> {
     ⎇ file == 0 { ⤺ tome·gen·gen_m_0·gen_m_0(part); }
     ⎇ file == 1 { ⤺ tome·gen·gen_m_1·gen_m_1(part); }
     ⎇ file == 2 { ⤺ tome·gen·gen_m_2·gen_m_2(part); }
+    ⎇ file == 3 { ⤺ tome·gen·gen_m_3·gen_m_3(part); }
     Vec·new()
 }
 
@@ -47,6 +49,7 @@ scroll gen_t_0;
     ⎇ file == 0 { ⤺ tome·gen·gen_m_0·gen_m_0_parts(); }
     ⎇ file == 1 { ⤺ tome·gen·gen_m_1·gen_m_1_parts(); }
     ⎇ file == 2 { ⤺ tome·gen·gen_m_2·gen_m_2_parts(); }
+    ⎇ file == 3 { ⤺ tome·gen·gen_m_3·gen_m_3_parts(); }
     0
 }
 

@@ -4,8 +4,8 @@ invoke tome·core·Error;
 invoke tome·deflate·bits·{BitReader, reverse_bits};
 invoke tome·deflate·tables·MAX_BITS;
 
-/// What `HuffmanDecoder·next` gives for an empty slot: no symbol is this large.
-☉ ◆ HUFFMAN_INVALID: u32 = 65536;
+/// What `HuffmanDecoder·hz_next` gives for an empty slot: no symbol is this large.
+☉ ◆ HZ_HUFFMAN_INVALID: u32 = 65536;
 
 /// How many codes have each length 0..=15, and the first code of each length (§3.2.2 steps 1–2).
 rite hz_first_codes(lengths: &Vec<u8>, top: u32) → Vec<u32> {
@@ -35,7 +35,7 @@ rite hz_first_codes(lengths: &Vec<u8>, top: u32) → Vec<u32> {
     /// come: a later code overwrites an earlier one's slots (spec §6 D3). All zeros give two empty
     /// slots.
     ☉ rite from_lengths(lengths: &Vec<u8>) → Result<HuffmanDecoder, Error> {
-        ⎇ lengths.len() == 0 { ⤺ Err(Error·corrupted("empty code lengths")); }
+        ⎇ lengths.len() == 0 { ⤺ Err(Error·refused("huffman", "empty code lengths")); }
         ≔ vary max: u32 = 0;
         ∀ bl ∈ lengths {
             ⎇ (*bl as u32) > max { max = *bl as u32; }
@@ -70,29 +70,29 @@ rite hz_first_codes(lengths: &Vec<u8>, top: u32) → Vec<u32> {
         this.table_bits
     }
 
-    /// The next symbol, or `HUFFMAN_INVALID` for an empty slot. With the table's width held, as
+    /// The next symbol, or `HZ_HUFFMAN_INVALID` for an empty slot. With the table's width held, as
     /// Rust. With fewer bits left, the zero-padded slot is taken only when its code is complete
     /// within them; otherwise the end came too early: `r.short` is marked and 0 given (spec §6 D1).
-    /// A number, not a `Result`, for wasm's sake (spec §7 K8).
-    ☉ rite next(&this, r: &Δ BitReader, data: &Vec<u8>) → u32 {
+    /// Tome-private: a number, not a `Result`, for wasm's sake (SIGIL-2153; GAPS G3).
+    ☉ rite hz_next(&this, r: &Δ BitReader, data: &Vec<u8>) → u32 {
         ≔ width = this.table_bits;
         ≔ have = r.fill_upto(data, width);
         ≔ entry = this.table[r.low(width) as usize];
         ≔ bl = entry & 15;
         ⎇ have < width && (bl == 0 || bl > have) {
-            r.mark_short();
+            r.hz_mark_short();
             ⤺ 0;
         }
-        ⎇ bl == 0 { ⤺ HUFFMAN_INVALID; }
+        ⎇ bl == 0 { ⤺ HZ_HUFFMAN_INVALID; }
         r.consume(bl);
         entry >> 4
     }
 
     /// The next symbol, as a `Result`: `next`'s answers, with Rust's errors.
     ☉ rite decode(&this, r: &Δ BitReader, data: &Vec<u8>) → Result<u32, Error> {
-        ≔ sym = this.next(r, data);
-        ⎇ r.is_short() { ⤺ Err(r.eof()); }
-        ⎇ sym == HUFFMAN_INVALID { ⤺ Err(Error·corrupted("invalid huffman code")); }
+        ≔ sym = this.hz_next(r, data);
+        ⎇ r.hz_is_short() { ⤺ Err(r.eof()); }
+        ⎇ sym == HZ_HUFFMAN_INVALID { ⤺ Err(Error·refused("huffman", "invalid huffman code")); }
         Ok(sym)
     }
 }

@@ -2,7 +2,8 @@
 //! data (tests/consumer/src/gen/, written by tests/oracle), each decoded by the port.
 
 invoke tome·support·{number, unhex_into, outcome, sum, failed};
-invoke tome·rows·{decompress, listed};
+invoke tome·rows·{decompress, decompress_limited, listed};
+invoke haagenti·deflate·DEFAULT_OUTPUT_LIMIT;
 invoke tome·gen·{gen_f, gen_f_parts, gen_f_files, gen_m, gen_m_parts, gen_m_files};
 invoke tome·mode·MODE_CORPUS;
 
@@ -27,7 +28,8 @@ rite part_rows(v: &Vec<&str>) {
                 println!("F {} {} {} {}", v[i + 1], v[i + 2], v[i + 3], got);
             }
         } ⎉ {
-            println!("M {} {} {}", v[i + 1], v[i + 2], outcome(&decompress(v[i + 2], &x)));
+            ≔ limit = ⎇ v[i + 3] == "-" { DEFAULT_OUTPUT_LIMIT } ⎉ { number(v[i + 3]) as usize };
+            println!("M {} {} {}", v[i + 1], v[i + 2], outcome(&decompress_limited(v[i + 2], &x, limit)));
         }
         i = i + 5 + n;
     }

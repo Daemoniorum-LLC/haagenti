@@ -35,17 +35,51 @@ pub fn compress(fmt: &str, x: &[u8], l: L) -> Vec<u8> {
     .unwrap()
 }
 
-/// The port's answer (the patched reference) and Rust's own.
-pub fn decode(fmt: &str, x: &[u8]) -> (Result<Vec<u8>>, Result<Vec<u8>>) {
+/// The port's answer (the patched reference, output bound `limit`) and Rust's own.
+pub fn decode(fmt: &str, x: &[u8], limit: usize) -> (Result<Vec<u8>>, Result<Vec<u8>>) {
     match fmt {
         "deflate" => {
             let (mut a, mut b) = (Vec::new(), Vec::new());
-            let pa = port_inflate::inflate(x, &mut a).map(|_| a);
+            let pa = port_inflate::inflate(x, &mut a, limit).map(|_| a);
             let rb = haagenti_deflate::inflate(x, &mut b).map(|_| b);
             (pa, rb)
         }
-        "zlib" => (port_wrap::zlib_decompress(x), haagenti_deflate::zlib_decompress(x)),
-        _ => (port_wrap::gzip_decompress(x), haagenti_deflate::gzip_decompress(x)),
+        "zlib" => (port_wrap::zlib_decompress(x, limit), haagenti_deflate::zlib_decompress(x)),
+        _ => (port_wrap::gzip_decompress(x, limit), haagenti_deflate::gzip_decompress(x)),
+    }
+}
+
+/// The stable reason tag of an error (spec §3.3, R4), from Rust's message where Rust has only one.
+pub fn tag(e: &Error) -> &'static str {
+    match e {
+        Error::CorruptedData { message, .. } => match message.as_str() {
+            "invalid block type 3" | "stored block length mismatch" => "block_type",
+            "invalid code count" | "repeat at start" | "repeat overflow" | "zero repeat overflow"
+            | "long zero repeat overflow" | "invalid huffman code" | "empty code lengths"
+            | "invalid literal/length code" | "invalid code length symbol" => "huffman",
+            "invalid distance code" | "distance beyond output" | "invalid distance" => "distance",
+            "zlib data too short" | "gzip data too short" | "gzip data truncated" => "truncated",
+            "unsupported compression method" | "invalid window size" | "zlib header checksum failed"
+            | "preset dictionary not supported" => "header",
+            "invalid gzip magic" => "magic",
+            "zlib checksum mismatch" => "adler",
+            "gzip CRC mismatch" => "crc",
+            "gzip size mismatch" => "isize",
+            "trailing data after the deflate stream" => "trailing",
+            "a second gzip member: members are not supported" => "multi_member",
+            m if m == "x y" || m.ends_with(" at offset 17") => "corrupted",
+            m => panic!("no reason tag for the message {m:?}: add it to spec §3.3 and here"),
+        },
+        Error::BufferTooSmall { .. } => "output_limit",
+        Error::InvalidLevel { .. } => "level",
+        Error::InvalidDictionary(_) => "dictionary",
+        Error::ChecksumMismatch { .. } => "checksum",
+        Error::UnexpectedEof { .. } => "truncated",
+        Error::AllocationFailed { .. } => "allocation",
+        Error::Algorithm { .. } => "algorithm",
+        Error::InvalidState { .. } => "state",
+        Error::Unsupported(_) => "unsupported",
+        Error::Io(_) => panic!("Io is not ported (R5)"),
     }
 }
 
@@ -85,24 +119,34 @@ fn digest(x: &[u8]) -> String {
     }
 }
 
+/// "ok len crc", or "err <category> <reason>" (R4: never the message).
 pub fn outcome(r: &Result<Vec<u8>>) -> String {
     match r {
         Ok(x) => format!("ok {}", sum(x)),
-        Err(e) => format!("err {} {}", e.category(), e),
+        Err(e) => format!("err {} {}", e.category(), tag(e)),
     }
 }
 
-fn is_eof(r: &Result<Vec<u8>>) -> bool {
-    matches!(r, Err(Error::UnexpectedEof { .. }))
+/// The ruling a port answer departs from Rust's under, if one may: D1 (Rust's early end), R3
+/// (trailing bytes, a second member) or B4 (the bound).
+fn departure(port: &Result<Vec<u8>>, rust: &Result<Vec<u8>>) -> Option<&'static str> {
+    if let Err(e) = port {
+        match tag(e) {
+            "trailing" | "multi_member" => return Some("R3"),
+            "output_limit" => return Some("B4"),
+            _ => {}
+        }
+    }
+    matches!(rust, Err(Error::UnexpectedEof { .. })).then_some("D1")
 }
 
-/// The port's answer, checked against Rust's off D1. Logs every D1 row.
-fn judged(name: &str, fmt: &str, x: &[u8], d1: &mut Vec<String>) -> String {
-    let (port, rust) = decode(fmt, x);
+/// The port's answer, checked against Rust's; each departure is logged with its ruling.
+fn judged(name: &str, fmt: &str, x: &[u8], limit: usize, log: &mut Vec<String>) -> String {
+    let (port, rust) = decode(fmt, x, limit);
     let (p, r) = (outcome(&port), outcome(&rust));
     if p != r {
-        assert!(is_eof(&rust), "{name}: the reference departs from Rust off D1: port {p}, rust {r}");
-        d1.push(format!("{name} {fmt}: rust {r} | port {p}"));
+        let why = departure(&port, &rust).unwrap_or_else(|| panic!("{name}: the reference departs from Rust unruled: port {p}, rust {r}"));
+        log.push(format!("{why} {name} {fmt}: rust {r} | port {p}"));
     }
     p
 }
@@ -131,33 +175,58 @@ fn tdata() -> Vec<Vec<String>> {
     rows
 }
 
-/// Inputs whose last three bytes match earlier with nothing longer: Rust's lazy step reads past the
-/// end (spec §6 D8). Built the same way in tests/consumer/src/corpus.sg.
-fn d8_inputs() -> Vec<(&'static str, Vec<u8>)> {
+/// The E rows' inputs (spec §6 D8 = R1). `r1_127`'s last three bytes repeat an earlier trigram with
+/// nothing longer, so Rust's lazy step reads past the end; `r1_128` is it plus one byte, where Rust
+/// does not panic. Built the same way in tests/consumer/src/corpus.sg.
+fn r1_inputs() -> Vec<(&'static str, Vec<u8>)> {
+    let mut r127: Vec<u8> = (0u8..124).collect();
+    r127.extend([1u8, 2, 3]);
+    let mut r128 = r127.clone();
+    r128.push(0xff);
     let mut a = vec![255u8];
     a.extend(0u8..97);
     a.extend([0u8, 1, 2]);
     let mut b = corpus::random(997);
     b.extend_from_slice(&b[500..503].to_vec());
-    vec![("d8_short", a), ("d8_random", b)]
+    vec![("r1_127", r127), ("r1_128", r128), ("d8_short", a), ("d8_random", b)]
 }
 
-fn main() {
-    let check = std::env::args().any(|a| a == "--check");
-    let text = corpus::text(16384);
-    let packed = flate2("gzip", &text, 9);
-    let mut out = emit::Out::new(check);
-    let mut d1 = Vec::new();
-    let (mut c, mut r, mut f, mut m, mut v) = (vec![], vec![], vec![], vec![], vec![]);
-    let mut fdata = vec![];
-    for (name, x) in corpus::named(&packed) {
+/// E rows: the port's bytes where Rust panics (the R1 patch's), and Rust's own where it does not.
+fn e_rows(log: &mut Vec<String>) -> Vec<String> {
+    let mut e = vec![];
+    std::panic::set_hook(Box::new(|_| {})); // R1's panics are expected; each is asserted below
+    for (name, x) in r1_inputs() {
+        for (ln, l) in [("default", L::Default), ("best", L::Best), ("c0", L::Custom(0))] {
+            let rust = std::panic::catch_unwind(|| haagenti_deflate::deflate(&x, l).unwrap());
+            let y = port_deflate::deflate(&x, l);
+            match rust {
+                Ok(z) => assert!(name == "r1_128" && z == y, "{name}: Rust should panic, or match the patch"),
+                Err(_) => assert!(name != "r1_128", "Rust's deflate of r1_128 should not panic"),
+            }
+            assert_eq!(flate2_decodes("deflate", &y), x, "flate2 decodes the port's {name}");
+            e.push(format!("E {name} deflate {ln} {}", digest(&y)));
+            let p = judged(&format!("E {name}"), "deflate", &y, port_inflate::DEFAULT_LIMIT, log);
+            assert_eq!(p, format!("ok {}", sum(&x)), "the port's round trip of {name}");
+            e.push(format!("E {name} roundtrip {ln} {}", sum(&x)));
+        }
+    }
+    let _ = std::panic::take_hook();
+    e
+}
+
+/// C, R and F rows for the named corpus, and the F rows' data.
+type Rows = (Vec<String>, Vec<String>, Vec<String>, Vec<Vec<String>>);
+
+fn corpus_rows(packed: &[u8], log: &mut Vec<String>) -> Rows {
+    let (mut c, mut r, mut f, mut fdata) = (vec![], vec![], vec![], vec![]);
+    for (name, x) in corpus::named(packed) {
         for fmt in FORMATS {
             for (ln, l) in LEVELS {
                 let y = compress(fmt, &x, l);
                 assert_eq!(flate2_decodes(fmt, &y), x, "flate2 decodes rust {name} {fmt} {ln}");
                 c.push(format!("C {name} {fmt} {ln} {}", digest(&y)));
                 if matches!(ln, "none" | "fast" | "default") {
-                    let p = judged(&format!("R {name} {ln}"), fmt, &y, &mut d1);
+                    let p = judged(&format!("R {name} {ln}"), fmt, &y, port_inflate::DEFAULT_LIMIT, log);
                     assert_eq!(p, format!("ok {}", sum(&x)), "the port's round trip of {name}");
                     r.push(format!("R {name} {fmt} {ln} {}", sum(&x)));
                 }
@@ -165,55 +234,61 @@ fn main() {
             let levels: &[u32] = if fmt == "deflate" { &[0, 1, 6, 9] } else { &[6] };
             for &lv in levels {
                 let y = flate2(fmt, &x, lv);
-                let p = judged(&format!("F {name} {lv}"), fmt, &y, &mut d1);
+                let p = judged(&format!("F {name} {lv}"), fmt, &y, port_inflate::DEFAULT_LIMIT, log);
                 assert_eq!(p, format!("ok {}", sum(&x)), "the port decodes flate2's {name} {fmt} {lv}");
                 f.push(format!("F {name} {fmt} {lv} {}", sum(&x)));
                 fdata.push(vec!["F".into(), name.to_string(), fmt.to_string(), lv.to_string(), emit::hex(&y)]);
             }
         }
     }
+    (c, r, f, fdata)
+}
+
+/// V and W rows: the volume inputs.
+fn volume_rows(log: &mut Vec<String>) -> Vec<String> {
+    let mut v = vec![];
     for (name, x) in corpus::big() {
         for (fmt, ln, l) in [("deflate", "none", L::None), ("deflate", "fast", L::Fast),
                              ("deflate", "default", L::Default), ("gzip", "default", L::Default)] {
             let y = compress(fmt, &x, l);
             assert_eq!(flate2_decodes(fmt, &y), x, "flate2 decodes rust {name} {fmt} {ln}");
             v.push(format!("V {name} {fmt} {ln} {}", digest(&y)));
-            let p = judged(&format!("V {name} {ln}"), fmt, &y, &mut d1);
+            let p = judged(&format!("V {name} {ln}"), fmt, &y, port_inflate::DEFAULT_LIMIT, log);
             assert_eq!(p, format!("ok {}", sum(&x)));
             v.push(format!("W {name} {fmt} {ln} {}", sum(&x)));
         }
     }
-    let mut e = vec![];
-    std::panic::set_hook(Box::new(|_| {})); // D8's panics are expected; each is asserted below
-    for (name, x) in d8_inputs() {
-        for (ln, l) in [("default", L::Default), ("best", L::Best), ("c0", L::Custom(0))] {
-            let rust = std::panic::catch_unwind(|| haagenti_deflate::deflate(&x, l));
-            assert!(rust.is_err(), "Rust's deflate of {name} at {ln} should panic (D8)");
-            let y = port_deflate::deflate(&x, l);
-            assert_eq!(flate2_decodes("deflate", &y), x, "flate2 decodes the port's {name}");
-            e.push(format!("E {name} deflate {ln} {}", digest(&y)));
-            e.push(format!("E {name} roundtrip {ln} {}", sum(&x)));
-        }
-    }
-    let _ = std::panic::take_hook();
-    let mut mdata = vec![];
-    for (name, fmt, x) in crafted::named().into_iter().chain(crafted::prefixes()).chain(crafted::flips()) {
-        m.push(format!("M {name} {fmt} {}", judged(&name, fmt, &x, &mut d1)));
-        mdata.push(vec!["M".into(), name, fmt.to_string(), "-".into(), emit::hex(&x)]);
+    v
+}
+
+fn main() {
+    let check = std::env::args().any(|a| a == "--check");
+    let packed = flate2("gzip", &corpus::text(16384), 9);
+    let mut out = emit::Out::new(check);
+    let mut log = Vec::new();
+    let (c, r, f, fdata) = corpus_rows(&packed, &mut log);
+    let v = volume_rows(&mut log);
+    let e = e_rows(&mut log);
+    let (mut m, mut mdata) = (vec![], vec![]);
+    for (name, fmt, x, limit) in crafted::named().into_iter().chain(crafted::prefixes()).chain(crafted::flips()) {
+        let lim = limit.unwrap_or(port_inflate::DEFAULT_LIMIT);
+        m.push(format!("M {name} {fmt} {}", judged(&name, fmt, &x, lim, &mut log)));
+        let shown = limit.map_or("-".to_string(), |l| l.to_string());
+        mdata.push(vec!["M".into(), name, fmt.to_string(), shown, emit::hex(&x)]);
     }
     out.text("c.txt", "C rows: Rust haagenti's bytes per corpus, format and level (spec §5)", &c);
     out.text("r.txt", "R rows: the port decodes Rust's bytes back to the input", &r);
     out.text("f.txt", "F rows: the port decodes flate2's output to the input", &f);
-    out.text("m.txt", "M rows: must-fail and edge inputs, the patched reference's answer", &m);
-    out.text("e.txt", "E rows: inputs where Rust's deflate panics (spec §6 D8), the port's bytes and round trip", &e);
+    out.text("m.txt", "M rows: must-fail and edge inputs, `ok len crc` or `err category reason` (R4)", &m);
+    out.text("e.txt", "E rows: R1's inputs; the port's bytes (the R1 patch's where Rust panics) and round trip", &e);
     out.text("v.txt", "V rows: Rust's bytes for the volume inputs; W rows: their round trip", &v);
     out.text("a.txt", "A rows: the Codec surface's answers, from Rust's codec types", &api::rows());
     out.text("t.txt", "T rows: Rust's #[test]s in haagenti-deflate, ported (the 3 ignored ones too)", &api::tests());
-    out.text("d1.txt", "Where Rust's answer differs from the port's (spec §6 D1): Rust UnexpectedEof, the port decodes", &d1);
+    out.text("departures.txt", "Where the port's answer differs from Rust's, and the ruling: D1, R3 or B4", &log);
     out.data("gen_packed", "the `packed` corpus input: flate2's gzip of `text` at level 9",
              &[vec!["P".into(), "packed".into(), "gzip".into(), "9".into(), emit::hex(&packed)]]);
     out.data("gen_f", "flate2's outputs the F rows decode", &fdata);
-    out.data("gen_m", "the M rows' inputs", &mdata);
+    out.data("gen_m", "the M rows' inputs; the fourth field is the output bound, `-` for the default", &mdata);
     out.data("gen_t", "the bytes Rust's interop #[test]s take from flate2 (decode) or give to it (compress)", &tdata());
     std::process::exit(out.finish());
 }

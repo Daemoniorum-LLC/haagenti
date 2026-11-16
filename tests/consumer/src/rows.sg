@@ -2,9 +2,10 @@
 //! trips. tests/run.sh compares the lines with tests/expected/{c,r,e,v}.txt.
 
 invoke haagenti·core·CompressionLevel;
-invoke haagenti·deflate·{deflate, inflate, zlib_compress, zlib_decompress, gzip_compress, gzip_decompress};
+invoke haagenti·deflate·{deflate, inflate_limited, zlib_compress, zlib_decompress_limited, gzip_compress,
+    gzip_decompress_limited, DEFAULT_OUTPUT_LIMIT};
 invoke tome·support·{digest, sum, failed};
-invoke tome·corpus·{names, corpus, d8};
+invoke tome·corpus·{names, corpus, r1};
 invoke tome·mode·{MODE_CORPUS, MODE_LEVELS};
 
 ☉ rite level(name: &str) → CompressionLevel {
@@ -32,15 +33,20 @@ rite levels() → Vec<&str> {
 }
 
 ☉ rite decompress(fmt: &str, x: &Vec<u8>) → Result<Vec<u8>, haagenti·core·Error> {
+    decompress_limited(fmt, x, DEFAULT_OUTPUT_LIMIT)
+}
+
+/// `x` decoded in `fmt`, at most `limit` bytes (B4).
+☉ rite decompress_limited(fmt: &str, x: &Vec<u8>, limit: usize) → Result<Vec<u8>, haagenti·core·Error> {
     ⎇ fmt == "deflate" {
         ≔ vary out: Vec<u8> = Vec·new();
-        ⌥ inflate(x, &Δ out) {
+        ⌥ inflate_limited(x, &Δ out, limit) {
             Ok(_) => ⤺ Ok(out),
             Err(e) => ⤺ Err(e),
         }
     }
-    ⎇ fmt == "zlib" { ⤺ zlib_decompress(x); }
-    gzip_decompress(x)
+    ⎇ fmt == "zlib" { ⤺ zlib_decompress_limited(x, limit); }
+    gzip_decompress_limited(x, limit)
 }
 
 /// Whether `word` is one of the space-separated `list`.
@@ -87,10 +93,10 @@ rite round(fmt: &str, y: &Vec<u8>) → String {
     }
 }
 
-/// The E rows: the inputs where Rust's deflate panics (spec §6 D8).
+/// The E rows: R1's inputs (spec §6 D8): Rust panics on all but `r1_128`.
 ☉ rite e_rows() {
-    ∀ name ∈ vec!["d8_short", "d8_random"] {
-        ≔ x = d8(name);
+    ∀ name ∈ vec!["r1_127", "r1_128", "d8_short", "d8_random"] {
+        ≔ x = r1(name);
         ∀ lv ∈ vec!["default", "best", "c0"] {
             ⌥ deflate(&x, level(lv)) {
                 Ok(y) => {

@@ -1,14 +1,14 @@
-//! haagenti·core·error: every way a codec refuses (spec §2.1). Rust's eleven variants; `message()`
-//! is Rust's Display text, `category()` its metric name.
+//! haagenti·core·error: every way a codec refuses (spec §2.1). Ten of Rust's eleven variants (`Io`
+//! and `source` dropped, R5). `category()` and `reason()` are what tests compare (R4); `message()` is
+//! Rust's Display text, for people.
 
 ☉ ᛈ Error {
-    CorruptedData { message: String },
+    CorruptedData { message: String, reason: String },
     BufferTooSmall { required: usize, provided: usize },
     InvalidLevel { level: i32, min: i32, max: i32 },
     InvalidDictionary { message: String },
     ChecksumMismatch { expected: u32, actual: u32 },
     UnexpectedEof { bytes_read: usize },
-    Io { message: String },
     AllocationFailed { requested_bytes: usize },
     Algorithm { algorithm: String, message: String },
     InvalidState { expected: String, actual: String },
@@ -16,14 +16,19 @@
 }
 
 ⊢ Error {
-    /// The input is corrupted or invalid.
+    /// A refusal of corrupted or invalid input, with its stable reason tag (spec §3.3).
+    ☉ rite refused(reason: &str, message: &str) → Error {
+        Error·CorruptedData { message: message.to_string(), reason: reason.to_string() }
+    }
+
+    /// The input is corrupted or invalid (Rust's maker; the reason is `corrupted`).
     ☉ rite corrupted(message: &str) → Error {
-        Error·CorruptedData { message: message.to_string() }
+        Error·refused("corrupted", message)
     }
 
     /// As `corrupted`, with "<message> at offset <offset>".
     ☉ rite corrupted_at(message: &str, offset: usize) → Error {
-        Error·CorruptedData { message: format!("{} at offset {}", message, offset) }
+        Error·refused("corrupted", &format!("{} at offset {}", message, offset))
     }
 
     ☉ rite buffer_too_small(required: usize, provided: usize) → Error {
@@ -36,10 +41,6 @@
 
     ☉ rite unexpected_eof(bytes_read: usize) → Error {
         Error·UnexpectedEof { bytes_read: bytes_read }
-    }
-
-    ☉ rite io(message: &str) → Error {
-        Error·Io { message: message.to_string() }
     }
 
     ☉ rite algorithm(algorithm: &str, message: &str) → Error {
@@ -64,7 +65,6 @@
             Error·InvalidDictionary { .. } => "invalid_dictionary",
             Error·ChecksumMismatch { .. } => "checksum_mismatch",
             Error·UnexpectedEof { .. } => "unexpected_eof",
-            Error·Io { .. } => "io_error",
             Error·AllocationFailed { .. } => "allocation_failed",
             Error·Algorithm { .. } => "algorithm_error",
             Error·InvalidState { .. } => "invalid_state",
@@ -73,10 +73,31 @@
         c.to_string()
     }
 
+    /// The stable reason tag that tests compare (spec §2.1, §3.3).
+    ☉ rite reason(&this) → String {
+        ⌥ this {
+            Error·CorruptedData { reason, .. } => reason.clone(),
+            _ => {
+                ≔ r = ⌥ this {
+                    Error·BufferTooSmall { .. } => "output_limit",
+                    Error·InvalidLevel { .. } => "level",
+                    Error·InvalidDictionary { .. } => "dictionary",
+                    Error·ChecksumMismatch { .. } => "checksum",
+                    Error·UnexpectedEof { .. } => "truncated",
+                    Error·AllocationFailed { .. } => "allocation",
+                    Error·Algorithm { .. } => "algorithm",
+                    Error·InvalidState { .. } => "state",
+                    _ => "unsupported",
+                };
+                r.to_string()
+            }
+        }
+    }
+
     /// The error as text, as Rust displays it.
     ☉ rite message(&this) → String {
         ⌥ this {
-            Error·CorruptedData { message } => format!("corrupted data: {}", message),
+            Error·CorruptedData { message, .. } => format!("corrupted data: {}", message),
             Error·BufferTooSmall { required, provided } =>
                 format!("buffer too small: need {} bytes, got {}", required, provided),
             Error·InvalidLevel { level, min, max } =>
@@ -85,7 +106,6 @@
             Error·ChecksumMismatch { expected, actual } =>
                 format!("checksum mismatch: expected 0x{:08x}, got 0x{:08x}", expected, actual),
             Error·UnexpectedEof { bytes_read } => format!("unexpected EOF after {} bytes", bytes_read),
-            Error·Io { message } => format!("I/O error: {}", message),
             Error·AllocationFailed { requested_bytes } =>
                 format!("allocation failed: could not allocate {} bytes", requested_bytes),
             Error·Algorithm { algorithm, message } => format!("{} error: {}", algorithm, message),

@@ -56,7 +56,7 @@ rite repeat(b: u8, n: usize) → Vec<u8> {
 
 /// The named corpus inputs, in row order.
 ☉ rite names() → Vec<&str> {
-    vec!["empty", "one", "all256", "run65535", "run65536", "text", "random", "packed"]
+    vec!["empty", "one", "all256", "digits", "run65535", "run65536", "text", "random", "packed"]
 }
 
 /// The corpus input `name`.
@@ -68,6 +68,7 @@ rite repeat(b: u8, n: usize) → Vec<u8> {
         ⟳ i < 256 { out.push(i as u8); i = i + 1; }
         ⤺ out;
     }
+    ⎇ name == "digits" { ⤺ bytes("123456789"); }
     ⎇ name == "run65535" { ⤺ repeat(97, 65535); }
     ⎇ name == "run65536" { ⤺ repeat(97, 65536); }
     ⎇ name == "text" { ⤺ text(16384); }
@@ -88,9 +89,17 @@ rite packed() → Vec<u8> {
     out
 }
 
-/// The inputs where Rust's lazy step reads past the end (spec §6 D8).
-☉ rite d8(name: &str) → Vec<u8> {
+/// R1's inputs (spec §6 D8): `r1_127` (bytes 0–123, then 01 02 03), `r1_128` (it plus ff), and the
+/// earlier `d8_short` and `d8_random`.
+☉ rite r1(name: &str) → Vec<u8> {
     ≔ vary out: Vec<u8> = Vec·new();
+    ⎇ name == "r1_127" || name == "r1_128" {
+        ≔ vary i: u32 = 0;
+        ⟳ i < 124 { out.push(i as u8); i = i + 1; }
+        out.push(1u8); out.push(2u8); out.push(3u8);
+        ⎇ name == "r1_128" { out.push(255u8); }
+        ⤺ out;
+    }
     ⎇ name == "d8_short" {
         out.push(255u8);
         ≔ vary i: u32 = 0;

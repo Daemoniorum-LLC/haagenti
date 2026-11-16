@@ -1,9 +1,10 @@
 //! haagenti·deflate·gzip: RFC 1952: a ten-byte header, DEFLATE, CRC-32 and ISIZE little endian
-//! (spec §3.2, §3.3). One member is read; the trailer is the input's last eight bytes (§6 D4–D6).
+//! (spec §3.2, §3.3). One member: the trailer must follow the stream at once and end the input;
+//! another member is `multi_member`, other bytes `trailing` (R3). Output stops at a bound (B4).
 
 invoke tome·core·{Error, CompressionLevel};
 invoke tome·deflate·deflate·deflate;
-invoke tome·deflate·inflate·{hz_inflate_range, hz_copy_into};
+invoke tome·deflate·inflate·{hz_inflate_range, hz_trailing, DEFAULT_OUTPUT_LIMIT};
 invoke tome·deflate·checksum·crc32;
 
 /// Push `v` little endian.
@@ -62,23 +63,27 @@ rite hz_gzip_body(input: &Vec<u8>) → Result<usize, Error> {
     Ok(pos)
 }
 
-/// The bytes of a gzip member. CRC-32 and ISIZE are checked against the input's last eight bytes.
+/// The bytes of a gzip member, at most DEFAULT_OUTPUT_LIMIT of them.
 ☉ rite gzip_decompress(input: &Vec<u8>) → Result<Vec<u8>, Error> {
-    ⎇ input.len() < 18 { ⤺ Err(Error·corrupted("gzip data too short")); }
-    ⎇ input[0] ≠ 31 || input[1] ≠ 139 { ⤺ Err(Error·corrupted("invalid gzip magic")); }
-    ⎇ input[2] ≠ 8 { ⤺ Err(Error·corrupted("unsupported compression method")); }
-    ≔ pos = hz_gzip_body(input)?;
-    ⎇ pos + 8 > input.len() { ⤺ Err(Error·corrupted("gzip data truncated")); }
-    ≔ end = input.len() - 8;
-    ≔ vary out: Vec<u8> = Vec·new();
-    hz_inflate_range(input, pos, end, &Δ out)?;
-    ⎇ hz_le32(input, end) ≠ crc32(&out) { ⤺ Err(Error·corrupted("gzip CRC mismatch")); }
-    ⎇ hz_le32(input, end + 4) ≠ ((out.len() & 4294967295) as u32) { ⤺ Err(Error·corrupted("gzip size mismatch")); }
-    Ok(out)
+    gzip_decompress_limited(input, DEFAULT_OUTPUT_LIMIT)
 }
 
-/// A gzip member's bytes into the front of `output`, a buffer of fixed size.
-☉ rite gzip_decompress_to(input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
-    ≔ out = gzip_decompress(input)?;
-    hz_copy_into(&out, output)
+/// The bytes of a gzip member, at most `limit` of them. CRC-32, then ISIZE, are checked.
+☉ rite gzip_decompress_limited(input: &Vec<u8>, limit: usize) → Result<Vec<u8>, Error> {
+    ⎇ input.len() < 18 { ⤺ Err(Error·refused("truncated", "gzip data too short")); }
+    ⎇ input[0] ≠ 31 || input[1] ≠ 139 { ⤺ Err(Error·refused("magic", "invalid gzip magic")); }
+    ⎇ input[2] ≠ 8 { ⤺ Err(Error·refused("header", "unsupported compression method")); }
+    ≔ pos = hz_gzip_body(input)?;
+    ⎇ pos + 8 > input.len() { ⤺ Err(Error·refused("truncated", "gzip data truncated")); }
+    ≔ vary out: Vec<u8> = Vec·new();
+    ≔ end = hz_inflate_range(input, pos, input.len() - 8, &Δ out, limit)?;
+    ⎇ end + 8 < input.len() {
+        ⎇ end + 10 ≤ input.len() && input[end + 8] == 31 && input[end + 9] == 139 {
+            ⤺ Err(Error·refused("multi_member", "a second gzip member: members are not supported"));
+        }
+        ⤺ Err(hz_trailing());
+    }
+    ⎇ hz_le32(input, end) ≠ crc32(&out) { ⤺ Err(Error·refused("crc", "gzip CRC mismatch")); }
+    ⎇ hz_le32(input, end + 4) ≠ ((out.len() & 4294967295) as u32) { ⤺ Err(Error·refused("isize", "gzip size mismatch")); }
+    Ok(out)
 }

@@ -1,9 +1,10 @@
 //! haagenti·deflate·zlib: RFC 1950: a two-byte header, DEFLATE, Adler-32 big endian (spec §3.2,
-//! §3.3). FDICT is refused, as Rust refuses it.
+//! §3.3). FDICT is refused, as Rust refuses it. The Adler-32 must follow the stream at once (R3).
+//! Output stops at a bound (B4).
 
 invoke tome·core·{Error, CompressionLevel};
 invoke tome·deflate·deflate·deflate;
-invoke tome·deflate·inflate·{hz_inflate_range, hz_copy_into};
+invoke tome·deflate·inflate·{hz_inflate_range, hz_trailing, DEFAULT_OUTPUT_LIMIT};
 invoke tome·deflate·checksum·adler32;
 
 /// FLEVEL, the header's compression-level hint.
@@ -38,26 +39,26 @@ rite hz_flevel(level: &CompressionLevel) → u32 {
     Ok(out)
 }
 
-/// The bytes of a zlib stream. The Adler-32 is read from the last four bytes (spec §6 D6).
+/// The bytes of a zlib stream, at most DEFAULT_OUTPUT_LIMIT of them.
 ☉ rite zlib_decompress(input: &Vec<u8>) → Result<Vec<u8>, Error> {
-    ⎇ input.len() < 6 { ⤺ Err(Error·corrupted("zlib data too short")); }
-    ≔ cmf = input[0] as u32;
-    ≔ flg = input[1] as u32;
-    ⎇ cmf & 15 ≠ 8 { ⤺ Err(Error·corrupted("unsupported compression method")); }
-    ⎇ cmf >> 4 > 7 { ⤺ Err(Error·corrupted("invalid window size")); }
-    ⎇ (cmf * 256 + flg) % 31 ≠ 0 { ⤺ Err(Error·corrupted("zlib header checksum failed")); }
-    ⎇ flg & 32 ≠ 0 { ⤺ Err(Error·corrupted("preset dictionary not supported")); }
-    ≔ end = input.len() - 4;
-    ≔ vary out: Vec<u8> = Vec·new();
-    hz_inflate_range(input, 2, end, &Δ out)?;
-    ≔ stored = ((input[end] as u32) << 24) | ((input[end + 1] as u32) << 16)
-        | ((input[end + 2] as u32) << 8) | (input[end + 3] as u32);
-    ⎇ stored ≠ adler32(&out) { ⤺ Err(Error·corrupted("zlib checksum mismatch")); }
-    Ok(out)
+    zlib_decompress_limited(input, DEFAULT_OUTPUT_LIMIT)
 }
 
-/// A zlib stream's bytes into the front of `output`, a buffer of fixed size.
-☉ rite zlib_decompress_to(input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
-    ≔ out = zlib_decompress(input)?;
-    hz_copy_into(&out, output)
+/// The bytes of a zlib stream, at most `limit` of them.
+☉ rite zlib_decompress_limited(input: &Vec<u8>, limit: usize) → Result<Vec<u8>, Error> {
+    ⎇ input.len() < 6 { ⤺ Err(Error·refused("truncated", "zlib data too short")); }
+    ≔ cmf = input[0] as u32;
+    ≔ flg = input[1] as u32;
+    ⎇ cmf & 15 ≠ 8 { ⤺ Err(Error·refused("header", "unsupported compression method")); }
+    ⎇ cmf >> 4 > 7 { ⤺ Err(Error·refused("header", "invalid window size")); }
+    ⎇ (cmf * 256 + flg) % 31 ≠ 0 { ⤺ Err(Error·refused("header", "zlib header checksum failed")); }
+    ⎇ flg & 32 ≠ 0 { ⤺ Err(Error·refused("header", "preset dictionary not supported")); }
+    ≔ end = input.len() - 4;
+    ≔ vary out: Vec<u8> = Vec·new();
+    ≔ stream_end = hz_inflate_range(input, 2, end, &Δ out, limit)?;
+    ⎇ stream_end < end { ⤺ Err(hz_trailing()); }
+    ≔ stored = ((input[end] as u32) << 24) | ((input[end + 1] as u32) << 16)
+        | ((input[end + 2] as u32) << 8) | (input[end + 3] as u32);
+    ⎇ stored ≠ adler32(&out) { ⤺ Err(Error·refused("adler", "zlib checksum mismatch")); }
+    Ok(out)
 }

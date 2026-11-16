@@ -14,12 +14,12 @@
 ☉ scroll codec_gzip;
 
 ☉ invoke tome·deflate·deflate·deflate;
-☉ invoke tome·deflate·inflate·{inflate, inflate_to};
-☉ invoke tome·deflate·zlib·{zlib_compress, zlib_decompress, zlib_decompress_to};
-☉ invoke tome·deflate·gzip·{gzip_compress, gzip_decompress, gzip_decompress_to};
+☉ invoke tome·deflate·inflate·{inflate, inflate_limited, DEFAULT_OUTPUT_LIMIT};
+☉ invoke tome·deflate·zlib·{zlib_compress, zlib_decompress, zlib_decompress_limited};
+☉ invoke tome·deflate·gzip·{gzip_compress, gzip_decompress, gzip_decompress_limited};
 ☉ invoke tome·deflate·checksum·{crc32, crc32_range, adler32};
 ☉ invoke tome·deflate·bits·{BitReader, BitWriter, reverse_bits};
 ☉ invoke tome·deflate·huffman·{HuffmanDecoder, HuffmanEncoder};
-☉ invoke tome·deflate·codec_deflate·{DeflateCodec, DeflateCompressor, DeflateDecompressor};
-☉ invoke tome·deflate·codec_zlib·{ZlibCodec, ZlibCompressor, ZlibDecompressor};
-☉ invoke tome·deflate·codec_gzip·{GzipCodec, GzipCompressor, GzipDecompressor};
+☉ invoke tome·deflate·codec_deflate·{DeflateCodec, DeflateCompressor, DeflateDecompressor, deflate_codec};
+☉ invoke tome·deflate·codec_zlib·{ZlibCodec, ZlibCompressor, ZlibDecompressor, zlib_codec};
+☉ invoke tome·deflate·codec_gzip·{GzipCodec, GzipCompressor, GzipDecompressor, gzip_codec};

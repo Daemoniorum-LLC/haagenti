@@ -1,0 +1,41 @@
+# D1 (spec §6 D1): the patch tests/oracle/src/port_inflate.rs applies to Rust's HuffmanDecoder::decode.
+# Not applied to crates/ (GAPS.md G2).
+--- a/crates/haagenti-deflate/src/huffman.rs	2026-11-16 19:20:17.476945491 +0000
++++ b/crates/haagenti-deflate/src/huffman.rs	2026-11-16 19:20:17.491593883 +0000
+@@ -151,11 +151,18 @@
+     /// Decode a symbol from a bit reader.
+     #[inline]
+     pub fn decode(&self, bits: &mut BitReader) -> Result<u16> {
+-        let peek = bits.peek(self.table_bits as usize)?;
++        // D1: peek what remains, zero-padded; a complete code there is decoded. Past the end, with
++        // the slot empty or its code longer than the bits left, the end came too early, as before.
++        let width = self.table_bits as usize;
++        let have = bits.fill_upto(width);
++        let peek = (bits.bit_buf & ((1u64 << width) - 1)) as u32;
+         let entry = self.table[peek as usize];
+         let len = (entry & 0xF) as usize;
+         let symbol = entry >> 4;
+ 
++        if have < width && (len == 0 || len > have) {
++            return Err(Error::unexpected_eof(bits.pos));
++        }
+         if len == 0 {
+             return Err(Error::corrupted("invalid huffman code"));
+         }
+@@ -209,6 +216,16 @@
+         Ok(())
+     }
+ 
++    /// D1: hold up to `n` bits, as many as remain; the bits held.
++    fn fill_upto(&mut self, n: usize) -> usize {
++        while (self.bit_count as usize) < n && self.pos < self.data.len() {
++            self.bit_buf |= (self.data[self.pos] as u64) << self.bit_count;
++            self.pos += 1;
++            self.bit_count += 8;
++        }
++        self.bit_count as usize
++    }
++
+     /// Peek at the next `n` bits without consuming them.
+     #[inline]
+     pub fn peek(&mut self, n: usize) -> Result<u32> {

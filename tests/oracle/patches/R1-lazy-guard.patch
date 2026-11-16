@@ -1,0 +1,14 @@
+# R1 (contract 0.1.1 §6; spec §6 D8): the patch tests/oracle/src/port_deflate.rs applies to Rust's
+# deflate_default. Not applied to crates/ (the Rust crate is not edited here; GAPS.md G1).
+--- a/crates/haagenti-deflate/src/deflate.rs	2026-11-16 19:20:17.476911263 +0000
++++ b/crates/haagenti-deflate/src/deflate.rs	2026-11-16 19:20:17.491406040 +0000
+@@ -218,7 +218,8 @@
+ 
+         if best_len >= MIN_MATCH {
+             // Lazy matching: check if next position has a better match
+-            if pos + 1 < input.len() && best_len < MAX_MATCH {
++            // R1: hash3(input, pos + 1) reads input[pos + 3]; guard it (was `pos + 1 < input.len()`).
++            if pos + 4 <= input.len() && best_len < MAX_MATCH {
+                 let hash = hash3(input, pos + 1);
+                 let chain_pos = hash_table[hash] as usize;
+ 

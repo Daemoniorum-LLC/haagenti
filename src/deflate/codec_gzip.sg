@@ -2,8 +2,11 @@
 
 invoke tome·core·{Error, CompressionLevel, Algorithm, Compressor, Decompressor, Codec};
 invoke tome·deflate·gzip·{gzip_compress, gzip_decompress};
-invoke tome·deflate·inflate·hz_copy_into;
-invoke tome·deflate·codec_deflate·hz_with_size;
+
+/// A GzipCodec at `level`: the generic-free maker (B2; spec §7 K9, GAPS G5).
+☉ rite gzip_codec(level: CompressionLevel) → GzipCodec {
+    GzipCodec { level: level }
+}
 
 rite hz_gzip_max(n: usize) → usize { n + (n / 65535 + 1) * 5 + 28 }
 
@@ -19,10 +22,6 @@ rite hz_gzip_max(n: usize) → usize { n + (n / 65535 + 1) * 5 + 28 }
     rite algorithm(&this) → Algorithm { Algorithm·Gzip }
     rite level(&this) → CompressionLevel { this.level }
     rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { gzip_compress(input, this.level) }
-    rite compress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
-        ≔ c = gzip_compress(input, this.level)?;
-        hz_copy_into(&c, output)
-    }
     rite max_compressed_size(&this, input_len: usize) → usize { hz_gzip_max(input_len) }
 }
 
@@ -36,13 +35,6 @@ rite hz_gzip_max(n: usize) → usize { n + (n / 65535 + 1) * 5 + 28 }
 ⊢ Decompressor each GzipDecompressor {
     rite algorithm(&this) → Algorithm { Algorithm·Gzip }
     rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { gzip_decompress(input) }
-    rite decompress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
-        ≔ d = gzip_decompress(input)?;
-        hz_copy_into(&d, output)
-    }
-    rite decompress_with_size(&this, input: &Vec<u8>, output_size: usize) → Result<Vec<u8>, Error> {
-        hz_with_size(gzip_decompress(input)?, output_size)
-    }
 }
 
 /// Gzip, both ways.
@@ -52,23 +44,12 @@ rite hz_gzip_max(n: usize) → usize { n + (n / 65535 + 1) * 5 + 28 }
     rite algorithm(&this) → Algorithm { Algorithm·Gzip }
     rite level(&this) → CompressionLevel { this.level }
     rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { gzip_compress(input, this.level) }
-    rite compress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
-        ≔ c = gzip_compress(input, this.level)?;
-        hz_copy_into(&c, output)
-    }
     rite max_compressed_size(&this, input_len: usize) → usize { hz_gzip_max(input_len) }
 }
 
 ⊢ Decompressor each GzipCodec {
     rite algorithm(&this) → Algorithm { Algorithm·Gzip }
     rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { gzip_decompress(input) }
-    rite decompress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
-        ≔ d = gzip_decompress(input)?;
-        hz_copy_into(&d, output)
-    }
-    rite decompress_with_size(&this, input: &Vec<u8>, output_size: usize) → Result<Vec<u8>, Error> {
-        hz_with_size(gzip_decompress(input)?, output_size)
-    }
 }
 
 ⊢ Codec each GzipCodec {
