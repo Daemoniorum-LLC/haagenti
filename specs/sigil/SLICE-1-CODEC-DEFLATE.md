@@ -115,10 +115,18 @@ Two departures from Rust's type, neither of them a behaviour: `Io` holds the mes
 | `inflate_to(input: &Vec<u8>, output: &Δ Vec<u8>)` | `Result<usize, Error>`, with `compress_to`'s buffer rule |
 | `zlib_compress(input, level)`, `zlib_decompress(input)`, `zlib_decompress_to(input, output)` | RFC 1950 |
 | `gzip_compress(input, level)`, `gzip_decompress(input)`, `gzip_decompress_to(input, output)` | RFC 1952 |
-| `crc32(data: &Vec<u8>) → u32`, `adler32(data: &Vec<u8>) → u32` | the checksums |
+| `crc32(data: &Vec<u8>) → u32`, `crc32_range(data, start, end)`, `adler32(data) → u32` | the checksums |
 
 `crc32` and `adler32` are private in Rust. They are public here because a gzip or zlib framer, such as
 http's `Encoder`, needs them, and because the tests check them against known vectors.
+
+The pieces are public as in Rust (`huffman`): `BitWriter`, `HuffmanEncoder` (`code(s)`, `len(s)`),
+`HuffmanDecoder` (`from_lengths`, `table_bits`, `decode`), `reverse_bits`, and the tables in
+`haagenti·deflate·tables`. `BitReader` is a cursor, not an owner: a `sigil` cannot hold a borrow, so
+each read is given the bytes (`BitReader·over(data)`, `r.read_bits(data, n)`). Beside the
+`Result`-giving reads, the hot path has `take`, `byte` and `HuffmanDecoder·next`. These give a number
+and mark an early end on the reader, which the caller tests at once (`is_short()`); `next` gives
+`HUFFMAN_INVALID` for an empty slot. They exist for wasm (§4, §7 K8).
 
 ### 3.2 Compression: the bytes
 
@@ -141,7 +149,8 @@ Rust's, byte for byte.
     candidates are walked, the walk stops at the first match of 258, and a later candidate wins only
     if it is strictly longer.
   - The lazy check probes the head of the chain for `pos + 1` only. If that match is longer than
-    `best + 1`, the byte at `pos` is written as a literal.
+    `best + 1`, the byte at `pos` is written as a literal. It is skipped when fewer than three bytes
+    follow `pos + 1`, where Rust panics (§6 D8).
   - The chain update and the skipped-position update are as in the Rust code.
 - The bit writer packs least-significant bit first. Huffman codes are written bit-reversed, and the
   last partial byte is padded with zeros.
@@ -222,7 +231,11 @@ is checked before it is read, and §5's must-fails cover each row.
 - Large inputs are never copied to slice them. zlib and gzip inflate a range of the input in place:
   the decoder takes the input with a start and an end.
 - There is no generic `≔ r: R` binding (SIGIL-1231 B2).
-- The volume rows (§5) measure the wasm heap at 1 MiB and 8 MiB.
+- No `Result` or `Option` is made per byte or per symbol. On wasm each one is an allocation that is
+  never freed (§7 K8): `inflate` makes one per block, not per symbol. No String is built a char at a
+  time either. The test consumer's hex is built as bytes and made a String once (http's GAPS D8).
+- The volume rows (§5) measure the wasm heap at 1 MiB and 8 MiB. The README gives node's peak
+  resident size per program.
 
 ## 5. The oracle and the rows
 
@@ -243,6 +256,18 @@ is checked before it is read, and §5's must-fails cover each row.
 - **F rows.** flate2's output at levels 0, 1, 6 and 9 (deflate), and at 6 (zlib and gzip), committed
   as hex. The port must decode each to the input. The `mib*` inputs are left out because their flate2
   bytes are too large to commit.
+- **E rows.** Two inputs on which Rust's `deflate` panics at every chained level (§6 D8). The port's
+  bytes come from `tests/oracle/src/port_deflate.rs`, Rust's encoder with that one guard. flate2
+  decodes them, and the round trip is checked too. The oracle checks the copy against Rust's
+  `deflate` on every C and V row.
+- **V and W rows.** `mib1` and `mib8` at deflate `None`, `Fast` and `Default` and at gzip `Default`:
+  Rust's bytes (V) and the port's round trip (W).
+- **A rows.** The Codec surface, taken from Rust's codec types:
+  - `algorithm`, `level` and `max_compressed_size`;
+  - `verify_roundtrip`;
+  - `compress_to`, `decompress_to` and `decompress_with_size` on buffers too small, exact and large;
+  - `from_level`;
+  - each `Error`'s category, recoverability and text.
 - **M rows: must-fail.**
   - The named cases of §3.3: truncation, `BTYPE 3`, bad Huffman tables, distance too far back, bad
     stored length, bad zlib CM, CINFO, FCHECK, FDICT and Adler, bad gzip magic, CM, CRC, ISIZE,
@@ -257,59 +282,14 @@ is checked before it is read, and §5's must-fails cover each row.
   `gzip_decompress` with the one change of §6 D1. The oracle checks it against Rust's `inflate` on
   every M and F row whose Rust answer is not `UnexpectedEof`, and against flate2 on every valid
   stream.
+- **Counts.** T 31, A 82, M 311, F 48, C 168, R 72, E 12, V and W 16, all in `tests/expected/`.
+  `tests/expected/d1.txt` lists the 12 R rows where Rust's own `inflate` refuses Rust's own bytes
+  (§6 D1).
 - `tests/run.sh` runs the rows on `sigil run`, AOT and wasm (qliphoth's runtime at
-  `tests/wasm-runtime.pin`). It exits 0 for PASS, 1 for FAIL and 2 for COULD-NOT-LOOK.
+  `tests/wasm-runtime.pin`). It exits 0 for PASS, 1 for FAIL and 2 for COULD-NOT-LOOK. It also runs
+  the wasm negative controls. `cargo run --release --offline -- --check` in `tests/oracle/` exits 1
+  when a committed file is not what the oracle writes.
 
-## 6. Where Rust and the RFCs disagree, and what the port does
+## 6–7. Departures and compiler limits
 
-- **D1 (follows the RFC): a Huffman code at the end of the input.**
-  - Rust's `HuffmanDecoder·decode` peeks the table's full width (`max_bits`, up to 15) and refuses
-    with `UnexpectedEof` when fewer bits remain. That happens even when the code that is there is
-    shorter and complete. So Rust refuses valid streams whose final code ends near the last byte.
-    This is the cause of the crate's three `#[ignore]`d tests (`test_inflate_repetitive`,
-    `test_deflate_fast_repetitive` and `test_roundtrip_random`). flate2 decodes each of those
-    streams.
-  - RFC 1951 defines a stream by its codes, not by look-ahead, and §5 requires decoding flate2's
-    output. So the port peeks what is there and pads the rest with zeros. When fewer than the table's
-    width remain and the slot's code is longer than the bits there, or the slot is empty, it refuses
-    with `UnexpectedEof`, as Rust does.
-  - The port differs from Rust only where Rust says `UnexpectedEof`.
-- **D2 (follows Rust): never matching position 0, and the single fixed-Huffman block.**
-  - Both are valid DEFLATE (the RFC fixes no encoder). They are kept because §5 requires Rust's
-    bytes.
-  - Neither `Best` nor `Ultra` uses dynamic Huffman, and every `Custom(n)`, `Custom(0)` included, is
-    compressed by the `Default` path. Only the zlib `FLEVEL` and gzip `XFL` differ.
-- **D3 (follows Rust): code sets are not checked.**
-  - RFC 1951 implies complete, prefix-free code sets, and zlib refuses over-subscribed and incomplete
-    ones. Rust builds them anyway: a later code overwrites the table slots of an earlier one, and an
-    empty slot is refused only when it is looked up.
-  - A missing end-of-block code is not refused when the tables are built.
-  - The port builds the same tables, so it accepts and refuses exactly the streams Rust does.
-- **D4 (follows Rust): multi-member gzip.**
-  - RFC 1952 §2.2 says a gzip file is a series of members.
-  - Rust inflates only the first member's DEFLATE stream and checks the CRC and ISIZE in the last 8
-    bytes of the whole input. Two members with different contents are therefore refused with
-    `"gzip CRC mismatch"`, and two identical members decode to the first member alone.
-  - The port does the same. Concatenating members is a later slice's question.
-- **D5 (follows Rust): gzip header checks.**
-  - `FHCRC` is skipped, not verified. The reserved `FLG` bits are not refused (RFC 1952 says a
-    decoder must refuse them). `XFL`, `OS` and `MTIME` are ignored.
-  - An unterminated `FNAME` or `FCOMMENT` runs to the end and is then refused as `"gzip data
-    truncated"`.
-- **D6 (follows Rust): trailers are read from the end of the input.** zlib takes Adler-32 from the
-  last 4 bytes and gzip takes CRC-32 and ISIZE from the last 8, not from just after the DEFLATE
-  stream. The bytes between the end of the stream and the trailer are ignored.
-- **D7 (follows Rust): the zlib `FLEVEL` bits** are written as §3.2 says and ignored when read.
-
-## 7. Compiler limits met (reported, not worked around in the compiler)
-
-- **K1.** On AOT and wasm, sigil-lang `e5b8890` does not lower a default rite of an aspect when the
-  aspect is in a dependency tome and the rite returns `Result<…>`. `sigil run` runs it. A
-  single-file program lowers it. The error is "cannot lower method `twice`: not a known function"
-  (AOT), and an unresolved call on wasm. The repro is in the PR. The port implements the two rites
-  per type (§2.3).
-- **K2.** `Vec·with_capacity` is unresolved on wasm ("1 call resolved to nothing"). The port uses
-  `Vec·new()` and single pushes (§4).
-- **K3.** `sigil run` interprets about 2×10^5 loop iterations a second. The run leg's PR mode
-  therefore leaves out `mib1`, `mib8` and the 64 KiB inputs at the chained levels. They are reported
-  as COULD-NOT-LOOK on run, never as passing.
+In `SLICE-1-DEPARTURES.md`: §6 says where Rust and the RFCs disagree and which the port follows; §7 lists the compiler limits met.
