@@ -1,0 +1,216 @@
+//! haagenti·deflate·bits: reading and writing DEFLATE's bit stream, least-significant bit first.
+//!
+//! A `BitReader` is a cursor over bytes it does not own: every read is given the bytes, and reads
+//! `data[start..end]`. So zlib and gzip read their DEFLATE stream in place, never copied (spec §4).
+//!
+//! The decoder's hot path (`take`, `byte`) gives plain numbers and marks an early end in `short`,
+//! which the caller tests: on wasm every `Result` a call gives is a heap allocation that is never
+//! freed, and a megabyte of input would make millions (spec §7 K8). `read_bits` and `read_byte`
+//! give the same answers as `Result`s.
+
+invoke tome·core·Error;
+
+/// `code`'s low `bits` bits, reversed.
+☉ rite reverse_bits(code: u32, bits: u32) → u32 {
+    ≔ vary result: u32 = 0;
+    ≔ vary c = code;
+    ≔ vary i: u32 = 0;
+    ⟳ i < bits {
+        result = (result << 1) | (c & 1);
+        c = c >> 1;
+        i = i + 1;
+    }
+    result
+}
+
+/// A cursor reading bits from `data[start..end]`.
+☉ sigil BitReader {
+    start: usize,
+    pos: usize,
+    end: usize,
+    buf: u64,
+    count: u32,
+    /// Set when a read ran past the end of the range; the read gave 0.
+    short: bool,
+}
+
+⊢ BitReader {
+    /// A reader over all of `data`.
+    ☉ rite over(data: &Vec<u8>) → BitReader {
+        BitReader { start: 0, pos: 0, end: data.len(), buf: 0, count: 0, short: nay }
+    }
+
+    /// A reader over `data[start..end]`.
+    ☉ rite range(start: usize, end: usize) → BitReader {
+        BitReader { start: start, pos: start, end: end, buf: 0, count: 0, short: nay }
+    }
+
+    /// Record a read past the end of the range.
+    ☉ rite mark_short(&Δ this) {
+        this.short = yea;
+    }
+
+    /// Whether a read ran past the end of the range.
+    ☉ rite is_short(&this) → bool {
+        this.short
+    }
+
+    /// The early end: the bytes of the range read so far, which is all of them.
+    ☉ rite eof(&this) → Error {
+        Error·unexpected_eof(this.pos - this.start)
+    }
+
+    /// Hold at least `n` bits; at the end of the range, mark `short` and give `nay`.
+    ☉ rite need(&Δ this, data: &Vec<u8>, n: u32) → bool {
+        ⟳ this.count < n {
+            ⎇ this.pos ≥ this.end {
+                this.short = yea;
+                ⤺ nay;
+            }
+            this.buf = this.buf | ((data[this.pos] as u64) << this.count);
+            this.pos = this.pos + 1;
+            this.count = this.count + 8;
+        }
+        yea
+    }
+
+    /// Hold up to `n` bits, as many as the range has; the bits held.
+    ☉ rite fill_upto(&Δ this, data: &Vec<u8>, n: u32) → u32 {
+        ⟳ this.count < n && this.pos < this.end {
+            this.buf = this.buf | ((data[this.pos] as u64) << this.count);
+            this.pos = this.pos + 1;
+            this.count = this.count + 8;
+        }
+        this.count
+    }
+
+    /// The low `n` bits held, not consumed (zero where fewer are held).
+    ☉ rite low(&this, n: u32) → u32 {
+        (this.buf & ((1u64 << n) - 1)) as u32
+    }
+
+    /// Drop `n` held bits.
+    ☉ rite consume(&Δ this, n: u32) {
+        this.buf = this.buf >> n;
+        this.count = this.count - n;
+    }
+
+    /// The next `n` bits (n ≤ 32), as a number; 0, with `short` marked, past the end.
+    ☉ rite take(&Δ this, data: &Vec<u8>, n: u32) → u32 {
+        ⎇ !this.need(data, n) { ⤺ 0; }
+        ≔ v = this.low(n);
+        this.consume(n);
+        v
+    }
+
+    /// The next `n` bits (n ≤ 32), as a number.
+    ☉ rite read_bits(&Δ this, data: &Vec<u8>, n: u32) → Result<u32, Error> {
+        ≔ v = this.take(data, n);
+        ⎇ this.short { ⤺ Err(this.eof()); }
+        Ok(v)
+    }
+
+    /// Drop the bits to the next byte boundary.
+    ☉ rite align(&Δ this) {
+        ≔ d = this.count % 8;
+        ⎇ d > 0 { this.consume(d); }
+    }
+
+    /// The next byte, after aligning; 0, with `short` marked, past the end.
+    ☉ rite byte(&Δ this, data: &Vec<u8>) → u32 {
+        this.align();
+        ⎇ this.count ≥ 8 {
+            ≔ b = (this.buf & 255) as u32;
+            this.consume(8);
+            ⤺ b;
+        }
+        ⎇ this.pos < this.end {
+            ≔ b = data[this.pos] as u32;
+            this.pos = this.pos + 1;
+            ⤺ b;
+        }
+        this.short = yea;
+        0
+    }
+
+    /// The next byte, after aligning.
+    ☉ rite read_byte(&Δ this, data: &Vec<u8>) → Result<u8, Error> {
+        ≔ b = this.byte(data);
+        ⎇ this.short { ⤺ Err(this.eof()); }
+        Ok(b as u8)
+    }
+
+    /// The next two bytes, little endian, after aligning.
+    ☉ rite read_u16(&Δ this, data: &Vec<u8>) → Result<u32, Error> {
+        ≔ lo = this.byte(data);
+        ≔ hi = this.byte(data);
+        ⎇ this.short { ⤺ Err(this.eof()); }
+        Ok(lo | (hi << 8))
+    }
+}
+
+/// Bits written least-significant first into bytes; each byte is pushed once (spec §4).
+☉ sigil BitWriter {
+    data: Vec<u8>,
+    buf: u64,
+    count: u32,
+}
+
+⊢ BitWriter {
+    ☉ rite new() → BitWriter {
+        BitWriter { data: Vec·new(), buf: 0, count: 0 }
+    }
+
+    /// The low `n` bits of `value`.
+    ☉ rite write_bits(&Δ this, value: u32, n: u32) {
+        this.buf = this.buf | ((value as u64) << this.count);
+        this.count = this.count + n;
+        ⟳ this.count ≥ 8 {
+            this.data.push((this.buf & 255) as u8);
+            this.buf = this.buf >> 8;
+            this.count = this.count - 8;
+        }
+    }
+
+    /// A Huffman code: its `len` bits, most significant first.
+    ☉ rite write_code(&Δ this, code: u32, len: u32) {
+        this.write_bits(reverse_bits(code, len), len);
+    }
+
+    /// Pad to the next byte boundary with zeros.
+    ☉ rite align(&Δ this) {
+        ⎇ this.count > 0 {
+            this.data.push((this.buf & 255) as u8);
+            this.buf = 0;
+            this.count = 0;
+        }
+    }
+
+    /// A byte, after aligning.
+    ☉ rite write_byte(&Δ this, byte: u8) {
+        this.align();
+        this.data.push(byte);
+    }
+
+    /// Bytes, after aligning.
+    ☉ rite write_bytes(&Δ this, bytes: &Vec<u8>) {
+        this.align();
+        ∀ b ∈ bytes { this.data.push(*b); }
+    }
+
+    /// The bytes written, the last padded with zeros. The writer is spent: its bytes move out.
+    ☉ rite finish(this) → Vec<u8> {
+        ≔ vary w = this;
+        w.align();
+        w.data
+    }
+
+    /// The bytes written so far, a partial byte counted.
+    ☉ rite len(&this) → usize {
+        this.data.len() + ⎇ this.count > 0 { 1 } ⎉ { 0 }
+    }
+
+    ☉ rite is_empty(&this) → bool {
+        this.data.len() == 0 && this.count == 0
+    }
+}

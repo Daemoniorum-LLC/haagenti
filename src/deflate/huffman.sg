@@ -1,0 +1,132 @@
+//! haagenti·deflate·huffman: canonical Huffman codes (RFC 1951 §3.2.2), decoded by one table lookup.
+
+invoke tome·core·Error;
+invoke tome·deflate·bits·{BitReader, reverse_bits};
+invoke tome·deflate·tables·MAX_BITS;
+
+/// What `HuffmanDecoder·next` gives for an empty slot: no symbol is this large.
+☉ ◆ HUFFMAN_INVALID: u32 = 65536;
+
+/// How many codes have each length 0..=15, and the first code of each length (§3.2.2 steps 1–2).
+rite hz_first_codes(lengths: &Vec<u8>, top: u32) → Vec<u32> {
+    ≔ vary count: Vec<u32> = vec![0u32; 16];
+    ∀ bl ∈ lengths {
+        ⎇ *bl > 0 { count[*bl as usize] = count[*bl as usize] + 1; }
+    }
+    ≔ vary next: Vec<u32> = vec![0u32; 16];
+    ≔ vary code: u32 = 0;
+    ≔ vary bits: usize = 1;
+    ⟳ bits ≤ top as usize {
+        code = (code + count[bits - 1]) << 1;
+        next[bits] = code;
+        bits = bits + 1;
+    }
+    next
+}
+
+/// A decoding table: slot (the next `table_bits` bits) → symbol << 4 | code length; 0 is empty.
+☉ sigil HuffmanDecoder {
+    table: Vec<u32>,
+    table_bits: u32,
+}
+
+⊢ HuffmanDecoder {
+    /// The decoder for these code lengths. Over-subscribed and incomplete sets are built as they
+    /// come: a later code overwrites an earlier one's slots (spec §6 D3). All zeros give two empty
+    /// slots.
+    ☉ rite from_lengths(lengths: &Vec<u8>) → Result<HuffmanDecoder, Error> {
+        ⎇ lengths.len() == 0 { ⤺ Err(Error·corrupted("empty code lengths")); }
+        ≔ vary max: u32 = 0;
+        ∀ bl ∈ lengths {
+            ⎇ (*bl as u32) > max { max = *bl as u32; }
+        }
+        ⎇ max == 0 { ⤺ Ok(HuffmanDecoder { table: vec![0u32; 2], table_bits: 1 }); }
+        ≔ vary next = hz_first_codes(lengths, max);
+        ≔ size: usize = 1usize << max;
+        ≔ vary table: Vec<u32> = vec![0u32; size];
+        ≔ vary sym: usize = 0;
+        ⟳ sym < lengths.len() {
+            ≔ bl = lengths[sym] as u32;
+            ⎇ bl > 0 {
+                ≔ code = next[bl as usize];
+                next[bl as usize] = code + 1;
+                ≔ rev = reverse_bits(code, bl) as usize;
+                ≔ entry = ((sym as u32) << 4) | bl;
+                ≔ fill: usize = 1usize << (max - bl);
+                ≔ vary i: usize = 0;
+                ⟳ i < fill {
+                    ≔ at = rev | (i << bl);
+                    ⎇ at < size { table[at] = entry; }
+                    i = i + 1;
+                }
+            }
+            sym = sym + 1;
+        }
+        Ok(HuffmanDecoder { table: table, table_bits: max })
+    }
+
+    /// The bits a lookup reads: the longest code's length.
+    ☉ rite table_bits(&this) → u32 {
+        this.table_bits
+    }
+
+    /// The next symbol, or `HUFFMAN_INVALID` for an empty slot. With the table's width held, as
+    /// Rust. With fewer bits left, the zero-padded slot is taken only when its code is complete
+    /// within them; otherwise the end came too early: `r.short` is marked and 0 given (spec §6 D1).
+    /// A number, not a `Result`, for wasm's sake (spec §7 K8).
+    ☉ rite next(&this, r: &Δ BitReader, data: &Vec<u8>) → u32 {
+        ≔ width = this.table_bits;
+        ≔ have = r.fill_upto(data, width);
+        ≔ entry = this.table[r.low(width) as usize];
+        ≔ bl = entry & 15;
+        ⎇ have < width && (bl == 0 || bl > have) {
+            r.mark_short();
+            ⤺ 0;
+        }
+        ⎇ bl == 0 { ⤺ HUFFMAN_INVALID; }
+        r.consume(bl);
+        entry >> 4
+    }
+
+    /// The next symbol, as a `Result`: `next`'s answers, with Rust's errors.
+    ☉ rite decode(&this, r: &Δ BitReader, data: &Vec<u8>) → Result<u32, Error> {
+        ≔ sym = this.next(r, data);
+        ⎇ r.is_short() { ⤺ Err(r.eof()); }
+        ⎇ sym == HUFFMAN_INVALID { ⤺ Err(Error·corrupted("invalid huffman code")); }
+        Ok(sym)
+    }
+}
+
+/// An encoding table: each symbol's code and length.
+☉ sigil HuffmanEncoder {
+    codes: Vec<u32>,
+    lengths: Vec<u8>,
+}
+
+⊢ HuffmanEncoder {
+    /// The encoder for these code lengths (§3.2.2 step 3).
+    ☉ rite from_lengths(lengths: &Vec<u8>) → HuffmanEncoder {
+        ≔ vary next = hz_first_codes(lengths, MAX_BITS);
+        ≔ vary codes: Vec<u32> = vec![0u32; lengths.len()];
+        ≔ vary sym: usize = 0;
+        ⟳ sym < lengths.len() {
+            ≔ bl = lengths[sym] as usize;
+            ⎇ bl > 0 {
+                codes[sym] = next[bl];
+                next[bl] = next[bl] + 1;
+            }
+            sym = sym + 1;
+        }
+        HuffmanEncoder { codes: codes, lengths: lengths.clone() }
+    }
+
+    /// `symbol`'s code.
+    ☉ rite code(&this, symbol: usize) → u32 {
+        this.codes[symbol]
+    }
+
+    /// `symbol`'s code length.
+    ☉ rite len(&this, symbol: usize) → u32 {
+        this.lengths[symbol] as u32
+    }
+}

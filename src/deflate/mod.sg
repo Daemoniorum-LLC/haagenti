@@ -1,0 +1,25 @@
+//! haagenti·deflate: RFC 1951 DEFLATE, RFC 1950 zlib and RFC 1952 gzip (spec §3), pure Sigil.
+
+☉ scroll tables;
+☉ scroll bits;
+☉ scroll huffman;
+☉ scroll inflate;
+☉ scroll lz77;
+☉ scroll deflate;
+☉ scroll checksum;
+☉ scroll zlib;
+☉ scroll gzip;
+☉ scroll codec_deflate;
+☉ scroll codec_zlib;
+☉ scroll codec_gzip;
+
+☉ invoke tome·deflate·deflate·deflate;
+☉ invoke tome·deflate·inflate·{inflate, inflate_to};
+☉ invoke tome·deflate·zlib·{zlib_compress, zlib_decompress, zlib_decompress_to};
+☉ invoke tome·deflate·gzip·{gzip_compress, gzip_decompress, gzip_decompress_to};
+☉ invoke tome·deflate·checksum·{crc32, crc32_range, adler32};
+☉ invoke tome·deflate·bits·{BitReader, BitWriter, reverse_bits};
+☉ invoke tome·deflate·huffman·{HuffmanDecoder, HuffmanEncoder};
+☉ invoke tome·deflate·codec_deflate·{DeflateCodec, DeflateCompressor, DeflateDecompressor};
+☉ invoke tome·deflate·codec_zlib·{ZlibCodec, ZlibCompressor, ZlibDecompressor};
+☉ invoke tome·deflate·codec_gzip·{GzipCodec, GzipCompressor, GzipDecompressor};

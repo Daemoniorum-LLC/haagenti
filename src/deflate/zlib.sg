@@ -1,0 +1,63 @@
+//! haagenti·deflate·zlib: RFC 1950: a two-byte header, DEFLATE, Adler-32 big endian (spec §3.2,
+//! §3.3). FDICT is refused, as Rust refuses it.
+
+invoke tome·core·{Error, CompressionLevel};
+invoke tome·deflate·deflate·deflate;
+invoke tome·deflate·inflate·{hz_inflate_range, hz_copy_into};
+invoke tome·deflate·checksum·adler32;
+
+/// FLEVEL, the header's compression-level hint.
+rite hz_flevel(level: &CompressionLevel) → u32 {
+    ⌥ level {
+        CompressionLevel·None => 0,
+        CompressionLevel·Fast => 1,
+        CompressionLevel·Default => 2,
+        CompressionLevel·Best => 3,
+        CompressionLevel·Ultra => 3,
+        CompressionLevel·Custom(n) => ⎇ *n ≤ 1 { 0 } ⎉ ⎇ *n ≤ 4 { 1 } ⎉ ⎇ *n ≤ 6 { 2 } ⎉ { 3 },
+    }
+}
+
+/// `input` in a zlib stream at `level`.
+☉ rite zlib_compress(input: &Vec<u8>, level: CompressionLevel) → Result<Vec<u8>, Error> {
+    ≔ flevel = hz_flevel(&level);
+    ≔ body = deflate(input, level)?;
+    ≔ cmf: u32 = 120;
+    ≔ flg_base = flevel << 6;
+    ≔ check = (cmf * 256 + flg_base) % 31;
+    ≔ fcheck = ⎇ check == 0 { 0 } ⎉ { 31 - check };
+    ≔ adler = adler32(input);
+    ≔ vary out: Vec<u8> = Vec·new();
+    out.push(cmf as u8);
+    out.push((flg_base | fcheck) as u8);
+    ∀ b ∈ &body { out.push(*b); }
+    out.push((adler >> 24) as u8);
+    out.push(((adler >> 16) & 255) as u8);
+    out.push(((adler >> 8) & 255) as u8);
+    out.push((adler & 255) as u8);
+    Ok(out)
+}
+
+/// The bytes of a zlib stream. The Adler-32 is read from the last four bytes (spec §6 D6).
+☉ rite zlib_decompress(input: &Vec<u8>) → Result<Vec<u8>, Error> {
+    ⎇ input.len() < 6 { ⤺ Err(Error·corrupted("zlib data too short")); }
+    ≔ cmf = input[0] as u32;
+    ≔ flg = input[1] as u32;
+    ⎇ cmf & 15 ≠ 8 { ⤺ Err(Error·corrupted("unsupported compression method")); }
+    ⎇ cmf >> 4 > 7 { ⤺ Err(Error·corrupted("invalid window size")); }
+    ⎇ (cmf * 256 + flg) % 31 ≠ 0 { ⤺ Err(Error·corrupted("zlib header checksum failed")); }
+    ⎇ flg & 32 ≠ 0 { ⤺ Err(Error·corrupted("preset dictionary not supported")); }
+    ≔ end = input.len() - 4;
+    ≔ vary out: Vec<u8> = Vec·new();
+    hz_inflate_range(input, 2, end, &Δ out)?;
+    ≔ stored = ((input[end] as u32) << 24) | ((input[end + 1] as u32) << 16)
+        | ((input[end + 2] as u32) << 8) | (input[end + 3] as u32);
+    ⎇ stored ≠ adler32(&out) { ⤺ Err(Error·corrupted("zlib checksum mismatch")); }
+    Ok(out)
+}
+
+/// A zlib stream's bytes into the front of `output`, a buffer of fixed size.
+☉ rite zlib_decompress_to(input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
+    ≔ out = zlib_decompress(input)?;
+    hz_copy_into(&out, output)
+}

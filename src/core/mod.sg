@@ -1,0 +1,10 @@
+//! haagenti·core: what every codec shares (spec §2): the error, the levels and algorithms, and the
+//! Compressor, Decompressor and Codec aspects.
+
+☉ scroll error;
+☉ scroll level;
+☉ scroll aspects;
+
+☉ invoke tome·core·error·Error;
+☉ invoke tome·core·level·{CompressionLevel, Algorithm};
+☉ invoke tome·core·aspects·{Compressor, Decompressor, Codec};

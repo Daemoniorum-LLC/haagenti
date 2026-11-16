@@ -1,0 +1,97 @@
+//! haagenti·core·error: every way a codec refuses (spec §2.1). Rust's eleven variants; `message()`
+//! is Rust's Display text, `category()` its metric name.
+
+☉ ᛈ Error {
+    CorruptedData { message: String },
+    BufferTooSmall { required: usize, provided: usize },
+    InvalidLevel { level: i32, min: i32, max: i32 },
+    InvalidDictionary { message: String },
+    ChecksumMismatch { expected: u32, actual: u32 },
+    UnexpectedEof { bytes_read: usize },
+    Io { message: String },
+    AllocationFailed { requested_bytes: usize },
+    Algorithm { algorithm: String, message: String },
+    InvalidState { expected: String, actual: String },
+    Unsupported { message: String },
+}
+
+⊢ Error {
+    /// The input is corrupted or invalid.
+    ☉ rite corrupted(message: &str) → Error {
+        Error·CorruptedData { message: message.to_string() }
+    }
+
+    /// As `corrupted`, with "<message> at offset <offset>".
+    ☉ rite corrupted_at(message: &str, offset: usize) → Error {
+        Error·CorruptedData { message: format!("{} at offset {}", message, offset) }
+    }
+
+    ☉ rite buffer_too_small(required: usize, provided: usize) → Error {
+        Error·BufferTooSmall { required: required, provided: provided }
+    }
+
+    ☉ rite checksum_mismatch(expected: u32, actual: u32) → Error {
+        Error·ChecksumMismatch { expected: expected, actual: actual }
+    }
+
+    ☉ rite unexpected_eof(bytes_read: usize) → Error {
+        Error·UnexpectedEof { bytes_read: bytes_read }
+    }
+
+    ☉ rite io(message: &str) → Error {
+        Error·Io { message: message.to_string() }
+    }
+
+    ☉ rite algorithm(algorithm: &str, message: &str) → Error {
+        Error·Algorithm { algorithm: algorithm.to_string(), message: message.to_string() }
+    }
+
+    /// Whether a retry with other parameters can succeed: an early end or a small buffer.
+    ☉ rite is_recoverable(&this) → bool {
+        ⌥ this {
+            Error·UnexpectedEof { .. } => yea,
+            Error·BufferTooSmall { .. } => yea,
+            _ => nay,
+        }
+    }
+
+    /// The error's category, for metrics.
+    ☉ rite category(&this) → String {
+        ≔ c = ⌥ this {
+            Error·CorruptedData { .. } => "corrupted_data",
+            Error·BufferTooSmall { .. } => "buffer_too_small",
+            Error·InvalidLevel { .. } => "invalid_level",
+            Error·InvalidDictionary { .. } => "invalid_dictionary",
+            Error·ChecksumMismatch { .. } => "checksum_mismatch",
+            Error·UnexpectedEof { .. } => "unexpected_eof",
+            Error·Io { .. } => "io_error",
+            Error·AllocationFailed { .. } => "allocation_failed",
+            Error·Algorithm { .. } => "algorithm_error",
+            Error·InvalidState { .. } => "invalid_state",
+            Error·Unsupported { .. } => "unsupported",
+        };
+        c.to_string()
+    }
+
+    /// The error as text, as Rust displays it.
+    ☉ rite message(&this) → String {
+        ⌥ this {
+            Error·CorruptedData { message } => format!("corrupted data: {}", message),
+            Error·BufferTooSmall { required, provided } =>
+                format!("buffer too small: need {} bytes, got {}", required, provided),
+            Error·InvalidLevel { level, min, max } =>
+                format!("invalid compression level {}: must be in range [{}, {}]", level, min, max),
+            Error·InvalidDictionary { message } => format!("invalid dictionary: {}", message),
+            Error·ChecksumMismatch { expected, actual } =>
+                format!("checksum mismatch: expected 0x{:08x}, got 0x{:08x}", expected, actual),
+            Error·UnexpectedEof { bytes_read } => format!("unexpected EOF after {} bytes", bytes_read),
+            Error·Io { message } => format!("I/O error: {}", message),
+            Error·AllocationFailed { requested_bytes } =>
+                format!("allocation failed: could not allocate {} bytes", requested_bytes),
+            Error·Algorithm { algorithm, message } => format!("{} error: {}", algorithm, message),
+            Error·InvalidState { expected, actual } =>
+                format!("invalid state: expected {}, got {}", expected, actual),
+            Error·Unsupported { message } => format!("unsupported: {}", message),
+        }
+    }
+}

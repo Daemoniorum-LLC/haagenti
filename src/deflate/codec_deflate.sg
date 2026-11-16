@@ -1,0 +1,94 @@
+//! haagenti·deflate·codec_deflate: the raw DEFLATE codec types (spec §3.4). codec_zlib.sg and
+//! codec_gzip.sg are the same shape over their framing.
+
+invoke tome·core·{Error, CompressionLevel, Algorithm, Compressor, Decompressor, Codec};
+invoke tome·deflate·deflate·deflate;
+invoke tome·deflate·inflate·{inflate, hz_copy_into};
+
+/// The decompressed bytes when there are at most `size`; BufferTooSmall otherwise (spec §2.3).
+☉ rite hz_with_size(out: Vec<u8>, size: usize) → Result<Vec<u8>, Error> {
+    ⎇ out.len() > size { ⤺ Err(Error·buffer_too_small(out.len(), size)); }
+    Ok(out)
+}
+
+rite hz_deflate_bytes(input: &Vec<u8>) → Result<Vec<u8>, Error> {
+    ≔ vary out: Vec<u8> = Vec·new();
+    inflate(input, &Δ out)?;
+    Ok(out)
+}
+
+rite hz_deflate_max(n: usize) → usize { n + (n / 65535 + 1) * 5 + 10 }
+
+/// Raw DEFLATE compression.
+☉ sigil DeflateCompressor { level: CompressionLevel }
+
+⊢ DeflateCompressor {
+    ☉ rite new() → DeflateCompressor { DeflateCompressor { level: CompressionLevel·Default } }
+    ☉ rite with_level(level: CompressionLevel) → DeflateCompressor { DeflateCompressor { level: level } }
+}
+
+⊢ Compressor each DeflateCompressor {
+    rite algorithm(&this) → Algorithm { Algorithm·Deflate }
+    rite level(&this) → CompressionLevel { this.level }
+    rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { deflate(input, this.level) }
+    rite compress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
+        ≔ c = deflate(input, this.level)?;
+        hz_copy_into(&c, output)
+    }
+    rite max_compressed_size(&this, input_len: usize) → usize { hz_deflate_max(input_len) }
+}
+
+/// Raw DEFLATE decompression.
+☉ sigil DeflateDecompressor { unit: u8 }
+
+⊢ DeflateDecompressor {
+    ☉ rite new() → DeflateDecompressor { DeflateDecompressor { unit: 0 } }
+}
+
+⊢ Decompressor each DeflateDecompressor {
+    rite algorithm(&this) → Algorithm { Algorithm·Deflate }
+    rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { hz_deflate_bytes(input) }
+    rite decompress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
+        ≔ d = hz_deflate_bytes(input)?;
+        hz_copy_into(&d, output)
+    }
+    rite decompress_with_size(&this, input: &Vec<u8>, output_size: usize) → Result<Vec<u8>, Error> {
+        hz_with_size(hz_deflate_bytes(input)?, output_size)
+    }
+}
+
+/// Raw DEFLATE, both ways.
+☉ sigil DeflateCodec { level: CompressionLevel }
+
+⊢ Compressor each DeflateCodec {
+    rite algorithm(&this) → Algorithm { Algorithm·Deflate }
+    rite level(&this) → CompressionLevel { this.level }
+    rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { deflate(input, this.level) }
+    rite compress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
+        ≔ c = deflate(input, this.level)?;
+        hz_copy_into(&c, output)
+    }
+    rite max_compressed_size(&this, input_len: usize) → usize { hz_deflate_max(input_len) }
+}
+
+⊢ Decompressor each DeflateCodec {
+    rite algorithm(&this) → Algorithm { Algorithm·Deflate }
+    rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { hz_deflate_bytes(input) }
+    rite decompress_to(&this, input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
+        ≔ d = hz_deflate_bytes(input)?;
+        hz_copy_into(&d, output)
+    }
+    rite decompress_with_size(&this, input: &Vec<u8>, output_size: usize) → Result<Vec<u8>, Error> {
+        hz_with_size(hz_deflate_bytes(input)?, output_size)
+    }
+}
+
+⊢ Codec each DeflateCodec {
+    rite new() → DeflateCodec { DeflateCodec { level: CompressionLevel·Default } }
+    rite with_level(level: CompressionLevel) → DeflateCodec { DeflateCodec { level: level } }
+    rite verify_roundtrip(&this, data: &Vec<u8>) → Result<bool, Error> {
+        ≔ c = deflate(data, this.level)?;
+        ≔ d = hz_deflate_bytes(&c)?;
+        Ok(d == *data)
+    }
+}

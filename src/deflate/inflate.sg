@@ -1,0 +1,163 @@
+//! haagenti·deflate·inflate: RFC 1951 decompression: stored, fixed and dynamic Huffman blocks
+//! (spec §3.3). Every refusal is Rust's, word for word; the one departure is the decoder's (§6 D1).
+//! Per byte and per symbol the reader gives numbers and marks an early end, tested at once; a
+//! `Result` is made per block, not per symbol (spec §7 K8).
+
+invoke tome·core·Error;
+invoke tome·deflate·bits·BitReader;
+invoke tome·deflate·huffman·{HuffmanDecoder, HUFFMAN_INVALID};
+invoke tome·deflate·tables·{fixed_lit_lengths, fixed_dist_lengths, cl_code_order, length_base,
+    length_extra_bits, distance_base, distance_extra_bits};
+
+/// Inflate `input`, appending the bytes to `output`. Bytes after the final block are ignored.
+☉ rite inflate(input: &Vec<u8>, output: &Δ Vec<u8>) → Result<(), Error> {
+    hz_inflate_range(input, 0, input.len(), output)
+}
+
+/// Inflate `input` into the front of `output`, a buffer of fixed size; the bytes written, or
+/// BufferTooSmall with `output` unchanged.
+☉ rite inflate_to(input: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
+    ≔ vary out: Vec<u8> = Vec·new();
+    hz_inflate_range(input, 0, input.len(), &Δ out)?;
+    hz_copy_into(&out, output)
+}
+
+/// Copy `result` into the front of `output`, a buffer of fixed size (spec §2.3).
+☉ rite hz_copy_into(result: &Vec<u8>, output: &Δ Vec<u8>) → Result<usize, Error> {
+    ⎇ result.len() > output.len() { ⤺ Err(Error·buffer_too_small(result.len(), output.len())); }
+    ≔ vary i: usize = 0;
+    ⟳ i < result.len() {
+        output[i] = result[i];
+        i = i + 1;
+    }
+    Ok(result.len())
+}
+
+/// Inflate `data[start..end]`, in place: zlib and gzip never copy their stream out (spec §4).
+☉ rite hz_inflate_range(data: &Vec<u8>, start: usize, end: usize, output: &Δ Vec<u8>) → Result<(), Error> {
+    ≔ vary r = BitReader·range(start, end);
+    forever {
+        ≔ last = r.read_bits(data, 1)? == 1;
+        ≔ btype = r.read_bits(data, 2)?;
+        ⎇ btype == 0 {
+            hz_stored(&Δ r, data, output)?;
+        } ⎉ ⎇ btype == 1 {
+            ≔ lit = HuffmanDecoder·from_lengths(&fixed_lit_lengths())?;
+            ≔ dist = HuffmanDecoder·from_lengths(&fixed_dist_lengths())?;
+            hz_block(&Δ r, data, output, &lit, &dist)?;
+        } ⎉ ⎇ btype == 2 {
+            hz_dynamic(&Δ r, data, output)?;
+        } ⎉ {
+            ⤺ Err(Error·corrupted("invalid block type 3"));
+        }
+        ⎇ last { ⤺ Ok(()); }
+    }
+}
+
+/// A stored block: LEN, NLEN, then LEN raw bytes.
+rite hz_stored(r: &Δ BitReader, data: &Vec<u8>, output: &Δ Vec<u8>) → Result<(), Error> {
+    r.align();
+    ≔ len = r.read_u16(data)?;
+    ≔ nlen = r.read_u16(data)?;
+    ⎇ len ≠ (nlen ^ 65535) { ⤺ Err(Error·corrupted("stored block length mismatch")); }
+    ≔ vary i: u32 = 0;
+    ⟳ i < len {
+        ≔ b = r.byte(data);
+        ⎇ r.is_short() { ⤺ Err(r.eof()); }
+        output.push(b as u8);
+        i = i + 1;
+    }
+    Ok(())
+}
+
+/// A dynamic block: its code lengths, then its data.
+rite hz_dynamic(r: &Δ BitReader, data: &Vec<u8>, output: &Δ Vec<u8>) → Result<(), Error> {
+    ≔ hlit = r.read_bits(data, 5)? as usize + 257;
+    ≔ hdist = r.read_bits(data, 5)? as usize + 1;
+    ≔ hclen = r.read_bits(data, 4)? as usize + 4;
+    ⎇ hlit > 286 || hdist > 30 { ⤺ Err(Error·corrupted("invalid code count")); }
+    ≔ order = cl_code_order();
+    ≔ vary cl: Vec<u8> = vec![0u8; 19];
+    ≔ vary i: usize = 0;
+    ⟳ i < hclen {
+        cl[order[i]] = r.read_bits(data, 3)? as u8;
+        i = i + 1;
+    }
+    ≔ cl_decoder = HuffmanDecoder·from_lengths(&cl)?;
+    ≔ lengths = hz_code_lengths(r, data, &cl_decoder, hlit + hdist)?;
+    ≔ vary lit_lengths: Vec<u8> = Vec·new();
+    ≔ vary dist_lengths: Vec<u8> = Vec·new();
+    ≔ vary k: usize = 0;
+    ⟳ k < lengths.len() {
+        ⎇ k < hlit { lit_lengths.push(lengths[k]); } ⎉ { dist_lengths.push(lengths[k]); }
+        k = k + 1;
+    }
+    ≔ lit = HuffmanDecoder·from_lengths(&lit_lengths)?;
+    ≔ dist = HuffmanDecoder·from_lengths(&dist_lengths)?;
+    hz_block(r, data, output, &lit, &dist)
+}
+
+/// The `n` literal/length and distance code lengths, run-length coded by `cl`.
+rite hz_code_lengths(r: &Δ BitReader, data: &Vec<u8>, cl: &HuffmanDecoder, n: usize) → Result<Vec<u8>, Error> {
+    ≔ vary lengths: Vec<u8> = vec![0u8; n];
+    ≔ vary i: usize = 0;
+    ⟳ i < n {
+        ≔ sym = cl.decode(r, data)?;
+        ⎇ sym ≤ 15 {
+            lengths[i] = sym as u8;
+            i = i + 1;
+            ↻;
+        }
+        ⎇ sym == 16 && i == 0 { ⤺ Err(Error·corrupted("repeat at start")); }
+        ≔ extra: u32 = ⎇ sym == 16 { 2 } ⎉ ⎇ sym == 17 { 3 } ⎉ { 7 };
+        ≔ count = r.read_bits(data, extra)? as usize + ⎇ sym == 18 { 11 } ⎉ { 3 };
+        ≔ value = ⎇ sym == 16 { lengths[i - 1] } ⎉ { 0u8 };
+        ≔ overflow = ⎇ sym == 16 { "repeat overflow" } ⎉ ⎇ sym == 17 { "zero repeat overflow" }
+            ⎉ { "long zero repeat overflow" };
+        ≔ vary k: usize = 0;
+        ⟳ k < count {
+            ⎇ i ≥ n { ⤺ Err(Error·corrupted(overflow)); }
+            lengths[i] = value;
+            i = i + 1;
+            k = k + 1;
+        }
+    }
+    Ok(lengths)
+}
+
+/// A Huffman block's data, to its end-of-block code. Each refusal is checked where Rust's `?` is.
+rite hz_block(r: &Δ BitReader, data: &Vec<u8>, output: &Δ Vec<u8>, lit: &HuffmanDecoder,
+              dist: &HuffmanDecoder) → Result<(), Error> {
+    ≔ lbase = length_base();
+    ≔ lextra = length_extra_bits();
+    ≔ dbase = distance_base();
+    ≔ dextra = distance_extra_bits();
+    forever {
+        ≔ sym = lit.next(r, data);
+        ⎇ r.is_short() { ⤺ Err(r.eof()); }
+        ⎇ sym < 256 {
+            output.push(sym as u8);
+            ↻;
+        }
+        ⎇ sym == 256 { ⤺ Ok(()); }
+        ⎇ sym == HUFFMAN_INVALID { ⤺ Err(Error·corrupted("invalid huffman code")); }
+        ⎇ sym > 285 { ⤺ Err(Error·corrupted("invalid literal/length code")); }
+        ≔ c = (sym - 257) as usize;
+        ≔ length = lbase[c] + r.take(data, lextra[c]) as usize;
+        ⎇ r.is_short() { ⤺ Err(r.eof()); }
+        ≔ dsym = dist.next(r, data);
+        ⎇ r.is_short() { ⤺ Err(r.eof()); }
+        ⎇ dsym == HUFFMAN_INVALID { ⤺ Err(Error·corrupted("invalid huffman code")); }
+        ⎇ dsym ≥ 30 { ⤺ Err(Error·corrupted("invalid distance code")); }
+        ≔ distance = dbase[dsym as usize] + r.take(data, dextra[dsym as usize]) as usize;
+        ⎇ r.is_short() { ⤺ Err(r.eof()); }
+        ⎇ distance > output.len() { ⤺ Err(Error·corrupted("distance beyond output")); }
+        ≔ from = output.len() - distance;
+        ≔ vary k: usize = 0;
+        ⟳ k < length {
+            ≔ b = output[from + k];
+            output.push(b);
+            k = k + 1;
+        }
+    }
+}
