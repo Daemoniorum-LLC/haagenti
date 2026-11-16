@@ -56,8 +56,9 @@ The continuation of `SLICE-1-CODEC-DEFLATE.md` (§1–§5), split off to keep ea
 
 ## 7. Compiler limits met (reported, not worked around in the compiler)
 
-These were met with sigil-lang develop `e5b8890` and qliphoth `52efb65`. Each is the compiler's or
-the runtime's to fix. The port's or the consumer's way around each is named, and none hides a row.
+These were met with sigil-lang develop `e5b8890` and qliphoth `52efb65`. Each was rechecked at
+develop `7a493ec`, where each still reproduces. Each is the compiler's or the runtime's to fix. The
+port's or the consumer's way around each is named, and none hides a row.
 
 - **K1.** AOT and wasm do not lower an aspect's default rite that returns `Result<…>` when the aspect
   is in a dependency tome. `sigil run` runs it, and a single-file program lowers it.
