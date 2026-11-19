@@ -153,6 +153,126 @@ cargo test --workspace --features "full,testing"
 cargo bench
 ```
 
+## haagenti in Sigil (slice 1: Codec surface, DEFLATE, zlib, gzip)
+
+The migration to Sigil starts with a pure-Sigil tome beside the Rust workspace. The tome has one
+manifest at the root (`Sigil.toml`, `tome haagenti`) and its sources are in `src/`. The Rust
+workspace (`Cargo.toml`, `crates/`) is unchanged and remains the oracle. The spec is
+[`specs/sigil/SLICE-1-CODEC-DEFLATE.md`](specs/sigil/SLICE-1-CODEC-DEFLATE.md), with
+[`SLICE-1-ROWS.md`](specs/sigil/SLICE-1-ROWS.md) and
+[`SLICE-1-DEPARTURES.md`](specs/sigil/SLICE-1-DEPARTURES.md) (LARES-932, contract 0.1.1). Known gaps,
+each with the owner who must fix it, are in [`GAPS.md`](GAPS.md).
+
+```sigil
+invoke haagenti·core·{Error, CompressionLevel, Compressor, Decompressor, Codec};
+invoke haagenti·deflate·{GzipCodec, gzip_compress, gzip_decompress, zlib_compress, crc32};
+
+rite pack(body: &Vec<u8>) → Result<Vec<u8>, Error> {
+    ≔ gz = gzip_compress(body, CompressionLevel·Default)?;   // Rust haagenti's bytes, exactly
+    ≔ back = GzipCodec·new().decompress(&gz)?;
+    Ok(gz)
+}
+```
+
+- **`haagenti·core`** holds `Error` and `CompressionLevel`, `Algorithm`, and the aspects
+  `Compressor`, `Decompressor` and `Codec`.
+  - `Error` has ten of Rust's eleven kinds; `Io` is dropped.
+  - Each error has a `category()` and a stable `reason()` tag such as `crc`, `trailing` or
+    `output_limit`, and that is what to match on, never `message()`.
+- **`haagenti·deflate`** holds:
+  - the free rites `deflate`, `inflate`, `zlib_*`, `gzip_*`, `crc32` and `adler32`;
+  - the nine codec types (`{Deflate,Zlib,Gzip}{Codec,Compressor,Decompressor}`);
+  - the makers `deflate_codec(level)`, `zlib_codec(level)` and `gzip_codec(level)`.
+- **Decoding stops at 16 MiB of output** (`DEFAULT_OUTPUT_LIMIT`), refused as `output_limit`. The
+  `*_limited` rites take another bound.
+- **Trailing bytes are refused** (`trailing`): after a raw stream, between a zlib stream and its
+  Adler-32, and around a gzip trailer.
+- **Multi-member gzip is refused** (`multi_member`). RFC 1952 allows members; supporting them is a
+  later slice.
+- **The bytes are Rust's.** Every compressed byte equals Rust `haagenti-deflate`'s, at every level:
+  stored blocks for `None`, one fixed-Huffman block for every other level, never a dynamic block.
+  - **These pinned bytes are this slice's test contract, not a promise to callers.** A later slice
+    may compress better. Decoding accepts any valid stream, dynamic blocks included.
+- **Two departures from Rust**, both for Rust haagenti's owner (GAPS.md G1, G2):
+  - **D1:** the port decodes complete streams that Rust's `inflate` refuses. Rust cannot round-trip
+    its own `Fast` and `Default` output of 64 KiB runs.
+  - **R1:** Rust's `deflate` panics on some inputs at the chained levels; the port guards the read.
+- **The oracle's two named patches** are in `tests/oracle/patches/`: `D1-huffman-peek.patch` and
+  `R1-lazy-guard.patch`. They are Rust's code with that one change each, and they give the expected
+  answers where Rust's own cannot. `tests/expected/departures.txt` lists every row where the port's
+  answer differs from Rust's, with its ruling.
+
+### Testing
+
+```bash
+SIGIL=/path/to/sigil tests/run.sh   # check, run, aot, wasm: 0 PASS, 1 FAIL, 2 COULD-NOT-LOOK
+(cd tests/oracle && cargo run --release --offline)             # regenerate tests/expected/ (Rust)
+(cd tests/oracle && cargo run --release --offline -- --check)  # 1 if a committed file is stale
+```
+
+- The tests need no Rust: `tests/expected/` and the consumer's generated data are committed.
+- The wasm leg uses qliphoth's runtime at `tests/wasm-runtime.pin`, under node.
+- `HAAGENTI_FULL=1` also runs the slow rows on `sigil run`. `HAAGENTI_TIMING=1` prints the timing
+  below.
+
+### Timing: 1 MiB at `Default` (information only, not a gate)
+
+Measured by hand with `HAAGENTI_TIMING=1` (AOT, wasm) and the same programs on `run`. The input is
+`mib1`, the seeded word text, which compresses to 346,672 bytes. Each figure is the difference
+between programs that stop after making the input, after compressing it, and after decompressing it.
+The machine has 4 cores, and sigil-lang is at `e5b8890`.
+
+| Executor | Compress | Decompress |
+|---|---:|---:|
+| Rust `haagenti-deflate` (release, in-process, best of 5), for reference | 0.16 s | 0.005 s |
+| `sigil run` | 1,566 s | 473 s |
+| AOT (`sigil compile`) | 0.9 s | 0.1 s |
+| wasm (node 22, qliphoth `52efb65`) | 8.3 s | 1.3 s |
+
+The Sigil AOT figures are differences of whole-program wall times that each include a compile of
+about 20 s, so they carry about a second of noise. Nothing has been tuned yet.
+
+### wasm and 8 MiB
+
+- The 8 MiB round trip works on wasm with no trap, at `None`, `Fast` and `Default`, deflate and gzip.
+  Its bytes equal Rust's and it round-trips.
+- It does so one level per program. Node's peak resident size is 1.7 GB at `None`, 1.5 GB at `Fast`
+  and 2.1 GB at `Default` (deflate and gzip). All four volume rows in one program exhaust node's
+  default 2 GB JavaScript heap. That is the runtime's memory, not wasm's 16 MiB linear heap: qliphoth
+  keeps vector contents on the JavaScript side.
+- The `tests/` rows (every row but volume) run in one wasm program with a peak of about 0.5 GB.
+- The port keeps the wasm rule (spec §4). It never grows a String, and never grows and then resets a
+  Vec in a loop. It makes each output Vec once and pushes each byte once. It makes no `Result` per
+  symbol, because on qliphoth `52efb65` each one is an allocation that is never freed. That is
+  **SIGIL-2153** (spec §7 K8, GAPS.md G3). Only the private inner loops avoid `Result`; the public
+  API keeps it.
+
+### Callers
+
+- **nihil** (NIHIL-15) can declare `haagenti = { path = "../haagenti" }` and write
+  `invoke haagenti·core·…`. That change is nihil's, not this repo's.
+- **http** (SIGIL-2081): its opt-in Compression `Encoder` aspect can be implemented over
+  `haagenti·deflate`. The example below is text until http's Compression lands, and assumes the
+  aspect's shape is a name and an encoding rite:
+
+```sigil
+invoke haagenti·core·{CompressionLevel, Error};
+invoke haagenti·deflate·{gzip_compress, zlib_compress};
+
+☉ sigil GzipEncoder { level: CompressionLevel }
+
+⊢ http·Encoder each GzipEncoder {
+    rite content_coding(&this) → &str { "gzip" }
+    rite encode(&this, body: &Vec<u8>) → Result<Vec<u8>, http·EncodeError> {
+        ⌥ gzip_compress(body, this.level) {
+            Ok(gz) => Ok(gz),
+            Err(e) => Err(http·EncodeError·new(e.message())),
+        }
+    }
+}
+// "deflate" in HTTP is zlib framing (RFC 9110 §8.4.1.2): use zlib_compress for it.
+```
+
 ## Why "Haagenti"?
 
 In the Ars Goetia, Haagenti is a demon who "transmutes all metals into gold." This library transmutes:

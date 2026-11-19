@@ -1,0 +1,114 @@
+//! The corpus (spec §5): tests/oracle/src/corpus.rs's rules, in Sigil. A change there is a change here.
+
+invoke tome·support·{bytes, unhex_into};
+invoke tome·gen·{gen_packed, gen_packed_parts};
+
+☉ rite xorshift32(x: u32) → u32 {
+    ≔ vary y = x;
+    y = y ^ ((y << 13) & 4294967295);
+    y = y ^ (y >> 17);
+    y = y ^ ((y << 5) & 4294967295);
+    y
+}
+
+rite words() → Vec<&str> {
+    vec!["the", "of", "and", "to", "in", "a", "is", "that", "for", "it", "as", "was", "with", "be",
+        "by", "on", "not", "he", "this", "are", "or", "his", "from", "at", "which", "but", "have", "an",
+        "they", "you", "were", "compression"]
+}
+
+/// `n` bytes of seeded words.
+☉ rite text(n: usize) → Vec<u8> {
+    ≔ w = words();
+    ≔ vary out: Vec<u8> = Vec·new();
+    ≔ vary x: u32 = 2463534242;
+    ⟳ out.len() < n {
+        x = xorshift32(x);
+        ≔ word = w[(x % 32) as usize].as_bytes();
+        ≔ vary i: usize = 0;
+        ⟳ i < word.len() && out.len() < n { out.push(word[i]); i = i + 1; }
+        ⎇ (x >> 8) % 11 == 0 {
+            ⎇ out.len() < n { out.push(46u8); }
+            ⎇ out.len() < n { out.push(10u8); }
+        } ⎉ {
+            ⎇ out.len() < n { out.push(32u8); }
+        }
+    }
+    out
+}
+
+/// `n` bytes of xorshift32 from 0x9E3779B9, the top byte of each step.
+☉ rite random(n: usize) → Vec<u8> {
+    ≔ vary out: Vec<u8> = Vec·new();
+    ≔ vary x: u32 = 2654435769;
+    ⟳ out.len() < n {
+        x = xorshift32(x);
+        out.push((x >> 24) as u8);
+    }
+    out
+}
+
+rite repeat(b: u8, n: usize) → Vec<u8> {
+    ≔ vary out: Vec<u8> = Vec·new();
+    ⟳ out.len() < n { out.push(b); }
+    out
+}
+
+/// The named corpus inputs, in row order.
+☉ rite names() → Vec<&str> {
+    vec!["empty", "one", "all256", "digits", "run65535", "run65536", "text", "random", "packed"]
+}
+
+/// The corpus input `name`.
+☉ rite corpus(name: &str) → Vec<u8> {
+    ⎇ name == "one" { ⤺ bytes("A"); }
+    ⎇ name == "all256" {
+        ≔ vary out: Vec<u8> = Vec·new();
+        ≔ vary i: u32 = 0;
+        ⟳ i < 256 { out.push(i as u8); i = i + 1; }
+        ⤺ out;
+    }
+    ⎇ name == "digits" { ⤺ bytes("123456789"); }
+    ⎇ name == "run65535" { ⤺ repeat(97, 65535); }
+    ⎇ name == "run65536" { ⤺ repeat(97, 65536); }
+    ⎇ name == "text" { ⤺ text(16384); }
+    ⎇ name == "random" { ⤺ random(8192); }
+    ⎇ name == "packed" { ⤺ packed(); }
+    ⎇ name == "mib1" { ⤺ text(1048576); }
+    ⎇ name == "mib8" { ⤺ text(8388608); }
+    Vec·new()
+}
+
+/// flate2's gzip of `text` at level 9, from the generated data.
+rite packed() → Vec<u8> {
+    ≔ v = gen_packed(0, 0);
+    ≔ vary out: Vec<u8> = Vec·new();
+    ≔ n = tome·support·number(v[4]) as usize;
+    ≔ vary k: usize = 0;
+    ⟳ k < n { unhex_into(v[5 + k], &Δ out); k = k + 1; }
+    out
+}
+
+/// R1's inputs (spec §6 D8): `r1_127` (bytes 0–123, then 01 02 03), `r1_128` (it plus ff), and the
+/// earlier `d8_short` and `d8_random`.
+☉ rite r1(name: &str) → Vec<u8> {
+    ≔ vary out: Vec<u8> = Vec·new();
+    ⎇ name == "r1_127" || name == "r1_128" {
+        ≔ vary i: u32 = 0;
+        ⟳ i < 124 { out.push(i as u8); i = i + 1; }
+        out.push(1u8); out.push(2u8); out.push(3u8);
+        ⎇ name == "r1_128" { out.push(255u8); }
+        ⤺ out;
+    }
+    ⎇ name == "d8_short" {
+        out.push(255u8);
+        ≔ vary i: u32 = 0;
+        ⟳ i < 97 { out.push(i as u8); i = i + 1; }
+        out.push(0u8); out.push(1u8); out.push(2u8);
+        ⤺ out;
+    }
+    ≔ r = random(997);
+    ∀ b ∈ &r { out.push(*b); }
+    out.push(r[500]); out.push(r[501]); out.push(r[502]);
+    out
+}

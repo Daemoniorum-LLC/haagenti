@@ -1,0 +1,49 @@
+//! haagenti·deflate·deflate: RFC 1951 compression, Rust haagenti-deflate's bytes exactly (spec §3.2).
+//! None → stored blocks; Fast → greedy LZ77, fixed Huffman; every other level → hash chains with a
+//! one-step lazy match, fixed Huffman (§6 D2).
+
+invoke tome·core·{Error, CompressionLevel};
+invoke tome·deflate·lz77·{hz_deflate_fast, hz_deflate_chained};
+
+/// `input`, compressed at `level`.
+☉ rite deflate(input: &Vec<u8>, level: CompressionLevel) → Result<Vec<u8>, Error> {
+    ⌥ level {
+        CompressionLevel·None => Ok(hz_deflate_stored(input)),
+        CompressionLevel·Fast => Ok(hz_deflate_fast(input)),
+        _ => Ok(hz_deflate_chained(input)),
+    }
+}
+
+/// Stored blocks of at most 65,535 bytes; empty input is one empty final block.
+☉ rite hz_deflate_stored(input: &Vec<u8>) → Vec<u8> {
+    ≔ vary out: Vec<u8> = Vec·new();
+    ≔ vary pos: usize = 0;
+    ⟳ pos < input.len() {
+        ≔ rest = input.len() - pos;
+        ≔ size = ⎇ rest < 65535 { rest } ⎉ { 65535 };
+        ≔ last = pos + size ≥ input.len();
+        out.push(⎇ last { 1u8 } ⎉ { 0u8 });
+        hz_push_len(&Δ out, size);
+        ≔ vary i: usize = 0;
+        ⟳ i < size {
+            out.push(input[pos + i]);
+            i = i + 1;
+        }
+        pos = pos + size;
+    }
+    ⎇ input.len() == 0 {
+        out.push(1u8);
+        hz_push_len(&Δ out, 0);
+    }
+    out
+}
+
+/// LEN and NLEN, little endian.
+rite hz_push_len(out: &Δ Vec<u8>, size: usize) {
+    ≔ len = size as u32;
+    ≔ nlen = len ^ 65535;
+    out.push((len & 255) as u8);
+    out.push((len >> 8) as u8);
+    out.push((nlen & 255) as u8);
+    out.push((nlen >> 8) as u8);
+}

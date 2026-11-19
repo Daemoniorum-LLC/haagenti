@@ -1,0 +1,175 @@
+//! haagenti·deflate·inflate: RFC 1951 decompression: stored, fixed and dynamic Huffman blocks
+//! (spec §3.3). Each refusal carries Rust's message and a reason tag (R4). Two departures: a complete
+//! code at the end of the input is decoded (§6 D1), and bytes after the final block are refused
+//! (`trailing`, R3). Output stops at a bound (`output_limit`, B4). The inner loops make no `Result`
+//! per symbol (SIGIL-2153, GAPS G3).
+
+invoke tome·core·Error;
+invoke tome·deflate·bits·BitReader;
+invoke tome·deflate·huffman·{HuffmanDecoder, HZ_HUFFMAN_INVALID};
+invoke tome·deflate·tables·{fixed_lit_lengths, fixed_dist_lengths, cl_code_order, length_base,
+    length_extra_bits, distance_base, distance_extra_bits};
+
+/// The output bound of `inflate`, `zlib_decompress` and `gzip_decompress`: 16 MiB (B4).
+☉ ◆ DEFAULT_OUTPUT_LIMIT: usize = 16777216;
+
+/// Inflate `input`, appending at most DEFAULT_OUTPUT_LIMIT bytes to `output`.
+☉ rite inflate(input: &Vec<u8>, output: &Δ Vec<u8>) → Result<(), Error> {
+    inflate_limited(input, output, DEFAULT_OUTPUT_LIMIT)
+}
+
+/// Inflate `input`, appending at most `limit` bytes to `output`. The stream must fill `input`: bytes
+/// after the final block are refused as `trailing` (R3).
+☉ rite inflate_limited(input: &Vec<u8>, output: &Δ Vec<u8>, limit: usize) → Result<(), Error> {
+    ≔ end = hz_inflate_range(input, 0, input.len(), output, limit)?;
+    ⎇ end < input.len() { ⤺ Err(hz_trailing()); }
+    Ok(())
+}
+
+/// The refusal of bytes after a stream (R3).
+☉ rite hz_trailing() → Error {
+    Error·refused("trailing", "trailing data after the deflate stream")
+}
+
+/// Inflate `data[start..end]` in place, appending at most `limit` bytes; where the stream ends.
+/// The blocks mark output past the bound with a bare BufferTooSmall, which is given its numbers here.
+☉ rite hz_inflate_range(data: &Vec<u8>, start: usize, end: usize, output: &Δ Vec<u8>, limit: usize) → Result<usize, Error> {
+    ⌥ hz_blocks(data, start, end, output, output.len() + limit) {
+        Ok(at) => Ok(at),
+        Err(Error·BufferTooSmall { .. }) => Err(Error·buffer_too_small(limit + 1, limit)),
+        Err(e) => Err(e),
+    }
+}
+
+/// The blocks, to the final one; where the stream ends. `cap` is the output length not to pass.
+rite hz_blocks(data: &Vec<u8>, start: usize, end: usize, output: &Δ Vec<u8>, cap: usize) → Result<usize, Error> {
+    ≔ vary r = BitReader·range(start, end);
+    forever {
+        ≔ last = r.read_bits(data, 1)? == 1;
+        ≔ btype = r.read_bits(data, 2)?;
+        ⎇ btype == 0 {
+            hz_stored(&Δ r, data, output, cap)?;
+        } ⎉ ⎇ btype == 1 {
+            ≔ lit = HuffmanDecoder·from_lengths(&fixed_lit_lengths())?;
+            ≔ dist = HuffmanDecoder·from_lengths(&fixed_dist_lengths())?;
+            hz_block(&Δ r, data, output, &lit, &dist, cap)?;
+        } ⎉ ⎇ btype == 2 {
+            hz_dynamic(&Δ r, data, output, cap)?;
+        } ⎉ {
+            ⤺ Err(Error·refused("block_type", "invalid block type 3"));
+        }
+        ⎇ last { ⤺ Ok(r.stream_end()); }
+    }
+}
+
+/// A stored block: LEN, NLEN, then LEN raw bytes.
+rite hz_stored(r: &Δ BitReader, data: &Vec<u8>, output: &Δ Vec<u8>, cap: usize) → Result<(), Error> {
+    r.align();
+    ≔ len = r.read_u16(data)?;
+    ≔ nlen = r.read_u16(data)?;
+    ⎇ len ≠ (nlen ^ 65535) { ⤺ Err(Error·refused("block_type", "stored block length mismatch")); }
+    ≔ vary i: u32 = 0;
+    ⟳ i < len {
+        ≔ b = r.hz_byte(data);
+        ⎇ r.hz_is_short() { ⤺ Err(r.eof()); }
+        ⎇ output.len() ≥ cap { ⤺ Err(Error·buffer_too_small(0, 0)); }
+        output.push(b as u8);
+        i = i + 1;
+    }
+    Ok(())
+}
+
+/// A dynamic block: its code lengths, then its data.
+rite hz_dynamic(r: &Δ BitReader, data: &Vec<u8>, output: &Δ Vec<u8>, cap: usize) → Result<(), Error> {
+    ≔ hlit = r.read_bits(data, 5)? as usize + 257;
+    ≔ hdist = r.read_bits(data, 5)? as usize + 1;
+    ≔ hclen = r.read_bits(data, 4)? as usize + 4;
+    ⎇ hlit > 286 || hdist > 30 { ⤺ Err(Error·refused("huffman", "invalid code count")); }
+    ≔ order = cl_code_order();
+    ≔ vary cl: Vec<u8> = vec![0u8; 19];
+    ≔ vary i: usize = 0;
+    ⟳ i < hclen {
+        cl[order[i]] = r.read_bits(data, 3)? as u8;
+        i = i + 1;
+    }
+    ≔ cl_decoder = HuffmanDecoder·from_lengths(&cl)?;
+    ≔ lengths = hz_code_lengths(r, data, &cl_decoder, hlit + hdist)?;
+    ≔ vary lit_lengths: Vec<u8> = Vec·new();
+    ≔ vary dist_lengths: Vec<u8> = Vec·new();
+    ≔ vary k: usize = 0;
+    ⟳ k < lengths.len() {
+        ⎇ k < hlit { lit_lengths.push(lengths[k]); } ⎉ { dist_lengths.push(lengths[k]); }
+        k = k + 1;
+    }
+    ≔ lit = HuffmanDecoder·from_lengths(&lit_lengths)?;
+    ≔ dist = HuffmanDecoder·from_lengths(&dist_lengths)?;
+    hz_block(r, data, output, &lit, &dist, cap)
+}
+
+/// The `n` literal/length and distance code lengths, run-length coded by `cl`.
+rite hz_code_lengths(r: &Δ BitReader, data: &Vec<u8>, cl: &HuffmanDecoder, n: usize) → Result<Vec<u8>, Error> {
+    ≔ vary lengths: Vec<u8> = vec![0u8; n];
+    ≔ vary i: usize = 0;
+    ⟳ i < n {
+        ≔ sym = cl.decode(r, data)?;
+        ⎇ sym ≤ 15 {
+            lengths[i] = sym as u8;
+            i = i + 1;
+            ↻;
+        }
+        ⎇ sym == 16 && i == 0 { ⤺ Err(Error·refused("huffman", "repeat at start")); }
+        ≔ extra: u32 = ⎇ sym == 16 { 2 } ⎉ ⎇ sym == 17 { 3 } ⎉ { 7 };
+        ≔ count = r.read_bits(data, extra)? as usize + ⎇ sym == 18 { 11 } ⎉ { 3 };
+        ≔ value = ⎇ sym == 16 { lengths[i - 1] } ⎉ { 0u8 };
+        ≔ overflow = ⎇ sym == 16 { "repeat overflow" } ⎉ ⎇ sym == 17 { "zero repeat overflow" }
+            ⎉ { "long zero repeat overflow" };
+        ≔ vary k: usize = 0;
+        ⟳ k < count {
+            ⎇ i ≥ n { ⤺ Err(Error·refused("huffman", overflow)); }
+            lengths[i] = value;
+            i = i + 1;
+            k = k + 1;
+        }
+    }
+    Ok(lengths)
+}
+
+/// A Huffman block's data, to its end-of-block code. Each refusal is checked where Rust's `?` is;
+/// the bound before each literal and each match.
+rite hz_block(r: &Δ BitReader, data: &Vec<u8>, output: &Δ Vec<u8>, lit: &HuffmanDecoder,
+              dist: &HuffmanDecoder, cap: usize) → Result<(), Error> {
+    ≔ lbase = length_base();
+    ≔ lextra = length_extra_bits();
+    ≔ dbase = distance_base();
+    ≔ dextra = distance_extra_bits();
+    forever {
+        ≔ sym = lit.hz_next(r, data);
+        ⎇ r.hz_is_short() { ⤺ Err(r.eof()); }
+        ⎇ sym < 256 {
+            ⎇ output.len() ≥ cap { ⤺ Err(Error·buffer_too_small(0, 0)); }
+            output.push(sym as u8);
+            ↻;
+        }
+        ⎇ sym == 256 { ⤺ Ok(()); }
+        ⎇ sym == HZ_HUFFMAN_INVALID { ⤺ Err(Error·refused("huffman", "invalid huffman code")); }
+        ⎇ sym > 285 { ⤺ Err(Error·refused("huffman", "invalid literal/length code")); }
+        ≔ c = (sym - 257) as usize;
+        ≔ length = lbase[c] + r.hz_take(data, lextra[c]) as usize;
+        ⎇ r.hz_is_short() { ⤺ Err(r.eof()); }
+        ≔ dsym = dist.hz_next(r, data);
+        ⎇ r.hz_is_short() { ⤺ Err(r.eof()); }
+        ⎇ dsym == HZ_HUFFMAN_INVALID { ⤺ Err(Error·refused("huffman", "invalid huffman code")); }
+        ⎇ dsym ≥ 30 { ⤺ Err(Error·refused("distance", "invalid distance code")); }
+        ≔ distance = dbase[dsym as usize] + r.hz_take(data, dextra[dsym as usize]) as usize;
+        ⎇ r.hz_is_short() { ⤺ Err(r.eof()); }
+        ⎇ distance > output.len() { ⤺ Err(Error·refused("distance", "distance beyond output")); }
+        ⎇ output.len() + length > cap { ⤺ Err(Error·buffer_too_small(0, 0)); }
+        ≔ from = output.len() - distance;
+        ≔ vary k: usize = 0;
+        ⟳ k < length {
+            ≔ b = output[from + k];
+            output.push(b);
+            k = k + 1;
+        }
+    }
+}

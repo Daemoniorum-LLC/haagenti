@@ -1,0 +1,204 @@
+//! haagenti·deflate·lz77: the two LZ77 encoders, one fixed-Huffman block each (spec §3.2). Every
+//! choice is Rust's, so the bytes are: position 0 is never a match source (the table's 0 is "none"),
+//! the chain walks at most 128 candidates, and the lazy step looks one position ahead (§6 D2).
+
+invoke tome·deflate·bits·BitWriter;
+invoke tome·deflate·huffman·HuffmanEncoder;
+invoke tome·deflate·tables·{fixed_lit_lengths, fixed_dist_lengths, length_base, length_extra_bits,
+    distance_base, distance_extra_bits};
+invoke tome·deflate·deflate·hz_deflate_stored;
+
+◆ HZ_MIN_MATCH: usize = 3;
+◆ HZ_MAX_MATCH: usize = 258;
+◆ HZ_MAX_DISTANCE: usize = 32768;
+◆ HZ_HASH_SIZE: usize = 32768;
+◆ HZ_MAX_CHAIN: usize = 128;
+
+/// What an encoder holds: the fixed codes, the extra-bit tables, and the bit writer.
+sigil HzSink {
+    w: BitWriter,
+    lit: HuffmanEncoder,
+    dist: HuffmanEncoder,
+    lbase: Vec<usize>,
+    lextra: Vec<u32>,
+    dbase: Vec<usize>,
+    dextra: Vec<u32>,
+}
+
+⊢ HzSink {
+    /// A sink that has written BFINAL=1, BTYPE=01.
+    rite open() → HzSink {
+        ≔ vary s = HzSink {
+            w: BitWriter·new(),
+            lit: HuffmanEncoder·from_lengths(&fixed_lit_lengths()),
+            dist: HuffmanEncoder·from_lengths(&fixed_dist_lengths()),
+            lbase: length_base(), lextra: length_extra_bits(),
+            dbase: distance_base(), dextra: distance_extra_bits(),
+        };
+        s.w.write_bits(1, 1);
+        s.w.write_bits(1, 2);
+        s
+    }
+
+    rite symbol(&Δ this, sym: usize) {
+        ≔ code = this.lit.code(sym);
+        ≔ len = this.lit.len(sym);
+        this.w.write_code(code, len);
+    }
+
+    /// A length/distance pair, each code found by the last base not above it.
+    rite pair(&Δ this, length: usize, distance: usize) {
+        ≔ vary lc: usize = 28;
+        ⟳ lc > 0 && this.lbase[lc] > length { lc = lc - 1; }
+        this.symbol(257 + lc);
+        ⎇ this.lextra[lc] > 0 { ≔ e = this.lextra[lc]; this.w.write_bits((length - this.lbase[lc]) as u32, e); }
+        ≔ vary dc: usize = 29;
+        ⟳ dc > 0 && this.dbase[dc] > distance { dc = dc - 1; }
+        ≔ code = this.dist.code(dc);
+        ≔ len = this.dist.len(dc);
+        this.w.write_code(code, len);
+        ⎇ this.dextra[dc] > 0 { ≔ e = this.dextra[dc]; this.w.write_bits((distance - this.dbase[dc]) as u32, e); }
+    }
+
+    /// End of block, and the bytes.
+    rite close(this) → Vec<u8> {
+        ≔ vary s = this;
+        s.symbol(256);
+        s.w.finish()
+    }
+}
+
+/// The hash of the three bytes at `pos`.
+rite hz_hash3(data: &Vec<u8>, pos: usize) → usize {
+    (((data[pos] as usize) << 10) ^ ((data[pos + 1] as usize) << 5) ^ (data[pos + 2] as usize)) & (HZ_HASH_SIZE - 1)
+}
+
+/// How far `data` at `a` and at `b` agree, up to `max`.
+rite hz_match_len(data: &Vec<u8>, a: usize, b: usize, max: usize) → usize {
+    ≔ vary len: usize = 0;
+    ⟳ len < max && data[a + len] == data[b + len] { len = len + 1; }
+    len
+}
+
+/// The longest match `pos` may take: up to 258 and the end of the input.
+rite hz_room(data: &Vec<u8>, pos: usize) → usize {
+    ≔ rest = data.len() - pos;
+    ⎇ rest < HZ_MAX_MATCH { rest } ⎉ { HZ_MAX_MATCH }
+}
+
+/// Greedy LZ77, one candidate per position (Rust's `deflate_fast`). Empty input is stored.
+☉ rite hz_deflate_fast(input: &Vec<u8>) → Vec<u8> {
+    ⎇ input.len() == 0 { ⤺ hz_deflate_stored(input); }
+    ≔ vary s = HzSink·open();
+    ≔ vary head: Vec<u32> = vec![0u32; HZ_HASH_SIZE];
+    ≔ n = input.len();
+    ≔ vary pos: usize = 0;
+    ⟳ pos < n {
+        ≔ vary best: usize = 0;
+        ≔ vary best_dist: usize = 0;
+        ⎇ pos + HZ_MIN_MATCH ≤ n {
+            ≔ h = hz_hash3(input, pos);
+            ≔ prev = head[h] as usize;
+            ⎇ prev > 0 && pos ≥ prev && pos - prev ≤ HZ_MAX_DISTANCE {
+                ≔ len = hz_match_len(input, prev, pos, hz_room(input, pos));
+                ⎇ len ≥ HZ_MIN_MATCH { best = len; best_dist = pos - prev; }
+            }
+            head[h] = pos as u32;
+        }
+        ⎇ best ≥ HZ_MIN_MATCH {
+            s.pair(best, best_dist);
+            ≔ vary i: usize = 1;
+            ⟳ i < best {
+                ⎇ pos + i + HZ_MIN_MATCH ≤ n { head[hz_hash3(input, pos + i)] = (pos + i) as u32; }
+                i = i + 1;
+            }
+            pos = pos + best;
+        } ⎉ {
+            s.symbol(input[pos] as usize);
+            pos = pos + 1;
+        }
+    }
+    s.close()
+}
+
+/// The chains: `head` by hash, `prev` by position mod 32,768.
+sigil HzChains {
+    head: Vec<u32>,
+    prev: Vec<u32>,
+}
+
+⊢ HzChains {
+    /// Put `pos` at the head of its hash's chain.
+    rite insert(&Δ this, data: &Vec<u8>, pos: usize) {
+        ≔ h = hz_hash3(data, pos);
+        ≔ old = this.head[h];
+        this.head[h] = pos as u32;
+        this.prev[pos % HZ_HASH_SIZE] = old;
+    }
+
+    /// The longest match for `pos` among at most 128 candidates, as (length, distance) in one u64.
+    rite longest(&this, data: &Vec<u8>, pos: usize) → u64 {
+        ≔ vary cand = this.head[hz_hash3(data, pos)] as usize;
+        ≔ vary best: usize = 0;
+        ≔ vary best_dist: usize = 0;
+        ≔ vary walked: usize = 0;
+        ⟳ cand > 0 && pos ≥ cand && pos - cand ≤ HZ_MAX_DISTANCE && walked < HZ_MAX_CHAIN {
+            ≔ len = hz_match_len(data, cand, pos, hz_room(data, pos));
+            ⎇ len > best {
+                best = len;
+                best_dist = pos - cand;
+                ⎇ len == HZ_MAX_MATCH { ⊲; }
+            }
+            cand = this.prev[cand % HZ_HASH_SIZE] as usize;
+            walked = walked + 1;
+        }
+        ((best as u64) << 32) | (best_dist as u64)
+    }
+
+    /// Whether the head of `pos + 1`'s chain matches longer than `best + 1` (the lazy step). Rust
+    /// hashes `pos + 1` whenever `pos + 1 < len` and reads past the end when `pos + 3 == len`
+    /// (a panic); the step is skipped there instead (spec §6 D8). Elsewhere it is Rust's.
+    rite better_next(&this, data: &Vec<u8>, pos: usize, best: usize) → bool {
+        ⎇ pos + 4 > data.len() || best ≥ HZ_MAX_MATCH { ⤺ nay; }
+        ≔ cand = this.head[hz_hash3(data, pos + 1)] as usize;
+        ⎇ cand == 0 || pos + 1 < cand || pos + 1 - cand > HZ_MAX_DISTANCE { ⤺ nay; }
+        hz_match_len(data, cand, pos + 1, hz_room(data, pos + 1)) > best + 1
+    }
+}
+
+/// Hash chains and one-step lazy matching (Rust's `deflate_default`). Under 100 bytes, `Fast`.
+☉ rite hz_deflate_chained(input: &Vec<u8>) → Vec<u8> {
+    ⎇ input.len() < 100 { ⤺ hz_deflate_fast(input); }
+    ≔ vary s = HzSink·open();
+    ≔ vary ch = HzChains { head: vec![0u32; HZ_HASH_SIZE], prev: vec![0u32; HZ_HASH_SIZE] };
+    ≔ n = input.len();
+    ≔ vary pos: usize = 0;
+    ⟳ pos < n {
+        ≔ vary best: usize = 0;
+        ≔ vary best_dist: usize = 0;
+        ⎇ pos + HZ_MIN_MATCH ≤ n {
+            ≔ found = ch.longest(input, pos);
+            best = (found >> 32) as usize;
+            best_dist = (found & 4294967295) as usize;
+            ch.insert(input, pos);
+        }
+        ⎇ best < HZ_MIN_MATCH {
+            s.symbol(input[pos] as usize);
+            pos = pos + 1;
+            ↻;
+        }
+        ⎇ ch.better_next(input, pos, best) {
+            s.symbol(input[pos] as usize);
+            pos = pos + 1;
+            ↻;
+        }
+        s.pair(best, best_dist);
+        ≔ vary i: usize = 1;
+        ⟳ i < best {
+            ⎇ pos + i + HZ_MIN_MATCH ≤ n { ch.insert(input, pos + i); }
+            i = i + 1;
+        }
+        pos = pos + best;
+    }
+    s.close()
+}

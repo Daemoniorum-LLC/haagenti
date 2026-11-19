@@ -1,0 +1,8 @@
+# haagenti in Sigil (LARES-932): one manifest for the tome. The Rust workspace beside it (Cargo.toml,
+# crates/) is the oracle until the migration completes; see specs/sigil/.
+[project]
+name = "haagenti"
+version = "0.1.0"
+edition = "2025"
+description = "Compression in pure Sigil. Slice 1: the Codec surface (haagenti·core) and DEFLATE, zlib and gzip (haagenti·deflate)."
+license = "MIT OR Apache-2.0"

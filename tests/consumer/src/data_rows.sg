@@ -1,0 +1,54 @@
+//! The F and M rows (spec §5): flate2's outputs and the must-fail inputs, read from the generated
+//! data (tests/consumer/src/gen/, written by tests/oracle), each decoded by the port.
+
+invoke tome·support·{number, unhex_into, outcome, sum, failed};
+invoke tome·rows·{decompress, decompress_limited, listed};
+invoke haagenti·deflate·DEFAULT_OUTPUT_LIMIT;
+invoke tome·gen·{gen_f, gen_f_parts, gen_f_files, gen_m, gen_m_parts, gen_m_files};
+invoke tome·mode·MODE_CORPUS;
+
+/// One row's bytes: `n` chunks of hex from `v[at]`.
+☉ rite row_bytes(v: &Vec<&str>, at: usize, n: usize) → Vec<u8> {
+    ≔ vary out: Vec<u8> = Vec·new();
+    ≔ vary k: usize = 0;
+    ⟳ k < n { unhex_into(v[at + k], &Δ out); k = k + 1; }
+    out
+}
+
+/// Each row of one part: decode it and print its line.
+rite part_rows(v: &Vec<&str>) {
+    ≔ vary i: usize = 0;
+    ⟳ i + 4 < v.len() {
+        ≔ tag = v[i];
+        ≔ n = number(v[i + 4]) as usize;
+        ≔ x = row_bytes(v, i + 5, n);
+        ⎇ tag == "F" {
+            ⎇ MODE_CORPUS == "" || listed(MODE_CORPUS, v[i + 1]) {
+                ≔ got = ⌥ decompress(v[i + 2], &x) { Ok(y) => sum(&y), Err(e) => failed(&e) };
+                println!("F {} {} {} {}", v[i + 1], v[i + 2], v[i + 3], got);
+            }
+        } ⎉ {
+            ≔ limit = ⎇ v[i + 3] == "-" { DEFAULT_OUTPUT_LIMIT } ⎉ { number(v[i + 3]) as usize };
+            println!("M {} {} {}", v[i + 1], v[i + 2], outcome(&decompress_limited(v[i + 2], &x, limit)));
+        }
+        i = i + 5 + n;
+    }
+}
+
+☉ rite f_rows() {
+    ≔ vary f: i64 = 0;
+    ⟳ f < gen_f_files() {
+        ≔ vary p: i64 = 0;
+        ⟳ p < gen_f_parts(f) { part_rows(&gen_f(f, p)); p = p + 1; }
+        f = f + 1;
+    }
+}
+
+☉ rite m_rows() {
+    ≔ vary f: i64 = 0;
+    ⟳ f < gen_m_files() {
+        ≔ vary p: i64 = 0;
+        ⟳ p < gen_m_parts(f) { part_rows(&gen_m(f, p)); p = p + 1; }
+        f = f + 1;
+    }
+}

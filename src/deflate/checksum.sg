@@ -1,0 +1,47 @@
+//! haagenti·deflate·checksum: CRC-32 (RFC 1952 §8, for gzip) and Adler-32 (RFC 1950 §9, for zlib),
+//! in Sigil: no host primitive (spec §3.1).
+
+/// The CRC-32 table for the reflected polynomial 0xEDB88320, made once per call.
+rite hz_crc_table() → Vec<u32> {
+    ≔ vary t: Vec<u32> = Vec·new();
+    ≔ vary i: u32 = 0;
+    ⟳ i < 256 {
+        ≔ vary c = i;
+        ≔ vary k = 0;
+        ⟳ k < 8 {
+            c = ⎇ c & 1 ≠ 0 { 3988292384 ^ (c >> 1) } ⎉ { c >> 1 };
+            k = k + 1;
+        }
+        t.push(c);
+        i = i + 1;
+    }
+    t
+}
+
+/// CRC-32 of `data`: 0 for no bytes, 0xCBF43926 for "123456789".
+☉ rite crc32(data: &Vec<u8>) → u32 {
+    crc32_range(data, 0, data.len())
+}
+
+/// CRC-32 of `data[start..end]`.
+☉ rite crc32_range(data: &Vec<u8>, start: usize, end: usize) → u32 {
+    ≔ t = hz_crc_table();
+    ≔ vary crc: u32 = 4294967295;
+    ≔ vary i = start;
+    ⟳ i < end {
+        crc = t[((crc ^ (data[i] as u32)) & 255) as usize] ^ (crc >> 8);
+        i = i + 1;
+    }
+    crc ^ 4294967295
+}
+
+/// Adler-32 of `data`: 1 for no bytes, 0x024D0127 for "abc".
+☉ rite adler32(data: &Vec<u8>) → u32 {
+    ≔ vary a: u32 = 1;
+    ≔ vary b: u32 = 0;
+    ∀ x ∈ data {
+        a = (a + (*x as u32)) % 65521;
+        b = (b + a) % 65521;
+    }
+    (b << 16) | a
+}

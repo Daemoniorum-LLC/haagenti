@@ -1,0 +1,63 @@
+//! haagenti's test consumer (LARES-932, spec §5): every row of tests/expected/ through the tome, one
+//! line each. tests/run.sh stages this directory beside a manifest naming the tome, sets
+//! src/mode.sg, and compares the lines with tests/expected/*.txt on run, AOT and wasm.
+
+scroll mode;
+scroll support;
+scroll corpus;
+scroll rows;
+scroll data_rows;
+scroll api;
+scroll tests_a;
+scroll tests_b;
+scroll gen;
+
+invoke tome·mode·{MODE_SECTIONS, MODE_VOLUME};
+invoke haagenti·core·CompressionLevel;
+invoke haagenti·deflate·{deflate, inflate, crc32, adler32};
+
+rite on(letter: &str) → bool {
+    MODE_SECTIONS.contains(letter)
+}
+
+/// The timing programs (README): MODE_VOLUME's input made (X), compressed at Default (K), then
+/// decompressed (D). tests/run.sh times X, XK and XKD and takes the differences.
+rite timing() {
+    ≔ x = tome·corpus·corpus(MODE_VOLUME);
+    ⎇ !on("K") { ⤺ println!("X {}", x.len()); }
+    ≔ c = deflate(&x, CompressionLevel·Default).unwrap();
+    ⎇ !on("D") { ⤺ println!("X {} {}", x.len(), c.len()); }
+    ≔ vary out: Vec<u8> = Vec·new();
+    ≔ r = inflate(&c, &Δ out);
+    println!("X {} {} {} {}", x.len(), c.len(), out.len(), r.is_ok());
+}
+
+/// The negative control (tests/run.sh): two checksums through the tome, which the runner must print
+/// as `Z cbf43926 024d0127`; then, with W in MODE_SECTIONS, an index past the end, which must trap.
+rite control() {
+    ≔ nine = tome·support·bytes("123456789");
+    ≔ abc = tome·support·bytes("abc");
+    println!("Z {:08x} {:08x}", crc32(&nine), adler32(&abc));
+    ⎇ on("W") { println!("Z past the end {}", nine[nine.len() + 3]); }
+}
+
+rite main() {
+    println!("ORACLE-BEGIN");
+    ⎇ on("T") {
+        tome·tests_a·t_codec();
+        tome·tests_a·t_deflate();
+        tome·tests_b·t_gzip();
+        tome·tests_a·t_huffman();
+        tome·tests_b·t_inflate();
+        tome·tests_b·t_zlib();
+    }
+    ⎇ on("A") { tome·api·a_rows(); }
+    ⎇ on("M") { tome·data_rows·m_rows(); }
+    ⎇ on("F") { tome·data_rows·f_rows(); }
+    ⎇ on("C") { tome·rows·c_rows(); }
+    ⎇ on("E") { tome·rows·e_rows(); }
+    ⎇ on("V") && MODE_VOLUME ≠ "" { tome·rows·v_rows(MODE_VOLUME); }
+    ⎇ on("X") { timing(); }
+    ⎇ on("Z") { control(); }
+    println!("ORACLE-END");
+}

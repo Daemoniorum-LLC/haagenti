@@ -1,0 +1,15 @@
+tome haagenti;
+
+//! haagenti — compression in pure Sigil (LARES-932; the spec is specs/sigil/SLICE-1-CODEC-DEFLATE.md).
+//!
+//!   invoke haagenti·core·{Error, CompressionLevel, Algorithm, Compressor, Decompressor, Codec};
+//!   invoke haagenti·deflate·{GzipCodec, gzip_compress, gzip_decompress};
+//!
+//!   ≔ gz = gzip_compress(&bytes, CompressionLevel·Default)?;   // Result<Vec<u8>, Error>
+//!   ≔ back = GzipCodec·new().decompress(&gz)?;
+//!
+//! Slice 1 is `core` (the error, levels and the Codec aspects) and `deflate` (RFC 1951 DEFLATE and
+//! its zlib and gzip framings). Every compressed byte is Rust haagenti-deflate's (spec §5).
+
+☉ scroll core;
+☉ scroll deflate;

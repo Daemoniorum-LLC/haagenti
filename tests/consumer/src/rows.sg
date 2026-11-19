@@ -1,0 +1,127 @@
+//! The C, R, E and V rows (spec §5): the port's bytes per corpus, format and level, and their round
+//! trips. tests/run.sh compares the lines with tests/expected/{c,r,e,v}.txt.
+
+invoke haagenti·core·CompressionLevel;
+invoke haagenti·deflate·{deflate, inflate_limited, zlib_compress, zlib_decompress_limited, gzip_compress,
+    gzip_decompress_limited, DEFAULT_OUTPUT_LIMIT};
+invoke tome·support·{digest, sum, failed};
+invoke tome·corpus·{names, corpus, r1};
+invoke tome·mode·{MODE_CORPUS, MODE_LEVELS};
+
+☉ rite level(name: &str) → CompressionLevel {
+    ⎇ name == "none" { ⤺ CompressionLevel·None; }
+    ⎇ name == "fast" { ⤺ CompressionLevel·Fast; }
+    ⎇ name == "default" { ⤺ CompressionLevel·Default; }
+    ⎇ name == "best" { ⤺ CompressionLevel·Best; }
+    ⎇ name == "ultra" { ⤺ CompressionLevel·Ultra; }
+    ⎇ name == "c0" { ⤺ CompressionLevel·Custom(0); }
+    CompressionLevel·Custom(5)
+}
+
+rite levels() → Vec<&str> {
+    vec!["none", "fast", "default", "best", "ultra", "c0", "c5"]
+}
+
+☉ rite formats() → Vec<&str> {
+    vec!["deflate", "zlib", "gzip"]
+}
+
+☉ rite compress(fmt: &str, x: &Vec<u8>, lv: &str) → Result<Vec<u8>, haagenti·core·Error> {
+    ⎇ fmt == "deflate" { ⤺ deflate(x, level(lv)); }
+    ⎇ fmt == "zlib" { ⤺ zlib_compress(x, level(lv)); }
+    gzip_compress(x, level(lv))
+}
+
+☉ rite decompress(fmt: &str, x: &Vec<u8>) → Result<Vec<u8>, haagenti·core·Error> {
+    decompress_limited(fmt, x, DEFAULT_OUTPUT_LIMIT)
+}
+
+/// `x` decoded in `fmt`, at most `limit` bytes (B4).
+☉ rite decompress_limited(fmt: &str, x: &Vec<u8>, limit: usize) → Result<Vec<u8>, haagenti·core·Error> {
+    ⎇ fmt == "deflate" {
+        ≔ vary out: Vec<u8> = Vec·new();
+        ⌥ inflate_limited(x, &Δ out, limit) {
+            Ok(_) => ⤺ Ok(out),
+            Err(e) => ⤺ Err(e),
+        }
+    }
+    ⎇ fmt == "zlib" { ⤺ zlib_decompress_limited(x, limit); }
+    gzip_decompress_limited(x, limit)
+}
+
+/// Whether `word` is one of the space-separated `list`.
+☉ rite listed(list: &str, word: &str) → bool {
+    format!(" {} ", list).contains(&format!(" {} ", word))
+}
+
+/// Whether the row for `lv` runs: MODE_LEVELS is "all", or lists it.
+rite wanted(lv: &str) → bool {
+    MODE_LEVELS == "all" || listed(MODE_LEVELS, lv)
+}
+
+/// C and R rows for one corpus input.
+rite corpus_rows(name: &str) {
+    ≔ x = corpus(name);
+    ∀ fmt ∈ formats() {
+        ∀ lv ∈ levels() {
+            ⎇ !wanted(lv) { ↻; }
+            ⌥ compress(fmt, &x, lv) {
+                Ok(y) => {
+                    println!("C {} {} {} {}", name, fmt, lv, digest(&y));
+                    ⎇ lv == "none" || lv == "fast" || lv == "default" {
+                        println!("R {} {} {} {}", name, fmt, lv, round(fmt, &y));
+                    }
+                }
+                Err(e) => println!("C {} {} {} {}", name, fmt, lv, failed(&e)),
+            }
+        }
+    }
+}
+
+/// The R text: "len crc" of what decompresses, or the refusal.
+rite round(fmt: &str, y: &Vec<u8>) → String {
+    ⌥ decompress(fmt, y) {
+        Ok(x) => sum(&x),
+        Err(e) => failed(&e),
+    }
+}
+
+/// The C and R rows: every named input, or those MODE_CORPUS lists.
+☉ rite c_rows() {
+    ∀ name ∈ names() {
+        ⎇ MODE_CORPUS == "" || listed(MODE_CORPUS, name) { corpus_rows(name); }
+    }
+}
+
+/// The E rows: R1's inputs (spec §6 D8): Rust panics on all but `r1_128`.
+☉ rite e_rows() {
+    ∀ name ∈ vec!["r1_127", "r1_128", "d8_short", "d8_random"] {
+        ≔ x = r1(name);
+        ∀ lv ∈ vec!["default", "best", "c0"] {
+            ⌥ deflate(&x, level(lv)) {
+                Ok(y) => {
+                    println!("E {} deflate {} {}", name, lv, digest(&y));
+                    println!("E {} roundtrip {} {}", name, lv, round("deflate", &y));
+                }
+                Err(e) => println!("E {} deflate {} {}", name, lv, failed(&e)),
+            }
+        }
+    }
+}
+
+/// The V and W rows for one volume input ("mib1" or "mib8").
+☉ rite v_rows(name: &str) {
+    ≔ x = corpus(name);
+    ∀ pair ∈ vec!["deflate none", "deflate fast", "deflate default", "gzip default"] {
+        ≔ fmt = ⎇ pair.starts_with("gzip") { "gzip" } ⎉ { "deflate" };
+        ≔ lv = ⎇ pair.ends_with("none") { "none" } ⎉ ⎇ pair.ends_with("fast") { "fast" } ⎉ { "default" };
+        ⎇ !wanted(lv) { ↻; }
+        ⌥ compress(fmt, &x, lv) {
+            Ok(y) => {
+                println!("V {} {} {} {}", name, fmt, lv, digest(&y));
+                println!("W {} {} {} {}", name, fmt, lv, round(fmt, &y));
+            }
+            Err(e) => println!("V {} {} {} {}", name, fmt, lv, failed(&e)),
+        }
+    }
+}

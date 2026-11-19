@@ -1,0 +1,103 @@
+//! The A rows (spec §2, §3.4): what the Codec surface answers, in tests/oracle/src/api.rs's text.
+
+invoke haagenti·core·{Error, CompressionLevel, Compressor, Decompressor, Codec};
+invoke haagenti·deflate·{DeflateCodec, ZlibCodec, GzipCodec, DeflateCompressor, ZlibCompressor,
+    GzipCompressor, DeflateDecompressor, ZlibDecompressor, GzipDecompressor, deflate_codec, zlib_codec,
+    gzip_codec};
+invoke tome·support·{bytes, sum, flag};
+
+/// "<category> <reason> <recoverable>" (R4: never the message).
+rite err(e: &Error) → String {
+    format!("{} {} {}", e.category(), e.reason(), flag(e.is_recoverable()))
+}
+
+/// One of the three codecs. The rows call each codec's own rites through this, not through a rite
+/// generic over Codec: AOT and wasm mis-lower those (spec §7 K6, K7).
+ᛈ AnyCodec {
+    D(DeflateCodec),
+    Z(ZlibCodec),
+    G(GzipCodec),
+}
+
+⊢ AnyCodec {
+    rite algorithm(&this) → String {
+        ⌥ this { AnyCodec·D(c) => c.algorithm().name(), AnyCodec·Z(c) => c.algorithm().name(), AnyCodec·G(c) => c.algorithm().name() }
+    }
+    rite level(&this) → i32 {
+        ⌥ this { AnyCodec·D(c) => c.level().to_level(), AnyCodec·Z(c) => c.level().to_level(), AnyCodec·G(c) => c.level().to_level() }
+    }
+    rite max(&this, n: usize) → usize {
+        ⌥ this { AnyCodec·D(c) => c.max_compressed_size(n), AnyCodec·Z(c) => c.max_compressed_size(n), AnyCodec·G(c) => c.max_compressed_size(n) }
+    }
+    rite verify(&this, x: &Vec<u8>) → Result<bool, Error> {
+        ⌥ this { AnyCodec·D(c) => c.verify_roundtrip(x), AnyCodec·Z(c) => c.verify_roundtrip(x), AnyCodec·G(c) => c.verify_roundtrip(x) }
+    }
+    rite compress(&this, x: &Vec<u8>) → Result<Vec<u8>, Error> {
+        ⌥ this { AnyCodec·D(c) => c.compress(x), AnyCodec·Z(c) => c.compress(x), AnyCodec·G(c) => c.compress(x) }
+    }
+    rite decompress(&this, x: &Vec<u8>) → Result<Vec<u8>, Error> {
+        ⌥ this { AnyCodec·D(c) => c.decompress(x), AnyCodec·Z(c) => c.decompress(x), AnyCodec·G(c) => c.decompress(x) }
+    }
+}
+
+/// One codec's rows: algorithm, levels, sizes, round trip.
+rite surface(tag: &str, c: &AnyCodec, best: &AnyCodec) {
+    ≔ input = bytes("Verify roundtrip functionality.");
+    println!("A {} algorithm {}", tag, c.algorithm());
+    println!("A {} level {}", tag, c.level());
+    println!("A {} level_best {}", tag, best.level());
+    ∀ n ∈ vec![0usize, 1, 65535, 65536, 1000000] {
+        println!("A {} max_compressed_size {} {}", tag, *n, c.max(*n));
+    }
+    ≔ ok = ⌥ c.verify(&input) { Ok(b) => flag(b), Err(e) => err(&e) };
+    println!("A {} verify_roundtrip {}", tag, ok);
+    ≔ z = c.compress(&input).unwrap();
+    ≔ back = ⌥ c.decompress(&z) { Ok(d) => sum(&d), Err(e) => err(&e) };
+    println!("A {} decompress {}", tag, back);
+}
+
+/// B2: the free makers give what `with_level` gives.
+rite maker_rows() {
+    ∀ name ∈ vec!["fast", "best", "c5"] {
+        ≔ l = tome·rows·level(name);
+        ≔ d = deflate_codec(l);
+        println!("A maker deflate_codec {} {} {}", name, d.algorithm().name(), d.level().to_level());
+        ≔ z = zlib_codec(tome·rows·level(name));
+        println!("A maker zlib_codec {} {} {}", name, z.algorithm().name(), z.level().to_level());
+        ≔ g = gzip_codec(tome·rows·level(name));
+        println!("A maker gzip_codec {} {} {}", name, g.algorithm().name(), g.level().to_level());
+    }
+}
+
+☉ rite a_rows() {
+    surface("DeflateCodec", &AnyCodec·D(DeflateCodec·new()), &AnyCodec·D(DeflateCodec·with_level(CompressionLevel·Best)));
+    surface("ZlibCodec", &AnyCodec·Z(ZlibCodec·new()), &AnyCodec·Z(ZlibCodec·with_level(CompressionLevel·Best)));
+    surface("GzipCodec", &AnyCodec·G(GzipCodec·new()), &AnyCodec·G(GzipCodec·with_level(CompressionLevel·Best)));
+    ≔ d = DeflateCompressor·with_level(CompressionLevel·Fast);
+    println!("A DeflateCompressor algorithm {} level {}", d.algorithm().name(), d.level().to_level());
+    ≔ z = ZlibCompressor·new();
+    println!("A ZlibCompressor algorithm {} level {}", z.algorithm().name(), z.level().to_level());
+    ≔ g = GzipCompressor·with_level(CompressionLevel·Custom(3));
+    println!("A GzipCompressor algorithm {} level {}", g.algorithm().name(), g.level().to_level());
+    println!("A DeflateDecompressor algorithm {}", DeflateDecompressor·new().algorithm().name());
+    println!("A ZlibDecompressor algorithm {}", ZlibDecompressor·new().algorithm().name());
+    println!("A GzipDecompressor algorithm {}", GzipDecompressor·new().algorithm().name());
+    maker_rows();
+    ∀ n ∈ vec![-5, 0, 1, 3, 4, 6, 7, 9, 10, 99] {
+        println!("A level from_level {} to_level {}", *n, CompressionLevel·from_level(*n).to_level());
+    }
+    error_rows();
+}
+
+rite error_rows() {
+    ≔ errors = vec![
+        Error·corrupted("x y"), Error·corrupted_at("bad byte", 17), Error·buffer_too_small(9, 4),
+        Error·checksum_mismatch(3735928559, 1), Error·unexpected_eof(12), Error·algorithm("deflate", "no"),
+        Error·InvalidLevel { level: 12, min: 0, max: 9 },
+        Error·InvalidDictionary { message: "d".to_string() },
+        Error·AllocationFailed { requested_bytes: 64 },
+        Error·InvalidState { expected: "open".to_string(), actual: "closed".to_string() },
+        Error·Unsupported { message: "u".to_string() },
+    ];
+    ∀ e ∈ &errors { println!("A error {}", err(e)); }
+}

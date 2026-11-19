@@ -1,0 +1,114 @@
+//! T rows, part 1: Rust's `#[test]`s in haagenti-deflate's codec, deflate and huffman modules, with
+//! the same inputs and checks (the `#[ignore]`d ones too: spec §6 D1). Each prints
+//! `T <module> <test> pass`, or `FAIL`.
+
+invoke haagenti·core·{CompressionLevel, Compressor, Decompressor, Codec};
+invoke haagenti·deflate·{deflate, inflate, DeflateCodec, ZlibCodec, GzipCodec, BitReader, BitWriter,
+    HuffmanDecoder, reverse_bits};
+invoke haagenti·deflate·tables·fixed_lit_lengths;
+invoke tome·support·bytes;
+
+☉ rite report(module: &str, name: &str, ok: bool) {
+    println!("T {} {} {}", module, name, ⎇ ok { "pass" } ⎉ { "FAIL" });
+}
+
+/// inflate(deflate(input)) == input, at `level`; with `shorter`, the compressed form is shorter too.
+☉ rite deflate_round(input: &Vec<u8>, level: CompressionLevel, shorter: bool) → bool {
+    ≔ r = deflate(input, level);
+    ⎇ r.is_err() { ⤺ nay; }
+    ≔ c = r.unwrap();
+    ⎇ shorter && c.len() ≥ input.len() { ⤺ nay; }
+    ≔ vary out: Vec<u8> = Vec·new();
+    ⌥ inflate(&c, &Δ out) { Ok(_) => out == *input, Err(_) => nay }
+}
+
+/// `pattern` repeated to `n` bytes.
+☉ rite cycle(pattern: &str, n: usize) → Vec<u8> {
+    ≔ p = bytes(pattern);
+    ≔ vary out: Vec<u8> = Vec·new();
+    ⟳ out.len() < n { out.push(p[out.len() % p.len()]); }
+    out
+}
+
+rite codec_round<C: Codec>(c: &C, text: &str) → bool {
+    ≔ input = bytes(text);
+    ⌥ c.compress(&input) {
+        Ok(z) => ⌥ c.decompress(&z) { Ok(d) => d == input, Err(_) => nay },
+        Err(_) => nay,
+    }
+}
+
+rite levels_all() → bool {
+    ≔ input = bytes("Testing compression levels for DEFLATE family.");
+    ∀ l ∈ vec![CompressionLevel·None, CompressionLevel·Fast, CompressionLevel·Default, CompressionLevel·Best] {
+        ⎇ !codec_round(&DeflateCodec·with_level(*l), "Testing compression levels for DEFLATE family.") { ⤺ nay; }
+        ⎇ !codec_round(&ZlibCodec·with_level(*l), "Testing compression levels for DEFLATE family.") { ⤺ nay; }
+        ⎇ !codec_round(&GzipCodec·with_level(*l), "Testing compression levels for DEFLATE family.") { ⤺ nay; }
+    }
+    input.len() > 0
+}
+
+rite verify_all() → bool {
+    ≔ input = bytes("Verify roundtrip functionality.");
+    ≔ a = DeflateCodec·new().verify_roundtrip(&input);
+    ≔ b = ZlibCodec·new().verify_roundtrip(&input);
+    ≔ c = GzipCodec·new().verify_roundtrip(&input);
+    holds(a) && holds(b) && holds(c)
+}
+
+rite holds(r: Result<bool, haagenti·core·Error>) → bool {
+    ⌥ r { Ok(b) => b, Err(_) => nay }
+}
+
+rite bits_are(r: Result<u32, haagenti·core·Error>, want: u32) → bool {
+    ⌥ r { Ok(v) => v == want, Err(_) => nay }
+}
+
+☉ rite t_codec() {
+    report("codec", "test_deflate_codec_roundtrip", codec_round(&DeflateCodec·new(), "Test DEFLATE codec roundtrip!"));
+    report("codec", "test_zlib_codec_roundtrip", codec_round(&ZlibCodec·new(), "Test Zlib codec roundtrip!"));
+    report("codec", "test_gzip_codec_roundtrip", codec_round(&GzipCodec·new(), "Test Gzip codec roundtrip!"));
+    report("codec", "test_compression_levels", levels_all());
+    report("codec", "test_verify_roundtrip", verify_all());
+}
+
+☉ rite t_deflate() {
+    report("deflate", "test_deflate_stored_empty", deflate_round(&Vec·new(), CompressionLevel·None, nay));
+    report("deflate", "test_deflate_stored_small", deflate_round(&bytes("Hello, World!"), CompressionLevel·None, nay));
+    report("deflate", "test_deflate_fast_small", deflate_round(&bytes("Hello, World!"), CompressionLevel·Fast, nay));
+    report("deflate", "test_deflate_fast_repetitive",
+        deflate_round(&bytes("ABCABCABCABCABCABCABCABCABCABC"), CompressionLevel·Fast, yea));
+    report("deflate", "test_deflate_default",
+        deflate_round(&cycle("The quick brown fox jumps over the lazy dog. ", 1000), CompressionLevel·Default, yea));
+    ≔ vary r: Vec<u8> = Vec·new();
+    ≔ vary i: u32 = 0;
+    ⟳ i < 1000 { r.push(((i * 7 + 13) % 256) as u8); i = i + 1; }
+    report("deflate", "test_roundtrip_random", deflate_round(&r, CompressionLevel·Default, nay));
+}
+
+rite bit_reader_basic() → bool {
+    ≔ data: Vec<u8> = vec![180u8, 202u8];
+    ≔ vary r = BitReader·over(&data);
+    ≔ a = bits_are(r.read_bits(&data, 4), 4);
+    ≔ b = bits_are(r.read_bits(&data, 4), 11);
+    ≔ c = bits_are(r.read_bits(&data, 8), 202);
+    a && b && c
+}
+
+rite bit_writer_basic() → bool {
+    ≔ vary w = BitWriter·new();
+    w.write_bits(4, 4);
+    w.write_bits(11, 4);
+    w.write_bits(202, 8);
+    ≔ out = w.finish();
+    out.len() == 2 && out[0] == 180 && out[1] == 202
+}
+
+☉ rite t_huffman() {
+    report("huffman", "test_bit_reader_basic", bit_reader_basic());
+    report("huffman", "test_bit_writer_basic", bit_writer_basic());
+    ≔ fixed = ⌥ HuffmanDecoder·from_lengths(&fixed_lit_lengths()) { Ok(d) => d.table_bits() ≥ 7, Err(_) => nay };
+    report("huffman", "test_fixed_huffman_decoder", fixed);
+    report("huffman", "test_reverse_bits",
+        reverse_bits(12, 4) == 3 && reverse_bits(170, 8) == 85 && reverse_bits(1, 1) == 1);
+}

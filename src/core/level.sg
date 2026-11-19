@@ -1,0 +1,66 @@
+//! haagenti·core·level: compression levels and algorithm names (spec §2.2).
+
+/// A compression level. `Default` is what every codec's `new()` takes.
+☉ ᛈ CompressionLevel {
+    None,
+    Fast,
+    Default,
+    Best,
+    Ultra,
+    Custom(i32),
+}
+
+⊢ CompressionLevel {
+    /// The level as a number: 0, 1, 6, 9, 12, or the custom number.
+    ☉ rite to_level(&this) → i32 {
+        ⌥ this {
+            CompressionLevel·None => 0,
+            CompressionLevel·Fast => 1,
+            CompressionLevel·Default => 6,
+            CompressionLevel·Best => 9,
+            CompressionLevel·Ultra => 12,
+            CompressionLevel·Custom(n) => *n,
+        }
+    }
+
+    /// 0 → None; 1–3 → Fast; 4–6 → Default; 7–9 → Best; 10 and above → Ultra; below 0 → Custom.
+    ☉ rite from_level(level: i32) → CompressionLevel {
+        ⎇ level == 0 { ⤺ CompressionLevel·None; }
+        ⎇ level ≥ 1 && level ≤ 3 { ⤺ CompressionLevel·Fast; }
+        ⎇ level ≥ 4 && level ≤ 6 { ⤺ CompressionLevel·Default; }
+        ⎇ level ≥ 7 && level ≤ 9 { ⤺ CompressionLevel·Best; }
+        ⎇ level ≥ 10 { ⤺ CompressionLevel·Ultra; }
+        CompressionLevel·Custom(level)
+    }
+}
+
+/// The algorithms haagenti names.
+☉ ᛈ Algorithm {
+    Lz4,
+    Lz4Hc,
+    Zstd,
+    Brotli,
+    Deflate,
+    Gzip,
+    Zlib,
+    Snappy,
+    Lzma,
+}
+
+⊢ Algorithm {
+    /// The algorithm's name, lower case.
+    ☉ rite name(&this) → String {
+        ≔ n = ⌥ this {
+            Algorithm·Lz4 => "lz4",
+            Algorithm·Lz4Hc => "lz4hc",
+            Algorithm·Zstd => "zstd",
+            Algorithm·Brotli => "brotli",
+            Algorithm·Deflate => "deflate",
+            Algorithm·Gzip => "gzip",
+            Algorithm·Zlib => "zlib",
+            Algorithm·Snappy => "snappy",
+            Algorithm·Lzma => "lzma",
+        };
+        n.to_string()
+    }
+}

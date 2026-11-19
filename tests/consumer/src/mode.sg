@@ -1,0 +1,11 @@
+//! Which rows run. tests/run.sh rewrites these lines in its staged copy, never here.
+
+/// Sections, by letter: any of T A M F C E V; X with K and D for the timing programs; Z, the
+/// wasm negative control.
+☉ ◆ MODE_SECTIONS: &str = "TAMFCE";
+/// The corpus inputs for the C, R and F rows, space-separated, or "" for all.
+☉ ◆ MODE_CORPUS: &str = "";
+/// The C and V levels: "all", or names among none fast default best ultra c0 c5.
+☉ ◆ MODE_LEVELS: &str = "all";
+/// The V rows' input: "", "mib1" or "mib8".
+☉ ◆ MODE_VOLUME: &str = "";

@@ -1,0 +1,63 @@
+//! haagenti·deflate·codec_zlib: the Zlib codec types (spec §3.4), the shape of codec_deflate.sg.
+
+invoke tome·core·{Error, CompressionLevel, Algorithm, Compressor, Decompressor, Codec};
+invoke tome·deflate·zlib·{zlib_compress, zlib_decompress};
+
+/// A ZlibCodec at `level`: the generic-free maker (B2; spec §7 K9, GAPS G5).
+☉ rite zlib_codec(level: CompressionLevel) → ZlibCodec {
+    ZlibCodec { level: level }
+}
+
+rite hz_zlib_max(n: usize) → usize { n + (n / 65535 + 1) * 5 + 16 }
+
+/// Zlib compression.
+☉ sigil ZlibCompressor { level: CompressionLevel }
+
+⊢ ZlibCompressor {
+    ☉ rite new() → ZlibCompressor { ZlibCompressor { level: CompressionLevel·Default } }
+    ☉ rite with_level(level: CompressionLevel) → ZlibCompressor { ZlibCompressor { level: level } }
+}
+
+⊢ Compressor each ZlibCompressor {
+    rite algorithm(&this) → Algorithm { Algorithm·Zlib }
+    rite level(&this) → CompressionLevel { this.level }
+    rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { zlib_compress(input, this.level) }
+    rite max_compressed_size(&this, input_len: usize) → usize { hz_zlib_max(input_len) }
+}
+
+/// Zlib decompression.
+☉ sigil ZlibDecompressor { unit: u8 }
+
+⊢ ZlibDecompressor {
+    ☉ rite new() → ZlibDecompressor { ZlibDecompressor { unit: 0 } }
+}
+
+⊢ Decompressor each ZlibDecompressor {
+    rite algorithm(&this) → Algorithm { Algorithm·Zlib }
+    rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { zlib_decompress(input) }
+}
+
+/// Zlib, both ways.
+☉ sigil ZlibCodec { level: CompressionLevel }
+
+⊢ Compressor each ZlibCodec {
+    rite algorithm(&this) → Algorithm { Algorithm·Zlib }
+    rite level(&this) → CompressionLevel { this.level }
+    rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { zlib_compress(input, this.level) }
+    rite max_compressed_size(&this, input_len: usize) → usize { hz_zlib_max(input_len) }
+}
+
+⊢ Decompressor each ZlibCodec {
+    rite algorithm(&this) → Algorithm { Algorithm·Zlib }
+    rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { zlib_decompress(input) }
+}
+
+⊢ Codec each ZlibCodec {
+    rite new() → ZlibCodec { ZlibCodec { level: CompressionLevel·Default } }
+    rite with_level(level: CompressionLevel) → ZlibCodec { ZlibCodec { level: level } }
+    rite verify_roundtrip(&this, data: &Vec<u8>) → Result<bool, Error> {
+        ≔ c = zlib_compress(data, this.level)?;
+        ≔ d = zlib_decompress(&c)?;
+        Ok(d == *data)
+    }
+}

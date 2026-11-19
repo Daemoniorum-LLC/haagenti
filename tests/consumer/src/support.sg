@@ -1,0 +1,72 @@
+//! The consumer's helpers: hex, digests and outcomes in the oracle's exact text (tests/oracle/src).
+
+invoke haagenti·core·Error;
+invoke haagenti·deflate·{crc32, adler32};
+
+/// `x` as lower-case hex. Built as bytes and made a String once: on wasm a String grown a char at
+/// a time keeps every old buffer (http's GAPS D8; spec §4).
+☉ rite hex(x: &Vec<u8>) → String {
+    ≔ digits = "0123456789abcdef".as_bytes();
+    ≔ vary v: Vec<u8> = Vec·new();
+    ∀ b ∈ x {
+        v.push(digits[(*b >> 4) as usize]);
+        v.push(digits[(*b & 15) as usize]);
+    }
+    String·from_bytes(v).unwrap()
+}
+
+rite nibble(c: u8) → u8 {
+    ⎇ c ≥ 97 { c - 87 } ⎉ { c - 48 }
+}
+
+/// Append the bytes of the hex text `s`.
+☉ rite unhex_into(s: &str, out: &Δ Vec<u8>) {
+    ≔ b = s.as_bytes();
+    ≔ vary i: usize = 0;
+    ⟳ i + 1 < b.len() {
+        out.push(nibble(b[i]) * 16 + nibble(b[i + 1]));
+        i = i + 2;
+    }
+}
+
+/// The bytes of `s`.
+☉ rite bytes(s: &str) → Vec<u8> {
+    ≔ vary out: Vec<u8> = Vec·new();
+    ∀ b ∈ s.as_bytes() { out.push(*b); }
+    out
+}
+
+/// A decimal number's value.
+☉ rite number(s: &str) → i64 {
+    ≔ vary n: i64 = 0;
+    ∀ c ∈ s.as_bytes() { n = n * 10 + ((*c - 48) as i64); }
+    n
+}
+
+☉ rite flag(b: bool) → String {
+    ⎇ b { "true".to_string() } ⎉ { "false".to_string() }
+}
+
+/// "len=<n> crc=<crc32>".
+☉ rite sum(x: &Vec<u8>) → String {
+    format!("len={} crc={:08x}", x.len(), crc32(x))
+}
+
+/// A compressed output: its hex up to 2 KiB, "len crc adler" above.
+☉ rite digest(x: &Vec<u8>) → String {
+    ⎇ x.len() ≤ 2048 { ⤺ format!("hex={}", hex(x)); }
+    format!("len={} crc={:08x} adler={:08x}", x.len(), crc32(x), adler32(x))
+}
+
+/// "err <category> <reason>": kind and tag, never the message (R4).
+☉ rite failed(e: &Error) → String {
+    format!("err {} {}", e.category(), e.reason())
+}
+
+/// "ok len crc" or "err category message".
+☉ rite outcome(r: &Result<Vec<u8>, Error>) → String {
+    ⌥ r {
+        Ok(x) => format!("ok {}", sum(x)),
+        Err(e) => failed(e),
+    }
+}

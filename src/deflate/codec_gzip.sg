@@ -1,0 +1,63 @@
+//! haagenti·deflate·codec_gzip: the Gzip codec types (spec §3.4), the shape of codec_deflate.sg.
+
+invoke tome·core·{Error, CompressionLevel, Algorithm, Compressor, Decompressor, Codec};
+invoke tome·deflate·gzip·{gzip_compress, gzip_decompress};
+
+/// A GzipCodec at `level`: the generic-free maker (B2; spec §7 K9, GAPS G5).
+☉ rite gzip_codec(level: CompressionLevel) → GzipCodec {
+    GzipCodec { level: level }
+}
+
+rite hz_gzip_max(n: usize) → usize { n + (n / 65535 + 1) * 5 + 28 }
+
+/// Gzip compression.
+☉ sigil GzipCompressor { level: CompressionLevel }
+
+⊢ GzipCompressor {
+    ☉ rite new() → GzipCompressor { GzipCompressor { level: CompressionLevel·Default } }
+    ☉ rite with_level(level: CompressionLevel) → GzipCompressor { GzipCompressor { level: level } }
+}
+
+⊢ Compressor each GzipCompressor {
+    rite algorithm(&this) → Algorithm { Algorithm·Gzip }
+    rite level(&this) → CompressionLevel { this.level }
+    rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { gzip_compress(input, this.level) }
+    rite max_compressed_size(&this, input_len: usize) → usize { hz_gzip_max(input_len) }
+}
+
+/// Gzip decompression.
+☉ sigil GzipDecompressor { unit: u8 }
+
+⊢ GzipDecompressor {
+    ☉ rite new() → GzipDecompressor { GzipDecompressor { unit: 0 } }
+}
+
+⊢ Decompressor each GzipDecompressor {
+    rite algorithm(&this) → Algorithm { Algorithm·Gzip }
+    rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { gzip_decompress(input) }
+}
+
+/// Gzip, both ways.
+☉ sigil GzipCodec { level: CompressionLevel }
+
+⊢ Compressor each GzipCodec {
+    rite algorithm(&this) → Algorithm { Algorithm·Gzip }
+    rite level(&this) → CompressionLevel { this.level }
+    rite compress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { gzip_compress(input, this.level) }
+    rite max_compressed_size(&this, input_len: usize) → usize { hz_gzip_max(input_len) }
+}
+
+⊢ Decompressor each GzipCodec {
+    rite algorithm(&this) → Algorithm { Algorithm·Gzip }
+    rite decompress(&this, input: &Vec<u8>) → Result<Vec<u8>, Error> { gzip_decompress(input) }
+}
+
+⊢ Codec each GzipCodec {
+    rite new() → GzipCodec { GzipCodec { level: CompressionLevel·Default } }
+    rite with_level(level: CompressionLevel) → GzipCodec { GzipCodec { level: level } }
+    rite verify_roundtrip(&this, data: &Vec<u8>) → Result<bool, Error> {
+        ≔ c = gzip_compress(data, this.level)?;
+        ≔ d = gzip_decompress(&c)?;
+        Ok(d == *data)
+    }
+}

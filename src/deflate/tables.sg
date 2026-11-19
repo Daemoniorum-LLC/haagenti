@@ -1,0 +1,56 @@
+//! haagenti·deflate·tables: RFC 1951 §3.2.5–3.2.7's constants. Each table is made by its rite, once
+//! per call of a coder that needs it.
+
+/// The longest Huffman code, in bits.
+☉ ◆ MAX_BITS: u32 = 15;
+/// Literal/length codes.
+☉ ◆ MAX_LIT_CODES: usize = 286;
+/// Distance codes.
+☉ ◆ MAX_DIST_CODES: usize = 30;
+/// Code-length codes.
+☉ ◆ MAX_CL_CODES: usize = 19;
+
+/// The fixed literal/length code lengths: 8 for 0–143, 9 for 144–255, 7 for 256–279, 8 for 280–287.
+☉ rite fixed_lit_lengths() → Vec<u8> {
+    ≔ vary v: Vec<u8> = Vec·new();
+    ≔ vary i = 0;
+    ⟳ i < 288 {
+        ≔ len: u8 = ⎇ i < 144 { 8 } ⎉ ⎇ i < 256 { 9 } ⎉ ⎇ i < 280 { 7 } ⎉ { 8 };
+        v.push(len);
+        i = i + 1;
+    }
+    v
+}
+
+/// The fixed distance code lengths: 5 for all 32.
+☉ rite fixed_dist_lengths() → Vec<u8> {
+    vec![5u8; 32]
+}
+
+/// The order the code-length code lengths come in, in a dynamic block's header.
+☉ rite cl_code_order() → Vec<usize> {
+    vec![16usize, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+}
+
+/// Extra bits of the length codes 257–285.
+☉ rite length_extra_bits() → Vec<u32> {
+    vec![0u32, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+}
+
+/// Base lengths of the length codes 257–285.
+☉ rite length_base() → Vec<usize> {
+    vec![3usize, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115,
+        131, 163, 195, 227, 258]
+}
+
+/// Extra bits of the distance codes 0–29.
+☉ rite distance_extra_bits() → Vec<u32> {
+    vec![0u32, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12,
+        13, 13]
+}
+
+/// Base distances of the distance codes 0–29.
+☉ rite distance_base() → Vec<usize> {
+    vec![1usize, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+        2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+}
